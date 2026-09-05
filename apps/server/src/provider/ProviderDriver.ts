@@ -26,6 +26,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ProviderMcpServer,
   ServerProvider,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -73,6 +74,10 @@ export interface ProviderInstance {
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
   readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;
+  readonly discoverMcpServers?: () => Effect.Effect<
+    ReadonlyArray<ProviderMcpServer>,
+    ProviderDriverError
+  >;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   /**
    * Redeem one banked rate-limit reset credit on the signed-in account, then

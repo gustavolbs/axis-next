@@ -977,6 +977,11 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.axisContextsGetCatalog,
       staleTimeMs: 5_000,
     }),
+    providerCapabilities: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:provider:capabilities",
+      tag: WS_METHODS.providerCapabilitiesGet,
+      staleTimeMs: 30_000,
+    }),
     replaceAxisContextCatalog: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:axis:replace-context-catalog",
       tag: WS_METHODS.axisContextsReplaceCatalog,

@@ -78,6 +78,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { ProviderCapabilitiesSection } from "./ProviderCapabilitiesSection";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
@@ -921,6 +922,14 @@ export function EnvironmentProviderSettings({
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
+            />
+          ) : null
+        }
+        capabilities={
+          mode === "editor" ? (
+            <ProviderCapabilitiesSection
+              environmentId={environmentId}
+              instanceId={row.instanceId}
             />
           ) : null
         }

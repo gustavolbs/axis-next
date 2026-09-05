@@ -53,6 +53,7 @@ import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { discoverProviderMcpServers, parseCodexMcpList } from "./ProviderMcpDiscovery.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -235,6 +236,29 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
                   }),
               ),
             );
+      const discoverMcpServers = () =>
+        discoverProviderMcpServers({
+          binaryPath: effectiveConfig.binaryPath,
+          args: ["mcp", "list", "--json"],
+          cwd: process.cwd(),
+          environment: {
+            ...processEnv,
+            ...(effectiveConfig.homePath ? { CODEX_HOME: effectiveConfig.homePath } : {}),
+          },
+          parse: parseCodexMcpList,
+        }).pipe(
+          Effect.timeout("20 seconds"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: `Failed to discover Codex MCP servers: ${cause.message ?? String(cause)}`,
+                cause,
+              }),
+          ),
+        );
 
       // Redemption spends something on the user's account. It serialises on
       // the account (instances sharing a Codex home share the credit), keeps
@@ -307,6 +331,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd,
+        discoverMcpServers,
         consumeResetCredit,
         adapter,
         textGeneration,

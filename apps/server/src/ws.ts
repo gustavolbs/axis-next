@@ -47,6 +47,7 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProviderCapabilityInventoryError,
   ProviderUploadFeedbackError,
   ProviderSetupError,
   RelayClientInstallFailedError,
@@ -1960,6 +1961,40 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.providerCapabilitiesGet]: ({ instanceId }) =>
+          observeRpcEffect(
+            WS_METHODS.providerCapabilitiesGet,
+            Effect.gen(function* () {
+              const instance = yield* providerInstances.getInstance(instanceId);
+              if (!instance) {
+                return yield* new ProviderCapabilityInventoryError({
+                  instanceId,
+                  message: `Provider instance '${instanceId}' was not found.`,
+                });
+              }
+              const snapshot = yield* instance.snapshot.getSnapshot;
+              const mcpServers = instance.discoverMcpServers
+                ? yield* instance.discoverMcpServers().pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderCapabilityInventoryError({
+                          instanceId,
+                          message: cause.message,
+                        }),
+                    ),
+                  )
+                : [];
+              return {
+                instanceId,
+                driver: instance.driverKind,
+                checkedAt: snapshot.checkedAt,
+                mcpServers,
+                skills: snapshot.skills,
+                mcpDiscoverySupported: instance.discoverMcpServers !== undefined,
+              };
+            }),
+            { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.axisContextsGetCatalog]: (_input) =>
           observeRpcEffect(WS_METHODS.axisContextsGetCatalog, axisContextCatalog.get, {

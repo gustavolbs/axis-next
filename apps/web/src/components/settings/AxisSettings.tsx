@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { PlusIcon, Trash2Icon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 
 import {
   axisProviderInstanceLocatorKey,
-  AxisCapabilityId,
   AxisContextId,
   AxisProviderAccessGrantId,
   type AxisCapabilityKind,
@@ -56,9 +56,6 @@ export function AxisSettingsPanel() {
     reportFailure: false,
   });
   const [companyName, setCompanyName] = useState("");
-  const [capabilityName, setCapabilityName] = useState("");
-  const [capabilityKind, setCapabilityKind] = useState<AxisCapabilityKind>("mcp");
-  const [capabilityProvider, setCapabilityProvider] = useState("");
   const [providerGrantProvider, setProviderGrantProvider] = useState("");
   const [providerGrantCompany, setProviderGrantCompany] = useState("");
   const [saving, setSaving] = useState(false);
@@ -102,7 +99,6 @@ export function AxisSettingsPanel() {
       ),
     [snapshot],
   );
-  const ownedProviders = providers.filter((provider) => providerOwnerByKey.has(provider.key));
   const personalProviderOptions = providers.filter(
     (provider) => providerOwnerByKey.get(provider.key) === personalContext?.id,
   );
@@ -165,34 +161,6 @@ export function AxisSettingsPanel() {
       "Company context added",
     );
     if (saved) setCompanyName("");
-  };
-
-  const addCapability = async () => {
-    if (!snapshot || !capabilityName.trim()) return;
-    const selected = providerByKey.get(capabilityProvider);
-    if (!selected || !providerOwnerByKey.has(selected.key)) return;
-    const now = new Date().toISOString();
-    const saved = await save(
-      snapshot,
-      {
-        ...snapshot.catalog,
-        capabilities: [
-          ...snapshot.catalog.capabilities,
-          {
-            id: AxisCapabilityId.make(entityId("capability")),
-            provider: selected.locator,
-            kind: capabilityKind,
-            name: capabilityName.trim(),
-            enabled: true,
-            compatibleDrivers: [],
-            createdAt: now,
-            updatedAt: now,
-          },
-        ],
-      },
-      `${CAPABILITY_LABELS[capabilityKind]} added`,
-    );
-    if (saved) setCapabilityName("");
   };
 
   const addProviderGrant = async () => {
@@ -381,12 +349,36 @@ export function AxisSettingsPanel() {
       <SettingsSection
         id="axis-capabilities"
         title="Provider capabilities"
-        description="Manage MCPs, skills, instructions, and preferences on the provider that loads them."
+        description="MCPs, skills, instructions, and preferences belong to a provider instance. Open that provider to inspect its native configuration."
       >
+        {providers.map((provider) => (
+          <SettingsRow
+            key={provider.key}
+            title={provider.label}
+            description="Manage this provider's isolated MCP connections and skills."
+            control={
+              <Button
+                render={
+                  <Link
+                    to="/settings/providers"
+                    search={{
+                      environmentId: provider.locator.environmentId,
+                      instanceId: provider.locator.instanceId,
+                    }}
+                  />
+                }
+                size="xs"
+                variant="outline"
+              >
+                Manage
+              </Button>
+            }
+          />
+        ))}
         {snapshot.catalog.capabilities.length === 0 ? (
           <SettingsRow
-            title="No capabilities registered"
-            description="Register a capability on an assigned provider. It follows that provider wherever access is allowed."
+            title="No Work Hub capabilities selected"
+            description="Discovered MCPs stay on their provider. Work Hub source selection is configured separately."
           />
         ) : (
           snapshot.catalog.capabilities.map((capability) => (
@@ -445,58 +437,6 @@ export function AxisSettingsPanel() {
             />
           ))
         )}
-        <SettingsRow
-          title="Register capability"
-          description="Connection details and secrets remain in the provider environment."
-        >
-          <div className="grid gap-2 py-3 sm:grid-cols-[9rem_minmax(10rem,1fr)_minmax(12rem,1fr)_auto] sm:items-center">
-            <Select
-              value={capabilityKind}
-              onValueChange={(value) => setCapabilityKind(value as AxisCapabilityKind)}
-            >
-              <SelectTrigger aria-label="Capability type">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectPopup>
-                {Object.entries(CAPABILITY_LABELS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            <Input
-              value={capabilityName}
-              onChange={(event) => setCapabilityName(event.target.value)}
-              placeholder="Capability name"
-              aria-label="Capability name"
-            />
-            <Select
-              value={capabilityProvider}
-              onValueChange={(value) => {
-                if (value !== null) setCapabilityProvider(value);
-              }}
-            >
-              <SelectTrigger aria-label="Capability provider">
-                <SelectValue placeholder="Provider" />
-              </SelectTrigger>
-              <SelectPopup>
-                {ownedProviders.map((provider) => (
-                  <SelectItem key={provider.key} value={provider.key}>
-                    {provider.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            <Button
-              size="sm"
-              disabled={saving || !capabilityName.trim() || !capabilityProvider}
-              onClick={() => void addCapability()}
-            >
-              <PlusIcon /> Add
-            </Button>
-          </div>
-        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection

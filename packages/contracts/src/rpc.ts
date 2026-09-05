@@ -17,6 +17,11 @@ import {
   ProviderSetupError,
   ProviderSetupInput,
 } from "./providerSetup.ts";
+import {
+  ProviderCapabilityInventory,
+  ProviderCapabilityInventoryError,
+  ProviderCapabilityInventoryInput,
+} from "./providerCapabilities.ts";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
@@ -262,6 +267,7 @@ export const WS_METHODS = {
   providerInstallCancel: "provider.install.cancel",
   providerInstallSubscribe: "provider.install.subscribe",
   providerInstallRemove: "provider.install.remove",
+  providerCapabilitiesGet: "provider.capabilities.get",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -520,6 +526,12 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsProviderCapabilitiesGetRpc = Rpc.make(WS_METHODS.providerCapabilitiesGet, {
+  payload: ProviderCapabilityInventoryInput,
+  success: ProviderCapabilityInventory,
+  error: Schema.Union([ProviderCapabilityInventoryError, EnvironmentAuthorizationError]),
 });
 
 export const WsAxisContextsGetCatalogRpc = Rpc.make(WS_METHODS.axisContextsGetCatalog, {
@@ -1218,6 +1230,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsProviderCapabilitiesGetRpc,
   WsAxisContextsGetCatalogRpc,
   WsAxisContextsReplaceCatalogRpc,
   WsServerDiscoverSourceControlRpc,
