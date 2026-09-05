@@ -30,6 +30,11 @@ export function removeAxisCompany(
     capabilities: catalog.capabilities.filter(
       (capability) => !removedProviderKeys.has(axisProviderInstanceLocatorKey(capability.provider)),
     ),
+    workHubSources: catalog.workHubSources.filter(
+      (source) =>
+        source.contextId !== contextId &&
+        !removedProviderKeys.has(axisProviderInstanceLocatorKey(source.provider)),
+    ),
   };
 }
 
@@ -58,6 +63,9 @@ export function setAxisProviderOwner(
       ...(contextId === null ? [] : [{ contextId, provider }]),
     ],
     providerAccessGrants,
+    workHubSources: catalog.workHubSources.filter(
+      (source) => axisProviderInstanceLocatorKey(source.provider) !== providerKey,
+    ),
   };
 }
 
@@ -66,8 +74,16 @@ export function removeAxisProviderAccessGrant(
   catalog: AxisContextCatalog,
   grantId: AxisProviderAccessGrantId,
 ): AxisContextCatalog {
+  const removed = catalog.providerAccessGrants.find((grant) => grant.id === grantId);
+  if (!removed) return catalog;
+  const providerKey = axisProviderInstanceLocatorKey(removed.provider);
   return {
     ...catalog,
     providerAccessGrants: catalog.providerAccessGrants.filter((grant) => grant.id !== grantId),
+    workHubSources: catalog.workHubSources.filter(
+      (source) =>
+        source.contextId !== removed.targetContextId ||
+        axisProviderInstanceLocatorKey(source.provider) !== providerKey,
+    ),
   };
 }

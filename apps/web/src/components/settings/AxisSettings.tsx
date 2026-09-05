@@ -430,6 +430,9 @@ export function AxisSettingsPanel() {
                           capabilities: snapshot.catalog.capabilities.filter(
                             (candidate) => candidate.id !== capability.id,
                           ),
+                          workHubSources: snapshot.catalog.workHubSources.filter(
+                            (source) => source.capabilityId !== capability.id,
+                          ),
                         },
                         "Capability removed",
                       )

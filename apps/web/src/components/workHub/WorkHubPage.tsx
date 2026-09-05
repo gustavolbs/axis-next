@@ -18,6 +18,7 @@ import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { buildWorkHubSourceReadiness } from "./WorkHub.logic";
+import { WorkHubSourceManager } from "./WorkHubSourceManager";
 
 type WorkHubView = "overview" | "calendar" | "messages" | "board";
 
@@ -84,17 +85,18 @@ function OverviewView({ catalog }: { readonly catalog: AxisContextCatalog }) {
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {source.providerCount} provider{source.providerCount === 1 ? "" : "s"} ·{" "}
-                    {source.mcpCount} MCP{source.mcpCount === 1 ? "" : "s"}
+                    {source.selectedMcpCount} of {source.availableMcpCount} MCPs selected
                   </p>
                 </div>
-                <Badge variant={source.mcpCount > 0 ? "secondary" : "outline"}>
-                  {source.mcpCount > 0 ? "Ready" : "Needs MCP"}
+                <Badge variant={source.selectedMcpCount > 0 ? "secondary" : "outline"}>
+                  {source.selectedMcpCount > 0 ? "Ready" : "Select sources"}
                 </Badge>
               </div>
             );
           })}
         </div>
       </section>
+      <WorkHubSourceManager />
     </div>
   );
 }

@@ -14,6 +14,7 @@ import {
   EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
+  PositiveInt,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -35,6 +36,9 @@ export type AxisProviderAccessGrantId = typeof AxisProviderAccessGrantId.Type;
 
 export const AxisCapabilityId = makeAxisEntityId("AxisCapabilityId");
 export type AxisCapabilityId = typeof AxisCapabilityId.Type;
+
+export const AxisWorkHubSourceId = makeAxisEntityId("AxisWorkHubSourceId");
+export type AxisWorkHubSourceId = typeof AxisWorkHubSourceId.Type;
 
 export const AxisContextKind = Schema.Literals(["personal", "company"]);
 export type AxisContextKind = typeof AxisContextKind.Type;
@@ -104,6 +108,19 @@ export const AxisCapability = Schema.Struct({
 });
 export type AxisCapability = typeof AxisCapability.Type;
 
+/** One context-approved provider/MCP binding queried by Work Hub. */
+export const AxisWorkHubSource = Schema.Struct({
+  id: AxisWorkHubSourceId,
+  contextId: AxisContextId,
+  provider: AxisProviderInstanceLocator,
+  capabilityId: AxisCapabilityId,
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  cacheTtlSeconds: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(900))),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type AxisWorkHubSource = typeof AxisWorkHubSource.Type;
+
 export const AxisContextCatalog = Schema.Struct({
   contexts: Schema.Array(AxisContext).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   providerOwnerships: Schema.Array(AxisProviderOwnership).pipe(
@@ -113,6 +130,9 @@ export const AxisContextCatalog = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   capabilities: Schema.Array(AxisCapability).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  workHubSources: Schema.Array(AxisWorkHubSource).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type AxisContextCatalog = typeof AxisContextCatalog.Type;
 
@@ -128,6 +148,12 @@ export const AxisContextCatalogIssueCode = Schema.Literals([
   "revocation_state_mismatch",
   "duplicate_capability_id",
   "capability_provider_unowned",
+  "duplicate_work_hub_source_id",
+  "duplicate_work_hub_source_binding",
+  "work_hub_source_unknown_capability",
+  "work_hub_source_not_mcp",
+  "work_hub_source_provider_mismatch",
+  "work_hub_source_provider_not_accessible",
 ]);
 export type AxisContextCatalogIssueCode = typeof AxisContextCatalogIssueCode.Type;
 
@@ -230,6 +256,11 @@ export function validateAxisContextCatalog(
       "duplicate_capability_id",
       "capabilities",
     ),
+    ...duplicateIds(
+      catalog.workHubSources.map((source) => source.id),
+      "duplicate_work_hub_source_id",
+      "workHubSources",
+    ),
   );
 
   const providerOwners = new Map<string, AxisContextId>();
@@ -296,6 +327,57 @@ export function validateAxisContextCatalog(
         code: "capability_provider_unowned",
         path: `capabilities[${index}]`,
         message: "A capability must belong to an owned provider instance.",
+      });
+    }
+  }
+
+  const capabilities = new Map(
+    catalog.capabilities.map((capability) => [capability.id, capability]),
+  );
+  const workHubBindings = new Set<string>();
+  for (const [index, source] of catalog.workHubSources.entries()) {
+    const path = `workHubSources[${index}]`;
+    const capability = capabilities.get(source.capabilityId);
+    const providerKey = axisProviderInstanceLocatorKey(source.provider);
+    const bindingKey = `${source.contextId}\u0000${providerKey}\u0000${source.capabilityId}`;
+    if (workHubBindings.has(bindingKey)) {
+      issues.push({
+        code: "duplicate_work_hub_source_binding",
+        path,
+        message: "This context, provider, and MCP binding is already selected for Work Hub.",
+      });
+    }
+    workHubBindings.add(bindingKey);
+    if (!capability) {
+      issues.push({
+        code: "work_hub_source_unknown_capability",
+        path,
+        message: "The selected Work Hub MCP does not exist.",
+      });
+      continue;
+    }
+    if (capability.kind !== "mcp") {
+      issues.push({
+        code: "work_hub_source_not_mcp",
+        path,
+        message: "Only MCP capabilities can provide Work Hub data.",
+      });
+    }
+    if (axisProviderInstanceLocatorKey(capability.provider) !== providerKey) {
+      issues.push({
+        code: "work_hub_source_provider_mismatch",
+        path,
+        message: "The selected MCP belongs to a different provider instance.",
+      });
+    }
+    const providerAccessible = resolveAxisContextProviderInstances(catalog, source.contextId).some(
+      (provider) => axisProviderInstanceLocatorKey(provider) === providerKey,
+    );
+    if (!providerAccessible) {
+      issues.push({
+        code: "work_hub_source_provider_not_accessible",
+        path,
+        message: "The selected context cannot access this provider instance.",
       });
     }
   }
