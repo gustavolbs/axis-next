@@ -7,6 +7,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   AuthAccessTokenType,
   AxisContextCatalogSnapshot,
+  AxisWorkHubCacheSnapshot,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -93,9 +94,11 @@ const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationShellSnapshot),
 );
 const decodeAxisContextCatalogSnapshot = Schema.decodeUnknownEffect(AxisContextCatalogSnapshot);
+const decodeAxisWorkHubCacheSnapshot = Schema.decodeUnknownEffect(AxisWorkHubCacheSnapshot);
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
+import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import * as ServerConfig from "./config.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import {
@@ -539,6 +542,7 @@ const buildAppUnderTest = (options?: {
       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
     >;
     axisContextCatalog?: Partial<AxisContextCatalogStore["Service"]>;
+    axisWorkHubCache?: Partial<AxisWorkHubCacheStore["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -803,6 +807,13 @@ const buildAppUnderTest = (options?: {
           }),
           Layer.mock(AxisContextCatalogStore)({
             ...options?.layers?.axisContextCatalog,
+          }),
+          Layer.mock(AxisWorkHubCacheStore)({
+            get: () => Effect.succeed(null),
+            list: Effect.succeed([]),
+            replace: () => Effect.void,
+            remove: () => Effect.void,
+            ...options?.layers?.axisWorkHubCache,
           }),
         ),
       ),
@@ -5342,6 +5353,104 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.read.revision, 4);
       assert.equal(response.updated.revision, 5);
       assert.deepEqual(replace.mock.calls, [[{ expectedRevision: 4, catalog: snapshot.catalog }]]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes cached Work Hub data without querying its MCP again", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* decodeAxisWorkHubCacheSnapshot({
+        sourceId: "personal_calendar",
+        contextId: "personal",
+        provider: { environmentId: "env", instanceId: "codex" },
+        capabilityId: "calendar",
+        items: [],
+        refreshedAt: "2026-09-05T00:00:00.000Z",
+        expiresAt: "2026-09-05T08:00:00.000Z",
+      });
+      yield* buildAppUnderTest({
+        layers: { axisWorkHubCache: { list: Effect.succeed([snapshot]) } },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.axisWorkHubGetCache]({})),
+      );
+
+      assert.deepEqual(response, [snapshot]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes one MCP sync through its provider and persists the returned cache", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* decodeAxisWorkHubCacheSnapshot({
+        sourceId: "personal_calendar",
+        contextId: "personal",
+        provider: { environmentId: "env", instanceId: "codex" },
+        capabilityId: "calendar",
+        items: [],
+        refreshedAt: "2026-09-05T00:00:00.000Z",
+        expiresAt: "2026-09-05T08:00:00.000Z",
+      });
+      const collect = vi.fn<NonNullable<ProviderInstance["collectWorkHubSource"]>>(() =>
+        Effect.succeed(snapshot),
+      );
+      const replace = vi.fn<AxisWorkHubCacheStore["Service"]["replace"]>(() => Effect.void);
+      const instance: ProviderInstance = {
+        instanceId: ProviderInstanceId.make("codex"),
+        driverKind: ProviderDriverKind.make("codex"),
+        enabled: true,
+        displayName: "Codex",
+        continuationIdentity: {
+          driverKind: ProviderDriverKind.make("codex"),
+          continuationKey: "codex",
+        },
+        collectWorkHubSource: collect,
+        get adapter(): never {
+          throw new Error("Work Hub sync must not start a visible chat session.");
+        },
+        get snapshot(): never {
+          throw new Error("Work Hub sync must not probe the provider snapshot.");
+        },
+        get textGeneration(): never {
+          throw new Error("Work Hub sync uses its dedicated provider operation.");
+        },
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
+          axisWorkHubCache: { get: () => Effect.succeed(null), replace },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            return yield* client[WS_METHODS.providerWorkHubCollect]({
+              sourceId: snapshot.sourceId,
+              contextId: snapshot.contextId,
+              provider: snapshot.provider,
+              capabilityId: snapshot.capabilityId,
+              mcpName: "Calendar",
+              collectionPolicy: {
+                calendarLookbackDays: 14,
+                calendarLookaheadDays: 90,
+                assignedWorkItemsOnly: true,
+                directMessages: true,
+                mentions: true,
+                assignedIssueComments: true,
+              },
+              cacheTtlSeconds: 28_800,
+              previousCursor: null,
+              previousRefreshedAt: null,
+            });
+          }),
+        ),
+      );
+
+      assert.deepEqual(response, snapshot);
+      assert.equal(collect.mock.calls.length, 1);
+      assert.deepEqual(replace.mock.calls, [[snapshot]]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

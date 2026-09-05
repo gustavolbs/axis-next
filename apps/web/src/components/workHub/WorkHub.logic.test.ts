@@ -2,7 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { AxisContextCatalog } from "@t3tools/contracts";
-import { buildWorkHubSourceReadiness } from "./WorkHub.logic";
+import {
+  buildWorkHubSourceGroups,
+  buildWorkHubSourceReadiness,
+  buildWorkHubWeekDays,
+  workHubCurrentTimePercentage,
+} from "./WorkHub.logic";
 
 const decodeCatalog = Schema.decodeUnknownSync(AxisContextCatalog);
 const now = "2026-09-05T00:00:00.000Z";
@@ -48,13 +53,41 @@ describe("buildWorkHubSourceReadiness", () => {
           updatedAt: now,
         },
       ],
+      workHubSources: [
+        {
+          id: "company_b_personal_jira",
+          contextId: "company_b",
+          provider: { environmentId: "env", instanceId: "codex" },
+          capabilityId: "personal_jira",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
     });
 
     expect(buildWorkHubSourceReadiness(catalog)).toMatchObject([
-      { contextId: "personal", providerCount: 1, mcpCount: 1 },
-      { contextId: "company_a", providerCount: 1, mcpCount: 1 },
-      { contextId: "company_b", providerCount: 1, mcpCount: 1 },
+      {
+        contextId: "personal",
+        providerCount: 1,
+        availableMcpCount: 1,
+        selectedMcpCount: 0,
+      },
+      {
+        contextId: "company_a",
+        providerCount: 1,
+        availableMcpCount: 1,
+        selectedMcpCount: 0,
+      },
+      {
+        contextId: "company_b",
+        providerCount: 1,
+        availableMcpCount: 1,
+        selectedMcpCount: 1,
+      },
     ]);
+    const groups = buildWorkHubSourceGroups(catalog);
+    expect(groups[1]?.providers[0]?.mcps.map((mcp) => mcp.id)).toEqual(["company_slack"]);
+    expect([...groups[2]!.providers[0]!.selectedCapabilityIds]).toEqual(["personal_jira"]);
   });
 
   it("does not count disabled MCPs", () => {
@@ -80,7 +113,24 @@ describe("buildWorkHubSourceReadiness", () => {
 
     expect(buildWorkHubSourceReadiness(catalog)[0]).toMatchObject({
       providerCount: 1,
-      mcpCount: 0,
+      availableMcpCount: 0,
+      selectedMcpCount: 0,
     });
+  });
+});
+
+describe("Work Hub calendar", () => {
+  it("navigates complete Sunday-to-Saturday weeks", () => {
+    const anchor = new Date(2026, 8, 5, 12);
+    expect(buildWorkHubWeekDays(anchor, -1).map((day) => day.getDate())).toEqual([
+      23, 24, 25, 26, 27, 28, 29,
+    ]);
+    expect(buildWorkHubWeekDays(anchor, 1).map((day) => day.getDate())).toEqual([
+      6, 7, 8, 9, 10, 11, 12,
+    ]);
+  });
+
+  it("positions the current-time indicator within the day", () => {
+    expect(workHubCurrentTimePercentage(new Date(2026, 8, 5, 12))).toBe(50);
   });
 });

@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { PlusIcon, Trash2Icon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 
 import {
   axisProviderInstanceLocatorKey,
-  AxisCapabilityId,
   AxisContextId,
   AxisProviderAccessGrantId,
   type AxisCapabilityKind,
@@ -17,7 +17,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { randomUUID } from "~/lib/utils";
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { environmentCatalog } from "~/connection/catalog";
+import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -45,23 +46,24 @@ function entityId(prefix: string): string {
 }
 
 export function AxisSettingsPanel() {
-  const environmentId = usePrimaryEnvironmentId();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const environmentId = primaryEnvironment?.environmentId ?? null;
   const { environments } = useEnvironments();
+  const axisSupported = primaryEnvironment?.serverConfig?.environment.capabilities.axis === true;
   const query = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !axisSupported
       ? null
       : serverEnvironment.axisContextCatalog({ environmentId, input: {} }),
   );
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const replaceCatalog = useAtomCommand(serverEnvironment.replaceAxisContextCatalog, {
     reportFailure: false,
   });
   const [companyName, setCompanyName] = useState("");
-  const [capabilityName, setCapabilityName] = useState("");
-  const [capabilityKind, setCapabilityKind] = useState<AxisCapabilityKind>("mcp");
-  const [capabilityProvider, setCapabilityProvider] = useState("");
   const [providerGrantProvider, setProviderGrantProvider] = useState("");
   const [providerGrantCompany, setProviderGrantCompany] = useState("");
   const [saving, setSaving] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
 
   const snapshot = query.data;
   const contextNames = useMemo(
@@ -102,7 +104,6 @@ export function AxisSettingsPanel() {
       ),
     [snapshot],
   );
-  const ownedProviders = providers.filter((provider) => providerOwnerByKey.has(provider.key));
   const personalProviderOptions = providers.filter(
     (provider) => providerOwnerByKey.get(provider.key) === personalContext?.id,
   );
@@ -167,34 +168,6 @@ export function AxisSettingsPanel() {
     if (saved) setCompanyName("");
   };
 
-  const addCapability = async () => {
-    if (!snapshot || !capabilityName.trim()) return;
-    const selected = providerByKey.get(capabilityProvider);
-    if (!selected || !providerOwnerByKey.has(selected.key)) return;
-    const now = new Date().toISOString();
-    const saved = await save(
-      snapshot,
-      {
-        ...snapshot.catalog,
-        capabilities: [
-          ...snapshot.catalog.capabilities,
-          {
-            id: AxisCapabilityId.make(entityId("capability")),
-            provider: selected.locator,
-            kind: capabilityKind,
-            name: capabilityName.trim(),
-            enabled: true,
-            compatibleDrivers: [],
-            createdAt: now,
-            updatedAt: now,
-          },
-        ],
-      },
-      `${CAPABILITY_LABELS[capabilityKind]} added`,
-    );
-    if (saved) setCapabilityName("");
-  };
-
   const addProviderGrant = async () => {
     if (
       !snapshot ||
@@ -247,18 +220,47 @@ export function AxisSettingsPanel() {
   }
 
   if (!snapshot) {
+    const isConnected = primaryEnvironment?.connection.phase === "connected";
+    const needsUpdate = isConnected && primaryEnvironment.serverConfig !== null && !axisSupported;
+    const reconnect = async () => {
+      if (environmentId === null || reconnecting) return;
+      setReconnecting(true);
+      const result = await retryEnvironment(environmentId);
+      setReconnecting(false);
+      if (result._tag === "Success") query.refresh();
+    };
     return (
       <SettingsPageContainer>
         <SettingsSection title="Axis" description="Contexts, providers, MCPs, and skills.">
           <SettingsRow
-            title={query.error ? "Could not load Axis settings" : "Loading Axis settings"}
+            title={
+              needsUpdate
+                ? "Axis requires a backend update"
+                : !isConnected
+                  ? "Primary environment is offline"
+                  : query.error
+                    ? "Could not load Axis settings"
+                    : "Loading Axis settings"
+            }
             description={
-              query.error
-                ? "The selected environment is offline or its backend does not include Axis yet. Restart or update that environment, then reload."
-                : undefined
+              needsUpdate
+                ? "Update or restart the primary environment with an Axis-enabled build. Retrying this older backend cannot load Axis."
+                : !isConnected
+                  ? "Reconnect the primary environment to load its Axis catalog."
+                  : query.error
+                    ? "The Axis request failed after the environment connected. Retry the request."
+                    : undefined
             }
             status={query.error ?? undefined}
-            control={query.error ? <Button onClick={query.refresh}>Reload</Button> : undefined}
+            control={
+              !isConnected ? (
+                <Button disabled={reconnecting} onClick={() => void reconnect()}>
+                  {reconnecting ? "Reconnecting…" : "Reconnect"}
+                </Button>
+              ) : query.error ? (
+                <Button onClick={query.refresh}>Retry request</Button>
+              ) : undefined
+            }
           />
         </SettingsSection>
       </SettingsPageContainer>
@@ -381,12 +383,37 @@ export function AxisSettingsPanel() {
       <SettingsSection
         id="axis-capabilities"
         title="Provider capabilities"
-        description="Manage MCPs, skills, instructions, and preferences on the provider that loads them."
+        description="MCPs, skills, instructions, and preferences belong to a provider instance. Open that provider to inspect its native configuration."
       >
+        {providers.map((provider) => (
+          <SettingsRow
+            key={provider.key}
+            title={provider.label}
+            description="Manage this provider's isolated MCP connections and skills."
+            control={
+              <Button
+                render={
+                  <Link
+                    to="/settings/providers"
+                    search={{
+                      environmentId: provider.locator.environmentId,
+                      instanceId: provider.locator.instanceId,
+                      section: "mcps",
+                    }}
+                  />
+                }
+                size="xs"
+                variant="outline"
+              >
+                Manage
+              </Button>
+            }
+          />
+        ))}
         {snapshot.catalog.capabilities.length === 0 ? (
           <SettingsRow
-            title="No capabilities registered"
-            description="Register a capability on an assigned provider. It follows that provider wherever access is allowed."
+            title="No Work Hub capabilities selected"
+            description="Discovered MCPs stay on their provider. Work Hub source selection is configured separately."
           />
         ) : (
           snapshot.catalog.capabilities.map((capability) => (
@@ -430,6 +457,9 @@ export function AxisSettingsPanel() {
                           capabilities: snapshot.catalog.capabilities.filter(
                             (candidate) => candidate.id !== capability.id,
                           ),
+                          workHubSources: snapshot.catalog.workHubSources.filter(
+                            (source) => source.capabilityId !== capability.id,
+                          ),
                         },
                         "Capability removed",
                       )
@@ -442,58 +472,6 @@ export function AxisSettingsPanel() {
             />
           ))
         )}
-        <SettingsRow
-          title="Register capability"
-          description="Connection details and secrets remain in the provider environment."
-        >
-          <div className="grid gap-2 py-3 sm:grid-cols-[9rem_minmax(10rem,1fr)_minmax(12rem,1fr)_auto] sm:items-center">
-            <Select
-              value={capabilityKind}
-              onValueChange={(value) => setCapabilityKind(value as AxisCapabilityKind)}
-            >
-              <SelectTrigger aria-label="Capability type">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectPopup>
-                {Object.entries(CAPABILITY_LABELS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            <Input
-              value={capabilityName}
-              onChange={(event) => setCapabilityName(event.target.value)}
-              placeholder="Capability name"
-              aria-label="Capability name"
-            />
-            <Select
-              value={capabilityProvider}
-              onValueChange={(value) => {
-                if (value !== null) setCapabilityProvider(value);
-              }}
-            >
-              <SelectTrigger aria-label="Capability provider">
-                <SelectValue placeholder="Provider" />
-              </SelectTrigger>
-              <SelectPopup>
-                {ownedProviders.map((provider) => (
-                  <SelectItem key={provider.key} value={provider.key}>
-                    {provider.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            <Button
-              size="sm"
-              disabled={saving || !capabilityName.trim() || !capabilityProvider}
-              onClick={() => void addCapability()}
-            >
-              <PlusIcon /> Add
-            </Button>
-          </div>
-        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection

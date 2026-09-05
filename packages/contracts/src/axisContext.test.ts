@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   AxisContextCatalog,
   AxisContextId,
+  AxisWorkHubSource,
   resolveAxisContextCapabilities,
   resolveAxisContextProviderInstances,
   validateAxisContextCatalog,
@@ -11,6 +12,7 @@ import {
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeCatalog = Schema.decodeUnknownSync(AxisContextCatalog);
+const decodeWorkHubSource = Schema.decodeUnknownSync(AxisWorkHubSource);
 const now = "2026-09-05T00:00:00.000Z";
 
 function validCatalog() {
@@ -56,6 +58,16 @@ function validCatalog() {
         updatedAt: now,
       },
     ],
+    workHubSources: [
+      {
+        id: "company_b_jira",
+        contextId: "company_b",
+        provider: { environmentId: "laptop", instanceId: "codex_personal" },
+        capabilityId: "personal_jira",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
   });
 }
 
@@ -66,11 +78,33 @@ describe("AxisContextCatalog", () => {
       providerOwnerships: [],
       providerAccessGrants: [],
       capabilities: [],
+      workHubSources: [],
     });
 
     const catalog = validCatalog();
     expect(catalog.capabilities[0]).toMatchObject({ enabled: true });
+    expect(catalog.workHubSources[0]).toMatchObject({
+      enabled: true,
+      cacheTtlSeconds: 28_800,
+      collectionPolicy: {
+        calendarLookbackDays: 60,
+        calendarLookaheadDays: 90,
+        assignedWorkItemsOnly: true,
+        directMessages: true,
+        mentions: true,
+        assignedIssueComments: true,
+      },
+    });
     expect(catalog.providerAccessGrants[0]?.revokedAt).toBeNull();
+  });
+
+  it("upgrades legacy Work Hub cache entries to at least eight hours", () => {
+    expect(
+      decodeWorkHubSource({
+        ...validCatalog().workHubSources[0],
+        cacheTtlSeconds: 15 * 60,
+      }).cacheTtlSeconds,
+    ).toBe(28_800);
   });
 
   it("accepts a Personal-to-Company provider grant", () => {
@@ -151,6 +185,23 @@ describe("AxisContextCatalog", () => {
     const codes = validateAxisContextCatalog(invalid).map((issue) => issue.code);
 
     expect(codes).toContain("capability_provider_unowned");
+  });
+
+  it("rejects a Work Hub source when its context cannot access the selected provider", () => {
+    const catalog = validCatalog();
+    const invalid = {
+      ...catalog,
+      workHubSources: [
+        {
+          ...catalog.workHubSources[0]!,
+          contextId: AxisContextId.make("company_a"),
+        },
+      ],
+    };
+
+    expect(validateAxisContextCatalog(invalid).map((issue) => issue.code)).toContain(
+      "work_hub_source_provider_not_accessible",
+    );
   });
 
   it("requires exactly one Personal context and consistent revocation timestamps", () => {

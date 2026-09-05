@@ -3,6 +3,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -12,6 +13,7 @@ import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
+  AxisWorkHubSyncError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
@@ -47,6 +49,7 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProviderCapabilityInventoryError,
   ProviderUploadFeedbackError,
   ProviderSetupError,
   RelayClientInstallFailedError,
@@ -145,6 +148,10 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
+import {
+  AxisWorkHubCacheStore,
+  mergeAxisWorkHubCacheSnapshot,
+} from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -522,6 +529,7 @@ const makeWsRpcLayer = (
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const axisContextCatalog = yield* AxisContextCatalogStore;
+      const axisWorkHubCache = yield* AxisWorkHubCacheStore;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1961,6 +1969,40 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.providerCapabilitiesGet]: ({ instanceId }) =>
+          observeRpcEffect(
+            WS_METHODS.providerCapabilitiesGet,
+            Effect.gen(function* () {
+              const instance = yield* providerInstances.getInstance(instanceId);
+              if (!instance) {
+                return yield* new ProviderCapabilityInventoryError({
+                  instanceId,
+                  message: `Provider instance '${instanceId}' was not found.`,
+                });
+              }
+              const snapshot = yield* instance.snapshot.getSnapshot;
+              const mcpServers = instance.discoverMcpServers
+                ? yield* instance.discoverMcpServers().pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderCapabilityInventoryError({
+                          instanceId,
+                          message: cause.message,
+                        }),
+                    ),
+                  )
+                : [];
+              return {
+                instanceId,
+                driver: instance.driverKind,
+                checkedAt: snapshot.checkedAt,
+                mcpServers,
+                skills: snapshot.skills,
+                mcpDiscoverySupported: instance.discoverMcpServers !== undefined,
+              };
+            }),
+            { "rpc.aggregate": "provider" },
+          ),
         [WS_METHODS.axisContextsGetCatalog]: (_input) =>
           observeRpcEffect(WS_METHODS.axisContextsGetCatalog, axisContextCatalog.get, {
             "rpc.aggregate": "axis",
@@ -1969,6 +2011,61 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.axisContextsReplaceCatalog,
             axisContextCatalog.replace(input),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisWorkHubGetCache]: (_input) =>
+          observeRpcEffect(WS_METHODS.axisWorkHubGetCache, axisWorkHubCache.list, {
+            "rpc.aggregate": "axis",
+          }),
+        [WS_METHODS.providerWorkHubCollect]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerWorkHubCollect,
+            Effect.gen(function* () {
+              const instance = yield* providerInstances.getInstance(input.provider.instanceId);
+              if (!instance?.collectWorkHubSource) {
+                return yield* new AxisWorkHubSyncError({
+                  sourceId: input.sourceId,
+                  instanceId: input.provider.instanceId,
+                  message: instance
+                    ? `Provider '${instance.driverKind}' does not support Work Hub sync.`
+                    : `Provider instance '${input.provider.instanceId}' was not found.`,
+                });
+              }
+              // Detach the sync and persist server-side: a provider sync takes minutes,
+              // and the requesting client navigating away or disconnecting must not
+              // abort it mid-flight. The join is interruptible; the work is not.
+              const fiber = yield* instance.collectWorkHubSource(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new AxisWorkHubSyncError({
+                      sourceId: input.sourceId,
+                      instanceId: input.provider.instanceId,
+                      message: cause.detail || "The provider could not sync this MCP.",
+                    }),
+                ),
+                Effect.flatMap((snapshot) =>
+                  Effect.gen(function* () {
+                    const previous = yield* axisWorkHubCache.get(snapshot.sourceId);
+                    const merged = mergeAxisWorkHubCacheSnapshot(previous, snapshot);
+                    yield* axisWorkHubCache.replace(merged);
+                    return merged;
+                  }),
+                ),
+                Effect.forkDetach,
+              );
+              return yield* Fiber.join(fiber);
+            }),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisWorkHubReplaceCache]: ({ snapshot }) =>
+          observeRpcEffect(
+            WS_METHODS.axisWorkHubReplaceCache,
+            Effect.gen(function* () {
+              const previous = yield* axisWorkHubCache.get(snapshot.sourceId);
+              const merged = mergeAxisWorkHubCacheSnapshot(previous, snapshot);
+              yield* axisWorkHubCache.replace(merged);
+              return merged;
+            }),
             { "rpc.aggregate": "axis" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>

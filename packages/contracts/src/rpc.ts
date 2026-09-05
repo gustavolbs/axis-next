@@ -9,6 +9,13 @@ import {
   AxisContextCatalogSnapshot,
 } from "./axisContext.ts";
 import {
+  AxisWorkHubCachePersistenceError,
+  AxisWorkHubCacheSnapshot,
+  AxisWorkHubCollectInput,
+  AxisWorkHubReplaceCacheInput,
+  AxisWorkHubSyncError,
+} from "./axisWorkHub.ts";
+import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
   ProviderAuthState,
@@ -17,6 +24,11 @@ import {
   ProviderSetupError,
   ProviderSetupInput,
 } from "./providerSetup.ts";
+import {
+  ProviderCapabilityInventory,
+  ProviderCapabilityInventoryError,
+  ProviderCapabilityInventoryInput,
+} from "./providerCapabilities.ts";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
@@ -262,6 +274,7 @@ export const WS_METHODS = {
   providerInstallCancel: "provider.install.cancel",
   providerInstallSubscribe: "provider.install.subscribe",
   providerInstallRemove: "provider.install.remove",
+  providerCapabilitiesGet: "provider.capabilities.get",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -331,6 +344,9 @@ export const WS_METHODS = {
   // Axis context and capability management
   axisContextsGetCatalog: "axis.contexts.getCatalog",
   axisContextsReplaceCatalog: "axis.contexts.replaceCatalog",
+  axisWorkHubGetCache: "axis.workHub.getCache",
+  providerWorkHubCollect: "provider.workHub.collect",
+  axisWorkHubReplaceCache: "axis.workHub.replaceCache",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -522,6 +538,12 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
+export const WsProviderCapabilitiesGetRpc = Rpc.make(WS_METHODS.providerCapabilitiesGet, {
+  payload: ProviderCapabilityInventoryInput,
+  success: ProviderCapabilityInventory,
+  error: Schema.Union([ProviderCapabilityInventoryError, EnvironmentAuthorizationError]),
+});
+
 export const WsAxisContextsGetCatalogRpc = Rpc.make(WS_METHODS.axisContextsGetCatalog, {
   payload: Schema.Struct({}),
   success: AxisContextCatalogSnapshot,
@@ -532,6 +554,28 @@ export const WsAxisContextsReplaceCatalogRpc = Rpc.make(WS_METHODS.axisContextsR
   payload: AxisContextCatalogReplaceInput,
   success: AxisContextCatalogSnapshot,
   error: Schema.Union([AxisContextCatalogError, EnvironmentAuthorizationError]),
+});
+
+export const WsAxisWorkHubGetCacheRpc = Rpc.make(WS_METHODS.axisWorkHubGetCache, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(AxisWorkHubCacheSnapshot),
+  error: Schema.Union([AxisWorkHubCachePersistenceError, EnvironmentAuthorizationError]),
+});
+
+export const WsProviderWorkHubCollectRpc = Rpc.make(WS_METHODS.providerWorkHubCollect, {
+  payload: AxisWorkHubCollectInput,
+  success: AxisWorkHubCacheSnapshot,
+  error: Schema.Union([
+    AxisWorkHubSyncError,
+    AxisWorkHubCachePersistenceError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsAxisWorkHubReplaceCacheRpc = Rpc.make(WS_METHODS.axisWorkHubReplaceCache, {
+  payload: AxisWorkHubReplaceCacheInput,
+  success: AxisWorkHubCacheSnapshot,
+  error: Schema.Union([AxisWorkHubCachePersistenceError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1218,8 +1262,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsProviderCapabilitiesGetRpc,
   WsAxisContextsGetCatalogRpc,
   WsAxisContextsReplaceCatalogRpc,
+  WsAxisWorkHubGetCacheRpc,
+  WsProviderWorkHubCollectRpc,
+  WsAxisWorkHubReplaceCacheRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

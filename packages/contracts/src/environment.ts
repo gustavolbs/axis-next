@@ -88,6 +88,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server exposes the pull-request list, detail, activity, diff, and mutation APIs. Absent on
       servers from before the pull-request workspace shipped, so clients must not probe them. */
   pullRequests: Schema.optionalKey(Schema.Boolean),
+  /** Server persists Axis contexts and Work Hub cache data. Absent on older servers, so clients
+      must show an update affordance instead of repeatedly sending unsupported Axis RPCs. */
+  axis: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.settle / thread.unsettle commands. Absent on
       pre-settlement servers, so clients treat missing as unsupported and
       never send the commands under version skew. */

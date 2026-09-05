@@ -78,8 +78,18 @@ describe("Axis provider ownership", () => {
         {
           id: "skill",
           provider: { environmentId: "env", instanceId: "codex" },
-          kind: "skill",
-          name: "Skill",
+          kind: "mcp",
+          name: "Jira",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      workHubSources: [
+        {
+          id: "work_hub_source",
+          contextId: "company_a",
+          provider: { environmentId: "env", instanceId: "codex" },
+          capabilityId: "skill",
           createdAt: now,
           updatedAt: now,
         },
@@ -96,6 +106,7 @@ describe("Axis provider ownership", () => {
     expect(reassigned.providerOwnerships[0]?.contextId).toBe("company_a");
     expect(reassigned.providerAccessGrants).toEqual([]);
     expect(reassigned.capabilities.map((capability) => capability.id)).toEqual(["skill"]);
+    expect(reassigned.workHubSources).toEqual([]);
   });
 
   it("preserves access grants when the provider owner does not change", () => {
@@ -120,5 +131,6 @@ describe("Axis provider ownership", () => {
 
     expect(result.providerAccessGrants).toEqual([]);
     expect(result.capabilities.map((capability) => capability.id)).toEqual(["skill"]);
+    expect(result.workHubSources).toEqual([]);
   });
 });

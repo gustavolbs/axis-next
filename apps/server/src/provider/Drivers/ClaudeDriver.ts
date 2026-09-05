@@ -57,8 +57,14 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import {
+  makeClaudeCapabilitiesCacheKey,
+  makeClaudeContinuationGroupKey,
+  makeClaudeEnvironment,
+} from "./ClaudeHome.ts";
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import { discoverProviderMcpServers, parseClaudeMcpList } from "./ProviderMcpDiscovery.ts";
+import { collectClaudeWorkHubSource } from "../../axis/workHub/ProviderWorkHubSync.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -230,6 +236,55 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
             );
+      const discoverMcpServers = () =>
+        makeClaudeEnvironment(effectiveConfig, processEnv).pipe(
+          Effect.flatMap((claudeEnvironment) =>
+            discoverProviderMcpServers({
+              binaryPath: effectiveConfig.binaryPath,
+              args: ["mcp", "list"],
+              cwd: process.cwd(),
+              environment: claudeEnvironment,
+              parse: parseClaudeMcpList,
+            }),
+          ),
+          Effect.timeout("30 seconds"),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: `Failed to discover Claude MCP servers: ${cause.message ?? String(cause)}`,
+                cause,
+              }),
+          ),
+        );
+      const collectWorkHubSource: NonNullable<ProviderInstance["collectWorkHubSource"]> = (
+        request,
+      ) =>
+        // No MCP discovery here: `claude mcp list` health-checks every connector and
+        // adds ~10s per sync. The sync just runs against the requested MCP name and
+        // fails naturally if it does not exist.
+        makeClaudeEnvironment(effectiveConfig, processEnv).pipe(
+          Effect.flatMap((claudeEnvironment) =>
+            collectClaudeWorkHubSource({
+              request,
+              config: effectiveConfig,
+              environment: claudeEnvironment,
+              options: {
+                driver: DRIVER_KIND,
+                instanceId,
+                availableMcps: [],
+              },
+            }).pipe(
+              Effect.scoped,
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            ),
+          ),
+          Effect.provideService(Path.Path, path),
+        );
 
       return {
         instanceId,
@@ -243,6 +298,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd,
+        discoverMcpServers,
+        collectWorkHubSource,
         adapter,
         textGeneration,
       } satisfies ProviderInstance;
