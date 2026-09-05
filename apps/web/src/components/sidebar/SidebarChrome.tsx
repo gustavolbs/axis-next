@@ -1,5 +1,6 @@
 import {
   ArrowLeftIcon,
+  BriefcaseBusinessIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
   SettingsIcon,
@@ -143,9 +144,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           ? "project-settings"
           : location.pathname === "/usage"
             ? "usage"
-            : location.pathname === "/pull-requests"
-              ? "pull-requests"
-              : null,
+            : location.pathname === "/work-hub"
+              ? "work-hub"
+              : location.pathname === "/pull-requests"
+                ? "pull-requests"
+                : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
@@ -177,6 +180,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/usage" });
   }, [isMobile, navigate, setOpenMobile]);
 
+  const handleWorkHubClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/work-hub" });
+  }, [closeMobileSidebar, navigate]);
+
   const handleBackClick = useCallback(() => {
     closeMobileSidebar();
     if (canGoBack) {
@@ -197,6 +205,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </SidebarMenuItem>
       ) : (
         <>
+          <SidebarUtilityItem
+            icon={<BriefcaseBusinessIcon />}
+            label="Work Hub"
+            onClick={handleWorkHubClick}
+          />
           <SidebarUtilityItem
             icon={<SettingsIcon />}
             label="Settings"
