@@ -8,7 +8,7 @@ import {
   resolveAxisContextProviderInstances,
   validateAxisContextCatalog,
 } from "./axisContext.ts";
-import { ProviderDriverKind } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeCatalog = Schema.decodeUnknownSync(AxisContextCatalog);
 const now = "2026-09-05T00:00:00.000Z";
@@ -48,23 +48,10 @@ function validCatalog() {
     capabilities: [
       {
         id: "personal_jira",
-        ownerContextId: "personal",
+        provider: { environmentId: "laptop", instanceId: "codex_personal" },
         kind: "mcp",
         name: "Jira",
-        portableToCompanies: true,
         compatibleDrivers: ["codex"],
-        createdAt: now,
-        updatedAt: now,
-      },
-    ],
-    capabilityGrants: [
-      {
-        id: "personal_jira_to_b",
-        capabilityId: "personal_jira",
-        ownerContextId: "personal",
-        targetContextId: "company_b",
-        providerInstances: [{ environmentId: "laptop", instanceId: "codex_personal" }],
-        status: "active",
         createdAt: now,
         updatedAt: now,
       },
@@ -79,15 +66,14 @@ describe("AxisContextCatalog", () => {
       providerOwnerships: [],
       providerAccessGrants: [],
       capabilities: [],
-      capabilityGrants: [],
     });
 
     const catalog = validCatalog();
-    expect(catalog.capabilities[0]).toMatchObject({ enabled: true, portableToCompanies: true });
+    expect(catalog.capabilities[0]).toMatchObject({ enabled: true });
     expect(catalog.providerAccessGrants[0]?.revokedAt).toBeNull();
   });
 
-  it("accepts a Personal-to-Company provider and capability grant", () => {
+  it("accepts a Personal-to-Company provider grant", () => {
     expect(validateAxisContextCatalog(validCatalog())).toEqual([]);
   });
 
@@ -110,7 +96,7 @@ describe("AxisContextCatalog", () => {
     ).toEqual(["codex_personal"]);
   });
 
-  it("resolves Company capabilities only from its own context and explicit Personal grants", () => {
+  it("resolves capabilities from the provider available in the selected context", () => {
     const catalog = validCatalog();
     const companyBCapabilities = resolveAxisContextCapabilities({
       catalog,
@@ -148,22 +134,23 @@ describe("AxisContextCatalog", () => {
     );
   });
 
-  it("rejects non-portable capabilities and inaccessible provider bindings", () => {
+  it("rejects capabilities attached to an unowned provider", () => {
     const catalog = validCatalog();
     const invalid = {
       ...catalog,
-      capabilities: [{ ...catalog.capabilities[0]!, portableToCompanies: false }],
-      capabilityGrants: [
+      capabilities: [
         {
-          ...catalog.capabilityGrants[0]!,
-          providerInstances: [catalog.providerOwnerships[1]!.provider],
+          ...catalog.capabilities[0]!,
+          provider: {
+            environmentId: catalog.providerOwnerships[0]!.provider.environmentId,
+            instanceId: ProviderInstanceId.make("missing"),
+          },
         },
       ],
     };
     const codes = validateAxisContextCatalog(invalid).map((issue) => issue.code);
 
-    expect(codes).toContain("capability_not_portable");
-    expect(codes).toContain("capability_provider_not_accessible");
+    expect(codes).toContain("capability_provider_unowned");
   });
 
   it("requires exactly one Personal context and consistent revocation timestamps", () => {

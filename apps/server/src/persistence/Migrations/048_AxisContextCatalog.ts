@@ -23,7 +23,6 @@ export default Effect.gen(function* () {
     providerOwnerships: [],
     providerAccessGrants: [],
     capabilities: [],
-    capabilityGrants: [],
   });
 
   yield* sql`

@@ -36,9 +36,6 @@ export type AxisProviderAccessGrantId = typeof AxisProviderAccessGrantId.Type;
 export const AxisCapabilityId = makeAxisEntityId("AxisCapabilityId");
 export type AxisCapabilityId = typeof AxisCapabilityId.Type;
 
-export const AxisCapabilityGrantId = makeAxisEntityId("AxisCapabilityGrantId");
-export type AxisCapabilityGrantId = typeof AxisCapabilityGrantId.Type;
-
 export const AxisContextKind = Schema.Literals(["personal", "company"]);
 export type AxisContextKind = typeof AxisContextKind.Type;
 
@@ -70,7 +67,8 @@ export type AxisGrantStatus = typeof AxisGrantStatus.Type;
 
 /**
  * Directional permission for a Company to select a Personal provider instance.
- * The grant does not transfer thread, session, memory, or capability data.
+ * Provider-owned capabilities travel with the provider; context-owned thread,
+ * session, memory, and product data do not.
  */
 export const AxisProviderAccessGrant = Schema.Struct({
   id: AxisProviderAccessGrantId,
@@ -88,17 +86,16 @@ export const AxisCapabilityKind = Schema.Literals(["mcp", "skill", "instructions
 export type AxisCapabilityKind = typeof AxisCapabilityKind.Type;
 
 /**
- * Management metadata for a capability. Type-specific configuration and
- * secrets remain behind the server/driver boundary and are not copied here.
+ * Management metadata for a provider-owned capability. Type-specific
+ * configuration and secrets remain behind the server/driver boundary.
  */
 export const AxisCapability = Schema.Struct({
   id: AxisCapabilityId,
-  ownerContextId: AxisContextId,
+  provider: AxisProviderInstanceLocator,
   kind: AxisCapabilityKind,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
   description: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(500))),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  portableToCompanies: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   compatibleDrivers: Schema.Array(ProviderDriverKind).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -106,23 +103,6 @@ export const AxisCapability = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type AxisCapability = typeof AxisCapability.Type;
-
-/**
- * Grants one portable Personal capability to one Company and explicitly
- * names the provider instances on which it may be materialized.
- */
-export const AxisCapabilityGrant = Schema.Struct({
-  id: AxisCapabilityGrantId,
-  capabilityId: AxisCapabilityId,
-  ownerContextId: AxisContextId,
-  targetContextId: AxisContextId,
-  providerInstances: Schema.Array(AxisProviderInstanceLocator),
-  status: AxisGrantStatus,
-  createdAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-  revokedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-});
-export type AxisCapabilityGrant = typeof AxisCapabilityGrant.Type;
 
 export const AxisContextCatalog = Schema.Struct({
   contexts: Schema.Array(AxisContext).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -133,9 +113,6 @@ export const AxisContextCatalog = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   capabilities: Schema.Array(AxisCapability).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  capabilityGrants: Schema.Array(AxisCapabilityGrant).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
 });
 export type AxisContextCatalog = typeof AxisContextCatalog.Type;
 
@@ -150,12 +127,7 @@ export const AxisContextCatalogIssueCode = Schema.Literals([
   "provider_grant_owner_mismatch",
   "revocation_state_mismatch",
   "duplicate_capability_id",
-  "unknown_capability",
-  "capability_grant_owner_not_personal",
-  "capability_grant_target_not_company",
-  "capability_grant_owner_mismatch",
-  "capability_not_portable",
-  "capability_provider_not_accessible",
+  "capability_provider_unowned",
 ]);
 export type AxisContextCatalogIssueCode = typeof AxisContextCatalogIssueCode.Type;
 
@@ -258,11 +230,6 @@ export function validateAxisContextCatalog(
       "duplicate_capability_id",
       "capabilities",
     ),
-    ...duplicateIds(
-      catalog.capabilityGrants.map((grant) => grant.id),
-      "duplicate_grant_id",
-      "capabilityGrants",
-    ),
   );
 
   const providerOwners = new Map<string, AxisContextId>();
@@ -283,7 +250,6 @@ export function validateAxisContextCatalog(
     }
   }
 
-  const activeProviderAccess = new Set<string>();
   for (const [index, grant] of catalog.providerAccessGrants.entries()) {
     const path = `providerAccessGrants[${index}]`;
     const owner = contexts.get(grant.ownerContextId);
@@ -322,91 +288,15 @@ export function validateAxisContextCatalog(
         message: "The grant owner does not own this provider instance.",
       });
     }
-    if (grant.status === "active") {
-      activeProviderAccess.add(
-        `${grant.targetContextId}\u0000${axisProviderInstanceLocatorKey(grant.provider)}`,
-      );
-    }
   }
 
-  const capabilities = new Map(
-    catalog.capabilities.map((capability) => [capability.id, capability]),
-  );
   for (const [index, capability] of catalog.capabilities.entries()) {
-    if (!contexts.has(capability.ownerContextId)) {
+    if (!providerOwners.has(axisProviderInstanceLocatorKey(capability.provider))) {
       issues.push({
-        code: "unknown_context",
+        code: "capability_provider_unowned",
         path: `capabilities[${index}]`,
-        message: "Capability owner does not exist.",
+        message: "A capability must belong to an owned provider instance.",
       });
-    }
-  }
-
-  for (const [index, grant] of catalog.capabilityGrants.entries()) {
-    const path = `capabilityGrants[${index}]`;
-    const owner = contexts.get(grant.ownerContextId);
-    const target = contexts.get(grant.targetContextId);
-    const capability = capabilities.get(grant.capabilityId);
-    if ((grant.status === "revoked") !== (grant.revokedAt !== null)) {
-      issues.push({
-        code: "revocation_state_mismatch",
-        path,
-        message: "Revoked grants require revokedAt; active grants must not have it.",
-      });
-    }
-    if (!owner || !target) {
-      issues.push({ code: "unknown_context", path, message: "Grant context does not exist." });
-      continue;
-    }
-    if (!capability) {
-      issues.push({
-        code: "unknown_capability",
-        path,
-        message: "Granted capability does not exist.",
-      });
-      continue;
-    }
-    if (owner.kind !== "personal") {
-      issues.push({
-        code: "capability_grant_owner_not_personal",
-        path,
-        message: "Only Personal capabilities may cross into a Company.",
-      });
-    }
-    if (target.kind !== "company") {
-      issues.push({
-        code: "capability_grant_target_not_company",
-        path,
-        message: "A capability grant must target a Company.",
-      });
-    }
-    if (capability.ownerContextId !== grant.ownerContextId) {
-      issues.push({
-        code: "capability_grant_owner_mismatch",
-        path,
-        message: "The grant owner does not own this capability.",
-      });
-    }
-    if (!capability.portableToCompanies) {
-      issues.push({
-        code: "capability_not_portable",
-        path,
-        message: "This capability is not marked portable to Companies.",
-      });
-    }
-    for (const provider of grant.providerInstances) {
-      const providerKey = axisProviderInstanceLocatorKey(provider);
-      const targetOwnsProvider = providerOwners.get(providerKey) === grant.targetContextId;
-      const targetMayUseProvider = activeProviderAccess.has(
-        `${grant.targetContextId}\u0000${providerKey}`,
-      );
-      if (!targetOwnsProvider && !targetMayUseProvider) {
-        issues.push({
-          code: "capability_provider_not_accessible",
-          path,
-          message: "The target Company cannot access a provider named by this capability grant.",
-        });
-      }
     }
   }
 
@@ -435,9 +325,8 @@ function capabilitySupportsDriver(capability: AxisCapability, driver: ProviderDr
 }
 
 /**
- * Computes the capabilities visible to one effective provider binding. The
- * result contains context-owned capabilities plus active, provider-specific
- * Personal grants and never infers access from provider ownership alone.
+ * Computes the capabilities attached to one provider when that provider is
+ * accessible from the selected context.
  */
 export function resolveAxisContextCapabilities(input: {
   readonly catalog: AxisContextCatalog;
@@ -447,43 +336,14 @@ export function resolveAxisContextCapabilities(input: {
 }): ReadonlyArray<AxisCapability> {
   const { catalog, contextId, provider, driver } = input;
   const providerKey = axisProviderInstanceLocatorKey(provider);
-  const capabilities = new Map<AxisCapabilityId, AxisCapability>();
-
-  for (const capability of catalog.capabilities) {
-    if (
-      capability.ownerContextId === contextId &&
-      capability.enabled &&
-      capabilitySupportsDriver(capability, driver)
-    ) {
-      capabilities.set(capability.id, capability);
-    }
-  }
-
-  const capabilityById = new Map(
-    catalog.capabilities.map((capability) => [capability.id, capability]),
+  const accessible = resolveAxisContextProviderInstances(catalog, contextId).some(
+    (candidate) => axisProviderInstanceLocatorKey(candidate) === providerKey,
   );
-  for (const grant of catalog.capabilityGrants) {
-    if (
-      grant.targetContextId !== contextId ||
-      grant.status !== "active" ||
-      !grant.providerInstances.some(
-        (candidate) => axisProviderInstanceLocatorKey(candidate) === providerKey,
-      )
-    ) {
-      continue;
-    }
-    const capability = capabilityById.get(grant.capabilityId);
-    if (
-      !capability ||
-      !capability.enabled ||
-      !capability.portableToCompanies ||
-      capability.ownerContextId !== grant.ownerContextId ||
-      !capabilitySupportsDriver(capability, driver)
-    ) {
-      continue;
-    }
-    capabilities.set(capability.id, capability);
-  }
-
-  return [...capabilities.values()];
+  if (!accessible) return [];
+  return catalog.capabilities.filter(
+    (capability) =>
+      axisProviderInstanceLocatorKey(capability.provider) === providerKey &&
+      capability.enabled &&
+      capabilitySupportsDriver(capability, driver),
+  );
 }

@@ -2,11 +2,14 @@ import { useMemo, useState } from "react";
 import { PlusIcon, Trash2Icon } from "lucide-react";
 
 import {
+  axisProviderInstanceLocatorKey,
   AxisCapabilityId,
   AxisContextId,
+  AxisProviderAccessGrantId,
+  type AxisCapabilityKind,
   type AxisContextCatalog,
   type AxisContextCatalogSnapshot,
-  type AxisCapabilityKind,
+  type AxisProviderInstanceLocator,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -14,9 +17,9 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { randomUUID } from "~/lib/utils";
-import { serverEnvironment } from "~/state/server";
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
+import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -24,7 +27,11 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { removeAxisCompany } from "./AxisSettings.logic";
+import {
+  removeAxisCompany,
+  removeAxisProviderAccessGrant,
+  setAxisProviderOwner,
+} from "./AxisSettings.logic";
 
 const CAPABILITY_LABELS: Readonly<Record<AxisCapabilityKind, string>> = {
   mcp: "MCP",
@@ -39,6 +46,7 @@ function entityId(prefix: string): string {
 
 export function AxisSettingsPanel() {
   const environmentId = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
   const query = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -50,8 +58,9 @@ export function AxisSettingsPanel() {
   const [companyName, setCompanyName] = useState("");
   const [capabilityName, setCapabilityName] = useState("");
   const [capabilityKind, setCapabilityKind] = useState<AxisCapabilityKind>("mcp");
-  const [capabilityOwner, setCapabilityOwner] = useState<string>("personal");
-  const [portable, setPortable] = useState(false);
+  const [capabilityProvider, setCapabilityProvider] = useState("");
+  const [providerGrantProvider, setProviderGrantProvider] = useState("");
+  const [providerGrantCompany, setProviderGrantCompany] = useState("");
   const [saving, setSaving] = useState(false);
 
   const snapshot = query.data;
@@ -59,6 +68,55 @@ export function AxisSettingsPanel() {
     () => new Map(snapshot?.catalog.contexts.map((context) => [context.id, context.name]) ?? []),
     [snapshot],
   );
+  const providers = useMemo(
+    () =>
+      environments.flatMap((environment) =>
+        (environment.serverConfig?.providers ?? []).map((provider) => {
+          const locator = {
+            environmentId: environment.environmentId,
+            instanceId: provider.instanceId,
+          };
+          return {
+            locator,
+            key: axisProviderInstanceLocatorKey(locator),
+            label: `${provider.displayName ?? provider.instanceId} · ${environment.label}`,
+          };
+        }),
+      ),
+    [environments],
+  );
+  const providerByKey = useMemo(
+    () => new Map(providers.map((provider) => [provider.key, provider])),
+    [providers],
+  );
+  const companies =
+    snapshot?.catalog.contexts.filter((context) => context.kind === "company") ?? [];
+  const personalContext = snapshot?.catalog.contexts.find((context) => context.kind === "personal");
+  const providerOwnerByKey = useMemo(
+    () =>
+      new Map(
+        snapshot?.catalog.providerOwnerships.map((ownership) => [
+          axisProviderInstanceLocatorKey(ownership.provider),
+          ownership.contextId,
+        ]) ?? [],
+      ),
+    [snapshot],
+  );
+  const ownedProviders = providers.filter((provider) => providerOwnerByKey.has(provider.key));
+  const personalProviderOptions = providers.filter(
+    (provider) => providerOwnerByKey.get(provider.key) === personalContext?.id,
+  );
+  const duplicateProviderGrant = snapshot?.catalog.providerAccessGrants.some(
+    (grant) =>
+      grant.status === "active" &&
+      grant.targetContextId === providerGrantCompany &&
+      axisProviderInstanceLocatorKey(grant.provider) === providerGrantProvider,
+  );
+
+  const providerLabel = (provider: AxisProviderInstanceLocator) => {
+    const key = axisProviderInstanceLocatorKey(provider);
+    return providerByKey.get(key)?.label ?? `${provider.instanceId} · ${provider.environmentId}`;
+  };
 
   const save = async (
     current: AxisContextCatalogSnapshot,
@@ -111,8 +169,9 @@ export function AxisSettingsPanel() {
 
   const addCapability = async () => {
     if (!snapshot || !capabilityName.trim()) return;
+    const selected = providerByKey.get(capabilityProvider);
+    if (!selected || !providerOwnerByKey.has(selected.key)) return;
     const now = new Date().toISOString();
-    const ownerContextId = AxisContextId.make(capabilityOwner);
     const saved = await save(
       snapshot,
       {
@@ -121,11 +180,10 @@ export function AxisSettingsPanel() {
           ...snapshot.catalog.capabilities,
           {
             id: AxisCapabilityId.make(entityId("capability")),
-            ownerContextId,
+            provider: selected.locator,
             kind: capabilityKind,
             name: capabilityName.trim(),
             enabled: true,
-            portableToCompanies: ownerContextId === "personal" && portable,
             compatibleDrivers: [],
             createdAt: now,
             updatedAt: now,
@@ -135,6 +193,42 @@ export function AxisSettingsPanel() {
       `${CAPABILITY_LABELS[capabilityKind]} added`,
     );
     if (saved) setCapabilityName("");
+  };
+
+  const addProviderGrant = async () => {
+    if (
+      !snapshot ||
+      !personalContext ||
+      !providerGrantProvider ||
+      !providerGrantCompany ||
+      duplicateProviderGrant
+    ) {
+      return;
+    }
+    const selected = providerByKey.get(providerGrantProvider);
+    if (!selected) return;
+    const now = new Date().toISOString();
+    const saved = await save(
+      snapshot,
+      {
+        ...snapshot.catalog,
+        providerAccessGrants: [
+          ...snapshot.catalog.providerAccessGrants,
+          {
+            id: AxisProviderAccessGrantId.make(entityId("provider_grant")),
+            ownerContextId: personalContext.id,
+            targetContextId: AxisContextId.make(providerGrantCompany),
+            provider: selected.locator,
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+            revokedAt: null,
+          },
+        ],
+      },
+      "Personal provider granted to company",
+    );
+    if (saved) setProviderGrantProvider("");
   };
 
   const removeCompany = (contextId: AxisContextId) => {
@@ -155,11 +249,16 @@ export function AxisSettingsPanel() {
   if (!snapshot) {
     return (
       <SettingsPageContainer>
-        <SettingsSection title="Axis" description="Contexts, MCPs, skills, and sharing rules.">
+        <SettingsSection title="Axis" description="Contexts, providers, MCPs, and skills.">
           <SettingsRow
             title={query.error ? "Could not load Axis settings" : "Loading Axis settings"}
-            description={query.error ?? undefined}
-            control={query.error ? <Button onClick={query.refresh}>Retry</Button> : undefined}
+            description={
+              query.error
+                ? "The selected environment is offline or its backend does not include Axis yet. Restart or update that environment, then reload."
+                : undefined
+            }
+            status={query.error ?? undefined}
+            control={query.error ? <Button onClick={query.refresh}>Reload</Button> : undefined}
           />
         </SettingsSection>
       </SettingsPageContainer>
@@ -171,7 +270,7 @@ export function AxisSettingsPanel() {
       <SettingsSection
         id="axis-contexts"
         title="Personal & Companies"
-        description="Each company is isolated. Personal providers and capabilities only enter a company through an explicit grant."
+        description="Each Company is an isolated work and data context."
       >
         {snapshot.catalog.contexts.map((context) => (
           <SettingsRow
@@ -179,8 +278,8 @@ export function AxisSettingsPanel() {
             title={context.name}
             description={
               context.kind === "personal"
-                ? "Your private context. It cannot read company data."
-                : "An isolated company workspace."
+                ? "Your private context. It cannot read Company data."
+                : "An isolated Company workspace."
             }
             status={context.kind === "personal" ? "Personal" : "Company"}
             control={
@@ -199,8 +298,8 @@ export function AxisSettingsPanel() {
           />
         ))}
         <SettingsRow
-          title="Add company"
-          description="Creates a new isolated context with no inherited providers, MCPs, skills, or data."
+          title="Add Company"
+          description="Creates a new isolated context with no inherited providers or data."
           control={
             <div className="flex w-full gap-2 sm:w-80">
               <Input
@@ -222,26 +321,80 @@ export function AxisSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection
+        id="axis-provider-ownership"
+        title="Provider ownership"
+        description="Assign every configured provider account to Personal or exactly one Company."
+      >
+        {providers.length === 0 ? (
+          <SettingsRow
+            title="No providers found"
+            description="Configure a provider connection before assigning its Axis owner."
+          />
+        ) : (
+          providers.map((provider) => {
+            const owner = providerOwnerByKey.get(provider.key);
+            const hasCapabilities = snapshot.catalog.capabilities.some(
+              (capability) => axisProviderInstanceLocatorKey(capability.provider) === provider.key,
+            );
+            return (
+              <SettingsRow
+                key={provider.key}
+                title={provider.label}
+                status={owner ? (contextNames.get(owner) ?? owner) : "Unassigned"}
+                control={
+                  <Select
+                    value={owner ?? "unassigned"}
+                    onValueChange={(value) => {
+                      if (value === null) return;
+                      void save(
+                        snapshot,
+                        setAxisProviderOwner(
+                          snapshot.catalog,
+                          provider.locator,
+                          value === "unassigned" ? null : AxisContextId.make(value),
+                        ),
+                        "Provider owner updated",
+                      );
+                    }}
+                  >
+                    <SelectTrigger className="w-44" aria-label={`Owner of ${provider.label}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      <SelectItem value="unassigned" disabled={hasCapabilities}>
+                        Unassigned
+                      </SelectItem>
+                      {snapshot.catalog.contexts.map((context) => (
+                        <SelectItem key={context.id} value={context.id}>
+                          {context.name}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                }
+              />
+            );
+          })
+        )}
+      </SettingsSection>
+
+      <SettingsSection
         id="axis-capabilities"
-        title="Agent capabilities"
-        description="Manage MCPs, skills, instructions, and preferences by owner context. Secrets stay in the provider environment."
+        title="Provider capabilities"
+        description="Manage MCPs, skills, instructions, and preferences on the provider that loads them."
       >
         {snapshot.catalog.capabilities.length === 0 ? (
           <SettingsRow
             title="No capabilities registered"
-            description="Add an MCP or skill here to control where it is enabled and whether Personal may share it with companies."
+            description="Register a capability on an assigned provider. It follows that provider wherever access is allowed."
           />
         ) : (
           snapshot.catalog.capabilities.map((capability) => (
             <SettingsRow
               key={capability.id}
               title={capability.name}
-              description={`${CAPABILITY_LABELS[capability.kind]} · ${contextNames.get(capability.ownerContextId) ?? capability.ownerContextId}`}
-              status={
-                capability.portableToCompanies
-                  ? "Eligible for explicit company grants"
-                  : "Only available in its owner context"
-              }
+              description={`${CAPABILITY_LABELS[capability.kind]} · ${providerLabel(capability.provider)}`}
+              status={capability.enabled ? "Enabled" : "Disabled"}
               control={
                 <div className="flex items-center gap-2">
                   <Switch
@@ -277,9 +430,6 @@ export function AxisSettingsPanel() {
                           capabilities: snapshot.catalog.capabilities.filter(
                             (candidate) => candidate.id !== capability.id,
                           ),
-                          capabilityGrants: snapshot.catalog.capabilityGrants.filter(
-                            (grant) => grant.capabilityId !== capability.id,
-                          ),
                         },
                         "Capability removed",
                       )
@@ -293,10 +443,10 @@ export function AxisSettingsPanel() {
           ))
         )}
         <SettingsRow
-          title="Register MCP or skill"
-          description="Register ownership first; connection and provider-specific configuration remain on the owning environment."
+          title="Register capability"
+          description="Connection details and secrets remain in the provider environment."
         >
-          <div className="grid gap-2 py-3 sm:grid-cols-[9rem_minmax(10rem,1fr)_minmax(10rem,1fr)_auto_auto] sm:items-center">
+          <div className="grid gap-2 py-3 sm:grid-cols-[9rem_minmax(10rem,1fr)_minmax(12rem,1fr)_auto] sm:items-center">
             <Select
               value={capabilityKind}
               onValueChange={(value) => setCapabilityKind(value as AxisCapabilityKind)}
@@ -319,33 +469,25 @@ export function AxisSettingsPanel() {
               aria-label="Capability name"
             />
             <Select
-              value={capabilityOwner}
+              value={capabilityProvider}
               onValueChange={(value) => {
-                if (value !== null) setCapabilityOwner(value);
+                if (value !== null) setCapabilityProvider(value);
               }}
             >
-              <SelectTrigger aria-label="Owner context">
-                <SelectValue />
+              <SelectTrigger aria-label="Capability provider">
+                <SelectValue placeholder="Provider" />
               </SelectTrigger>
               <SelectPopup>
-                {snapshot.catalog.contexts.map((context) => (
-                  <SelectItem key={context.id} value={context.id}>
-                    {context.name}
+                {ownedProviders.map((provider) => (
+                  <SelectItem key={provider.key} value={provider.key}>
+                    {provider.label}
                   </SelectItem>
                 ))}
               </SelectPopup>
             </Select>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Switch
-                checked={portable}
-                disabled={capabilityOwner !== "personal"}
-                onCheckedChange={setPortable}
-              />{" "}
-              Shareable
-            </label>
             <Button
               size="sm"
-              disabled={saving || !capabilityName.trim()}
+              disabled={saving || !capabilityName.trim() || !capabilityProvider}
               onClick={() => void addCapability()}
             >
               <PlusIcon /> Add
@@ -356,14 +498,85 @@ export function AxisSettingsPanel() {
 
       <SettingsSection
         id="axis-provider-access"
-        title="Provider & company grants"
-        description="Provider access and capability access are granted separately. Company A never receives visibility into Company B."
+        title="Personal provider access"
+        description="Allow one Company to use a provider owned by Personal. The provider's enabled MCPs, skills, instructions, and preferences travel with it."
       >
+        {snapshot.catalog.providerAccessGrants.map((grant) => (
+          <SettingsRow
+            key={grant.id}
+            title={providerLabel(grant.provider)}
+            description={`Available to ${contextNames.get(grant.targetContextId) ?? grant.targetContextId}`}
+            status={grant.status === "active" ? "Active" : "Revoked"}
+            control={
+              <Button
+                size="icon-sm"
+                variant="ghost-muted"
+                disabled={saving}
+                aria-label={`Remove access to ${providerLabel(grant.provider)}`}
+                onClick={() =>
+                  void save(
+                    snapshot,
+                    removeAxisProviderAccessGrant(snapshot.catalog, grant.id),
+                    "Provider access removed",
+                  )
+                }
+              >
+                <Trash2Icon />
+              </Button>
+            }
+          />
+        ))}
         <SettingsRow
-          title="Grant editor"
-          description="The catalog model and enforcement are active. The guided provider/capability grant editor is the next UI slice."
+          title="Grant provider access"
+          description="Company work sent through a Personal provider may be processed under your personal account. No Company can see another Company's data."
           status={`Catalog revision ${snapshot.revision}`}
-        />
+        >
+          <div className="grid gap-2 py-3 sm:grid-cols-[minmax(12rem,1fr)_minmax(10rem,1fr)_auto] sm:items-center">
+            <Select
+              value={providerGrantProvider}
+              onValueChange={(value) => {
+                if (value !== null) setProviderGrantProvider(value);
+              }}
+            >
+              <SelectTrigger aria-label="Personal provider">
+                <SelectValue placeholder="Personal provider" />
+              </SelectTrigger>
+              <SelectPopup>
+                {personalProviderOptions.map((provider) => (
+                  <SelectItem key={provider.key} value={provider.key}>
+                    {provider.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <Select
+              value={providerGrantCompany}
+              onValueChange={(value) => {
+                if (value !== null) setProviderGrantCompany(value);
+              }}
+            >
+              <SelectTrigger aria-label="Target Company">
+                <SelectValue placeholder="Company" />
+              </SelectTrigger>
+              <SelectPopup>
+                {companies.map((company) => (
+                  <SelectItem key={company.id} value={company.id}>
+                    {company.name}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <Button
+              size="sm"
+              disabled={
+                saving || !providerGrantProvider || !providerGrantCompany || duplicateProviderGrant
+              }
+              onClick={() => void addProviderGrant()}
+            >
+              <PlusIcon /> Grant
+            </Button>
+          </div>
+        </SettingsRow>
       </SettingsSection>
     </SettingsPageContainer>
   );
