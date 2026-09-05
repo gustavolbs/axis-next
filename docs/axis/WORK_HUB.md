@@ -13,6 +13,11 @@ Open **Work Hub** from the main sidebar to switch between Overview, Calendar, Me
 Board. The initial surface reports real provider/MCP readiness per context; empty collections remain
 explicit until the corresponding MCP ingestion and normalized read model are available.
 
+In Overview, **Work Hub sources** lets the user opt in per context, then per available provider and
+MCP. Provider access and MCP selection are separate decisions: granting a Personal provider to a
+Company makes its MCPs eligible, but Work Hub does not query them until the user selects them for
+that Company.
+
 ## Primary views
 
 ### Overview
@@ -121,6 +126,14 @@ Work Hub should begin as a read projection. Refreshes can be manual or scheduled
 the same context-scoped acquisition path and idempotent cursors. A failure in one connector is shown
 against that source and does not discard the last confirmed snapshot.
 
+Fetched data is cached by `(contextId, providerInstanceId, mcpCapabilityId)` with a bounded TTL. A
+read serves the last confirmed snapshot without calling the MCP again while it is fresh. Manual
+**Refresh** revalidates only the currently selected sources; it does not erase the visible snapshot
+while requests are running. Successful results atomically replace that source snapshot and advance
+its cursor. A failure keeps the prior snapshot, marks it stale with the source error, and allows an
+individual retry. Cache records and refresh jobs remain context-keyed so deduplication cannot create
+a cross-Company data path.
+
 Source mutations—calendar responses, message replies, issue transitions, assignments—are separate
 capabilities. Each needs typed input/output, authorization, approval behavior, an idempotency key,
 and confirmation from the source. They should not be inferred as part of the initial read model.
@@ -131,6 +144,6 @@ A Work Hub item may open its supporting T3 Thread in Chat or a task-focused Cowo
 Neither action copies the item into a new conversation model. Follow-up work uses a Thread in the
 item's source context and only the provider/MCP bindings allowed there.
 
-The initial UI shell and context-scoped source readiness are implemented. Ingestion, background
-refresh, connector mappings, normalized item persistence, and source-system writes remain later
-implementation slices.
+The initial UI shell, persisted source selection, per-source cache policy, cache snapshot store, and
+context-scoped source readiness are implemented. MCP ingestion, the background/manual refresh
+worker, connector mappings, and source-system writes remain later implementation slices.
