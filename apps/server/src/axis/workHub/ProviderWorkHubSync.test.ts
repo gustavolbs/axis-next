@@ -2,7 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { AxisWorkHubCollectInput, AxisWorkHubCollectionResult } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { buildAxisWorkHubCacheSnapshot } from "./ProviderWorkHubSync.ts";
+import {
+  buildAxisWorkHubCacheSnapshot,
+  buildClaudeWorkHubToolArgs,
+} from "./ProviderWorkHubSync.ts";
 
 const decodeInput = Schema.decodeUnknownSync(AxisWorkHubCollectInput);
 const decodeResult = Schema.decodeUnknownSync(AxisWorkHubCollectionResult);
@@ -98,5 +101,26 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
     expect(snapshot.cursor).toBe("next-page");
     expect(snapshot.refreshedAt).toBe("2026-09-05T12:00:00.000Z");
     expect(snapshot.expiresAt).toBe("2026-09-05T20:00:00.000Z");
+  });
+});
+
+describe("buildClaudeWorkHubToolArgs", () => {
+  it("loads the selected claude.ai MCP with its native namespace", () => {
+    expect(
+      buildClaudeWorkHubToolArgs({ name: "Microsoft 365", scope: "claude.ai" }, [
+        { name: "Microsoft 365", scope: "claude.ai" },
+        { name: "LN Jira", scope: "claude.ai" },
+        { name: "local-coder", scope: "local" },
+      ]),
+    ).toEqual([
+      "--tools",
+      "Read,mcp__claude_ai_Microsoft_365__*",
+      "--allowedTools",
+      "Read",
+      "mcp__claude_ai_Microsoft_365__*",
+      "--disallowedTools",
+      "mcp__claude_ai_LN_Jira__*",
+      "mcp__local-coder__*",
+    ]);
   });
 });

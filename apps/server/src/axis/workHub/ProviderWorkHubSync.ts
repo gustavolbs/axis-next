@@ -9,6 +9,7 @@ import {
   type CodexSettings,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderMcpServer,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
@@ -47,7 +48,11 @@ const isProviderDriverError = Schema.is(ProviderDriverError);
 export interface ProviderWorkHubSyncOptions {
   readonly driver: ProviderDriverKind;
   readonly instanceId: ProviderInstanceId;
-  readonly availableMcpNames: ReadonlyArray<string>;
+  readonly availableMcps: ReadonlyArray<ProviderMcpServer>;
+}
+
+function findAvailableMcp(options: ProviderWorkHubSyncOptions, name: string) {
+  return options.availableMcps.find((server) => server.name === name);
 }
 
 function syncError(
@@ -140,7 +145,7 @@ function buildCollectionPrompt(input: AxisWorkHubCollectInput): string {
     : `from the last ${INITIAL_MESSAGE_LOOKBACK_DAYS} days`;
   return `You are performing a read-only Axis Work Hub sync.
 
-Use only tools from the MCP server named ${JSON.stringify(input.mcpName)}. Never use shell, filesystem, browser, web search, built-in tools, or another MCP. Never create, update, send, delete, or acknowledge anything.
+Use only tools from the MCP server named ${JSON.stringify(input.mcpName)}. The only built-in tool you may use is Read, and only when Claude materializes this MCP's response as a tool-results file; read exactly that generated result file and no other path. Never use shell, browser, web search, another MCP, or any mutating tool. Never create, update, send, delete, respond to, modify, or acknowledge anything.
 
 Collect only categories the MCP actually supports:
 - calendar-event / calendar: events from ${input.collectionPolicy.calendarLookbackDays} days ago through ${input.collectionPolicy.calendarLookaheadDays} days ahead. Include meetingLink and location when available.
@@ -148,6 +153,8 @@ Collect only categories the MCP actually supports:
 - direct-message / messages: only direct messages to the authenticated user ${messageWindow}.
 - mention / messages: only messages mentioning the authenticated user ${messageWindow}.
 - assigned-issue-comment / messages: only new comments ${messageWindow} on work items assigned to the authenticated user.
+
+Calendar connector guidance: prefer a search-events operation with query "*" when available. For Microsoft 365, use the Outlook calendar search operation. If a list operation returns calendar metadata without an events collection, try the search operation instead of treating that metadata as zero events.
 
 Use stable native IDs. Use null for unavailable optional values. Do not include general channel traffic, other users' tickets, historical calendar data outside the window, or guessed data. Return at most ${MAX_CACHED_ITEMS_PER_SOURCE} items and an opaque pagination cursor when the MCP provides one. Previous cursor: ${JSON.stringify(input.previousCursor)}.`;
 }
@@ -162,7 +169,7 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
   readonly environment: NodeJS.ProcessEnv;
   readonly options: ProviderWorkHubSyncOptions;
 }) {
-  if (!input.options.availableMcpNames.includes(input.request.mcpName)) {
+  if (!findAvailableMcp(input.options, input.request.mcpName)) {
     return yield* syncError(input.options, `MCP '${input.request.mcpName}' was not found.`);
   }
   const fileSystem = yield* FileSystem.FileSystem;
@@ -200,7 +207,7 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
       ),
     );
   const launchArgs = resolveCodexLaunchArgs(input.config.launchArgs, input.environment);
-  const mcpOverrides = input.options.availableMcpNames.flatMap((name) => [
+  const mcpOverrides = input.options.availableMcps.flatMap(({ name }) => [
     "--config",
     `${codexMcpKey(name)}=${name === input.request.mcpName ? "true" : "false"}`,
   ]);
@@ -273,6 +280,29 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
   });
 });
 
+function claudeMcpServerKey(server: Pick<ProviderMcpServer, "name" | "scope">): string {
+  const sanitizedName = server.name.replace(/[^A-Za-z0-9_-]/gu, "_");
+  return server.scope === "claude.ai" ? `claude_ai_${sanitizedName}` : sanitizedName;
+}
+
+export function buildClaudeWorkHubToolArgs(
+  selected: Pick<ProviderMcpServer, "name" | "scope">,
+  available: ReadonlyArray<Pick<ProviderMcpServer, "name" | "scope">>,
+): ReadonlyArray<string> {
+  const selectedToolPattern = `mcp__${claudeMcpServerKey(selected)}__*`;
+  const excludedToolPatterns = available
+    .filter((server) => server.name !== selected.name)
+    .map((server) => `mcp__${claudeMcpServerKey(server)}__*`);
+  return [
+    "--tools",
+    `Read,${selectedToolPattern}`,
+    "--allowedTools",
+    "Read",
+    selectedToolPattern,
+    ...(excludedToolPatterns.length > 0 ? ["--disallowedTools", ...excludedToolPatterns] : []),
+  ];
+}
+
 export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource")(
   function* (input: {
     readonly request: AxisWorkHubCollectInput;
@@ -280,7 +310,8 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
     readonly environment: NodeJS.ProcessEnv;
     readonly options: ProviderWorkHubSyncOptions;
   }) {
-    if (!input.options.availableMcpNames.includes(input.request.mcpName)) {
+    const selectedMcp = findAvailableMcp(input.options, input.request.mcpName);
+    if (!selectedMcp) {
       return yield* syncError(input.options, `MCP '${input.request.mcpName}' was not found.`);
     }
     const fileSystem = yield* FileSystem.FileSystem;
@@ -296,10 +327,7 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
         syncError(input.options, "Failed to encode Work Hub schema.", cause),
       ),
     );
-    const selectedToolPattern = `mcp__${input.request.mcpName}__*`;
-    const excludedToolPatterns = input.options.availableMcpNames
-      .filter((name) => name !== input.request.mcpName)
-      .map((name) => `mcp__${name}__*`);
+    const toolArgs = buildClaudeWorkHubToolArgs(selectedMcp, input.options.availableMcps);
     const resolved = yield* resolveSpawnCommand(
       input.config.binaryPath || "claude",
       [
@@ -313,11 +341,7 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
         "dontAsk",
         "--permission-prompts",
         "none",
-        "--tools",
-        "",
-        "--allowedTools",
-        selectedToolPattern,
-        ...(excludedToolPatterns.length > 0 ? ["--disallowedTools", ...excludedToolPatterns] : []),
+        ...toolArgs,
       ],
       { env: input.environment },
     ).pipe(

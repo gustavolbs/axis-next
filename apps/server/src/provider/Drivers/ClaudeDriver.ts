@@ -272,7 +272,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               options: {
                 driver: DRIVER_KIND,
                 instanceId,
-                availableMcpNames: servers.map((server) => server.name),
+                availableMcps: servers,
               },
             }).pipe(
               Effect.scoped,
