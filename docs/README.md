@@ -1,5 +1,8 @@
 # T3 Code docs
 
+Axis maintainers should start with the [Axis architecture boundary](./axis/README.md) before
+changing or extending T3-owned behavior in this fork.
+
 ## Using T3 Code
 
 - [Install T3 Code](./user/install.md)
