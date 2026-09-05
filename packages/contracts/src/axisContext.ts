@@ -134,7 +134,7 @@ export const AxisWorkHubCollectionPolicy = Schema.Struct({
 export type AxisWorkHubCollectionPolicy = typeof AxisWorkHubCollectionPolicy.Type;
 
 export const DEFAULT_AXIS_WORK_HUB_COLLECTION_POLICY: AxisWorkHubCollectionPolicy = {
-  calendarLookbackDays: 14,
+  calendarLookbackDays: 60,
   calendarLookaheadDays: 90,
   assignedWorkItemsOnly: true,
   directMessages: true,

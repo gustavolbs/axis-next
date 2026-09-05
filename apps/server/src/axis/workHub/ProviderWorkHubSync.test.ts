@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import {
   buildAxisWorkHubCacheSnapshot,
   buildClaudeWorkHubToolArgs,
+  buildCollectionPrompt,
 } from "./ProviderWorkHubSync.ts";
 
 const decodeInput = Schema.decodeUnknownSync(AxisWorkHubCollectInput);
@@ -68,7 +69,16 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
           view: "board",
           nativeId: "AXIS-42",
           title: "Assigned ticket",
+          status: "In Progress",
           deepLink: "javascript:alert(1)",
+        },
+        {
+          ...baseItem,
+          kind: "assigned-work-item",
+          view: "board",
+          nativeId: "AXIS-41",
+          title: "Finished ticket",
+          status: "Done",
         },
         {
           ...baseItem,
@@ -104,23 +114,58 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
   });
 });
 
+describe("buildCollectionPrompt", () => {
+  const request = decodeInput({
+    sourceId: "personal_connector",
+    contextId: "personal",
+    provider: { environmentId: "env", instanceId: "claude" },
+    capabilityId: "connector",
+    mcpName: "Work tools",
+    collectionPolicy: {
+      calendarLookbackDays: 14,
+      calendarLookaheadDays: 90,
+      assignedWorkItemsOnly: true,
+      directMessages: true,
+      mentions: true,
+      assignedIssueComments: true,
+    },
+    cacheTtlSeconds: 28_800,
+    previousCursor: null,
+    previousRefreshedAt: "2026-09-04T12:00:00.000Z",
+  });
+
+  it("asks for a single three-week calendar range instead of one call per week", () => {
+    const prompt = buildCollectionPrompt(request, now);
+    const bounds = prompt.match(/start: "([^"]+)" end: "([^"]+)"/u);
+
+    expect(bounds).not.toBeNull();
+    expect(Date.parse(bounds![2]!) - Date.parse(bounds![1]!)).toBe(21 * 86_400_000);
+    // The old prompt emitted a numbered slice list; one range means one query.
+    expect(prompt).not.toMatch(/PER SLICE/u);
+    expect(prompt.match(/afterDateTime/gu)).toHaveLength(1);
+  });
+
+  it("names the known connector tools so discovery costs one ToolSearch", () => {
+    const prompt = buildCollectionPrompt(request, now);
+
+    expect(prompt).toContain("select:");
+    expect(prompt).toContain("jira_search");
+    expect(prompt).toContain("outlook_calendar_search");
+    expect(prompt).toContain("slack_search_public_and_private");
+    expect(prompt).toContain("after:2026-09-04");
+  });
+});
+
 describe("buildClaudeWorkHubToolArgs", () => {
-  it("loads the selected claude.ai MCP with its native namespace", () => {
-    expect(
-      buildClaudeWorkHubToolArgs({ name: "Microsoft 365", scope: "claude.ai" }, [
-        { name: "Microsoft 365", scope: "claude.ai" },
-        { name: "LN Jira", scope: "claude.ai" },
-        { name: "local-coder", scope: "local" },
-      ]),
-    ).toEqual([
-      "--tools",
-      "Read,mcp__claude_ai_Microsoft_365__*",
+  it("allows the selected MCP under both scopes without a discovery round-trip", () => {
+    expect(buildClaudeWorkHubToolArgs("Microsoft 365")).toEqual([
       "--allowedTools",
       "Read",
+      "ToolSearch",
+      "mcp__Microsoft_365",
+      "mcp__Microsoft_365__*",
+      "mcp__claude_ai_Microsoft_365",
       "mcp__claude_ai_Microsoft_365__*",
-      "--disallowedTools",
-      "mcp__claude_ai_LN_Jira__*",
-      "mcp__local-coder__*",
     ]);
   });
 });

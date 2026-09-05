@@ -87,7 +87,7 @@ describe("AxisContextCatalog", () => {
       enabled: true,
       cacheTtlSeconds: 28_800,
       collectionPolicy: {
-        calendarLookbackDays: 14,
+        calendarLookbackDays: 60,
         calendarLookaheadDays: 90,
         assignedWorkItemsOnly: true,
         directMessages: true,

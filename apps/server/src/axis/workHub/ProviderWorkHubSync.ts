@@ -30,9 +30,12 @@ import {
   resolveCodexLaunchArgs,
 } from "../../provider/Layers/codexLaunchArgs.ts";
 
-const SYNC_TIMEOUT_MS = 180_000;
+const SYNC_TIMEOUT_MS = 600_000;
 const MAX_CACHED_ITEMS_PER_SOURCE = 500;
 const INITIAL_MESSAGE_LOOKBACK_DAYS = 14;
+// Belt over the prompt's "not finished" instruction: drop board items an agent
+// still returns with a terminal status.
+const FINISHED_WORK_ITEM_STATUS = /\b(done|closed|resolved|cancell?ed|completed)\b/iu;
 const decodeCollectionResult = Schema.decodeEffect(
   Schema.fromJsonString(AxisWorkHubCollectionResult),
 );
@@ -91,7 +94,11 @@ function itemMatchesPolicy(
     return Number.isFinite(startsAt) && startsAt >= earliest && startsAt <= latest;
   }
   if (item.kind === "assigned-work-item") {
-    return input.collectionPolicy.assignedWorkItemsOnly && item.view === "board";
+    return (
+      input.collectionPolicy.assignedWorkItemsOnly &&
+      item.view === "board" &&
+      !(item.status !== null && FINISHED_WORK_ITEM_STATUS.test(item.status))
+    );
   }
   if (item.view !== "messages" || item.occurredAt === null) return false;
   const occurredAt = Date.parse(item.occurredAt);
@@ -139,24 +146,52 @@ export function buildAxisWorkHubCacheSnapshot(input: {
   };
 }
 
-function buildCollectionPrompt(input: AxisWorkHubCollectInput): string {
-  const messageWindow = input.previousRefreshedAt
-    ? `since ${input.previousRefreshedAt}`
-    : `from the last ${INITIAL_MESSAGE_LOOKBACK_DAYS} days`;
+export function buildCollectionPrompt(input: AxisWorkHubCollectInput, nowEpochMs: number): string {
+  const dayMs = 86_400_000;
+  // Calendar scope is deliberately fixed: previous, current, and next week only,
+  // Sunday-aligned like the calendar view. Exact dates are computed here so the
+  // agent copies them instead of inferring windows.
+  const weekStartMs = DateTime.toEpochMillis(
+    DateTime.startOf(DateTime.makeUnsafe(nowEpochMs), "week"),
+  );
+  // ponytail: one range instead of three slices. The bounds are computed here
+  // either way, so slicing only bought three sequential agent turns.
+  const calendarStart = DateTime.formatIso(DateTime.makeUnsafe(weekStartMs - 7 * dayMs));
+  const calendarEnd = DateTime.formatIso(DateTime.makeUnsafe(weekStartMs + 14 * dayMs));
+  const previousRefreshedAtMs = input.previousRefreshedAt
+    ? Date.parse(input.previousRefreshedAt)
+    : Number.NaN;
+  const messageCutoffMs = Number.isFinite(previousRefreshedAtMs)
+    ? previousRefreshedAtMs
+    : nowEpochMs - INITIAL_MESSAGE_LOOKBACK_DAYS * dayMs;
+  const messageCutoffIso = DateTime.formatIso(DateTime.makeUnsafe(messageCutoffMs));
+  const messageCutoffDate = messageCutoffIso.slice(0, 10);
   return `You are performing a read-only Axis Work Hub sync.
 
-Use only tools from the MCP server named ${JSON.stringify(input.mcpName)}. The only built-in tool you may use is Read, and only when Claude materializes this MCP's response as a tool-results file; read exactly that generated result file and no other path. Never use shell, browser, web search, another MCP, or any mutating tool. Never create, update, send, delete, respond to, modify, or acknowledge anything.
+Use only tools from the MCP server named ${JSON.stringify(input.mcpName)}. Its tools are deferred, so load them with the built-in ToolSearch tool — but load everything you need in ONE ToolSearch call using the select: form, for example ToolSearch("select:toolA,toolB"). On the common connectors the exact tool names are already known, so select them directly instead of exploring:
+- Jira: jira_search
+- Microsoft 365 / Outlook: outlook_calendar_search
+- Slack: slack_search_public_and_private
+Only if a select: load returns nothing for a category, fall back to a single keyword ToolSearch (max_results 50) for that category alone. The only other built-in tool you may use is Read, and only when Claude materializes this MCP's response as a tool-results file; read exactly that generated result file and no other path. Never use shell, browser, web search, another MCP, or any mutating tool. Never create, update, send, delete, respond to, modify, or acknowledge anything.
+
+Issue every independent read in the SAME block so they run in parallel — the calendar, board, and message queries do not depend on each other. Do not serialize them, do not re-run a query that already returned, and do not keep searching once each category has been answered.
 
 Collect only categories the MCP actually supports:
-- calendar-event / calendar: events from ${input.collectionPolicy.calendarLookbackDays} days ago through ${input.collectionPolicy.calendarLookaheadDays} days ahead. Include meetingLink and location when available.
-- assigned-work-item / board: only work items assigned to the authenticated user.
-- direct-message / messages: only direct messages to the authenticated user ${messageWindow}.
-- mention / messages: only messages mentioning the authenticated user ${messageWindow}.
-- assigned-issue-comment / messages: only new comments ${messageWindow} on work items assigned to the authenticated user.
+- calendar-event / calendar: ONE query covering exactly start: "${calendarStart}" end: "${calendarEnd}" (previous, current, and next week). Copy those two values VERBATIM into the tool arguments — never infer, round, reformat, widen, or split the range. Include meetingLink and location when available.
+- assigned-work-item / board: only work items assigned to the authenticated user that are not finished or closed.
+- direct-message / messages: only direct messages to the authenticated user since ${messageCutoffIso}.
+- mention / messages: only messages mentioning the authenticated user since ${messageCutoffIso}.
+- assigned-issue-comment / messages: only new comments since ${messageCutoffIso} on work items assigned to the authenticated user.
 
-Calendar connector guidance: prefer a search-events operation with query "*" when available. For Microsoft 365, use the Outlook calendar search operation. If a list operation returns calendar metadata without an events collection, try the search operation instead of treating that metadata as zero events.
+Exact arguments for the known connectors — use them as written, changing nothing but what is noted:
+- outlook_calendar_search: query "*", afterDateTime "${calendarStart}", beforeDateTime "${calendarEnd}", order "oldest", limit 25. If a response ends with a nextOffset, repeat the same call with that offset until it stops appearing, so no event is dropped. Teams meetings are calendar events here; the Teams-specific tools only read chat messages.
+- jira_search: jql "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC", maxResults 50.
+- slack_search_public_and_private: include_context false on every call, plus one query "to:me after:${messageCutoffDate}" for direct messages and one query "<@USER_ID> after:${messageCutoffDate}" for mentions, where USER_ID is the logged-in user id stated in the Slack tool description — do not call another tool to look it up.
+For any other connector prefer a search operation with query "*" and the same explicit bounds. Emit every item a call returns — never summarize a result set down to a sample. When a connector returns local times with a time zone, convert them to ISO-8601 with the correct offset. If a list operation returns calendar metadata without an events collection, try the search operation instead of treating that metadata as zero events.
 
-Use stable native IDs. Use null for unavailable optional values. Do not include general channel traffic, other users' tickets, historical calendar data outside the window, or guessed data. Return at most ${MAX_CACHED_ITEMS_PER_SOURCE} items and an opaque pagination cursor when the MCP provides one. Previous cursor: ${JSON.stringify(input.previousCursor)}.`;
+Use stable native IDs. Use null for unavailable optional values. Do not include general channel traffic, other users' tickets, historical calendar data outside the window, or guessed data. Emit only items inside the windows above — anything outside them is discarded on arrival, so returning it only costs time. Return at most ${MAX_CACHED_ITEMS_PER_SOURCE} items and an opaque pagination cursor when the MCP provides one. Previous cursor: ${JSON.stringify(input.previousCursor)}.
+
+Always finish by returning the structured JSON result. If a category has no matching read operation on this MCP, skip that category and still collect the others; an unsupported category is never a reason to abort or to return prose instead of the result.`;
 }
 
 function codexMcpKey(name: string): string {
@@ -172,6 +207,7 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
   if (!findAvailableMcp(input.options, input.request.mcpName)) {
     return yield* syncError(input.options, `MCP '${input.request.mcpName}' was not found.`);
   }
+  const nowEpochMs = yield* Clock.currentTimeMillis;
   const fileSystem = yield* FileSystem.FileSystem;
   const isolatedCwd = yield* fileSystem
     .makeTempDirectoryScoped({ prefix: "t3-work-hub-codex-" })
@@ -240,7 +276,9 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
         ...(input.config.homePath ? { CODEX_HOME: expandHomePath(input.config.homePath) } : {}),
       },
       shell: resolved.shell,
-      stdin: { stream: Stream.encodeText(Stream.make(buildCollectionPrompt(input.request))) },
+      stdin: {
+        stream: Stream.encodeText(Stream.make(buildCollectionPrompt(input.request, nowEpochMs))),
+      },
     }),
   ).pipe(
     Effect.timeoutOption(SYNC_TIMEOUT_MS),
@@ -272,7 +310,6 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
       syncError(input.options, "Codex returned invalid Work Hub data.", cause),
     ),
   );
-  const nowEpochMs = yield* Clock.currentTimeMillis;
   return buildAxisWorkHubCacheSnapshot({
     request: input.request,
     result: collection,
@@ -280,27 +317,20 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
   });
 });
 
-function claudeMcpServerKey(server: Pick<ProviderMcpServer, "name" | "scope">): string {
-  const sanitizedName = server.name.replace(/[^A-Za-z0-9_-]/gu, "_");
-  return server.scope === "claude.ai" ? `claude_ai_${sanitizedName}` : sanitizedName;
-}
-
-export function buildClaudeWorkHubToolArgs(
-  selected: Pick<ProviderMcpServer, "name" | "scope">,
-  available: ReadonlyArray<Pick<ProviderMcpServer, "name" | "scope">>,
-): ReadonlyArray<string> {
-  const selectedToolPattern = `mcp__${claudeMcpServerKey(selected)}__*`;
-  const excludedToolPatterns = available
-    .filter((server) => server.name !== selected.name)
-    .map((server) => `mcp__${claudeMcpServerKey(server)}__*`);
-  return [
-    "--tools",
-    `Read,${selectedToolPattern}`,
-    "--allowedTools",
-    "Read",
-    selectedToolPattern,
-    ...(excludedToolPatterns.length > 0 ? ["--disallowedTools", ...excludedToolPatterns] : []),
-  ];
+export function buildClaudeWorkHubToolArgs(mcpName: string): ReadonlyArray<string> {
+  // claude.ai connector tools are deferred in headless mode: they are absent from the
+  // initial tool list and only become callable after a ToolSearch load, so ToolSearch
+  // must stay allowed. --tools cannot be used at all — it restricts to the built-in
+  // set and silently drops every MCP tool (ToolSearch included). No MCP discovery
+  // round-trip either: allow both possible prefixes for the selected connector
+  // (claude.ai scope and local scope) and let --permission-prompts none deny every
+  // other tool. Permission rules match the server-prefix form (mcp__server), not the
+  // __* glob, so pass both forms.
+  const sanitizedName = mcpName.replace(/[^A-Za-z0-9_-]/gu, "_");
+  const serverRules = [`mcp__${sanitizedName}`, `mcp__claude_ai_${sanitizedName}`].flatMap(
+    (rule) => [rule, `${rule}__*`],
+  );
+  return ["--allowedTools", "Read", "ToolSearch", ...serverRules];
 }
 
 export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource")(
@@ -310,10 +340,7 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
     readonly environment: NodeJS.ProcessEnv;
     readonly options: ProviderWorkHubSyncOptions;
   }) {
-    const selectedMcp = findAvailableMcp(input.options, input.request.mcpName);
-    if (!selectedMcp) {
-      return yield* syncError(input.options, `MCP '${input.request.mcpName}' was not found.`);
-    }
+    const nowEpochMs = yield* Clock.currentTimeMillis;
     const fileSystem = yield* FileSystem.FileSystem;
     const isolatedCwd = yield* fileSystem
       .makeTempDirectoryScoped({ prefix: "t3-work-hub-claude-" })
@@ -327,7 +354,7 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
         syncError(input.options, "Failed to encode Work Hub schema.", cause),
       ),
     );
-    const toolArgs = buildClaudeWorkHubToolArgs(selectedMcp, input.options.availableMcps);
+    const toolArgs = buildClaudeWorkHubToolArgs(input.request.mcpName);
     const resolved = yield* resolveSpawnCommand(
       input.config.binaryPath || "claude",
       [
@@ -337,6 +364,11 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
         "--json-schema",
         schemaJson,
         "--no-session-persistence",
+        // ponytail: hardcoded model — the user's default (larger) model blows the sync
+        // timeout, and haiku follows the slice checklist too inconsistently. Sonnet is
+        // the middle ground. Make it configurable per source if someone needs otherwise.
+        "--model",
+        "sonnet",
         "--permission-mode",
         "dontAsk",
         "--permission-prompts",
@@ -353,7 +385,9 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
         cwd: isolatedCwd,
         env: input.environment,
         shell: resolved.shell,
-        stdin: { stream: Stream.encodeText(Stream.make(buildCollectionPrompt(input.request))) },
+        stdin: {
+          stream: Stream.encodeText(Stream.make(buildCollectionPrompt(input.request, nowEpochMs))),
+        },
       }),
     ).pipe(
       Effect.timeoutOption(SYNC_TIMEOUT_MS),
@@ -380,7 +414,6 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
         syncError(input.options, "Claude returned invalid Work Hub data.", cause),
       ),
     );
-    const nowEpochMs = yield* Clock.currentTimeMillis;
     return buildAxisWorkHubCacheSnapshot({
       request: input.request,
       result: envelope.structured_output,

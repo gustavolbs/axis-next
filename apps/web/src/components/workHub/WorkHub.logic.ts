@@ -7,7 +7,7 @@ import {
 export function buildWorkHubWeekDays(anchor: Date, weekOffset: number): ReadonlyArray<Date> {
   const start = new Date(anchor);
   start.setHours(0, 0, 0, 0);
-  start.setDate(anchor.getDate() - ((anchor.getDay() + 6) % 7) + weekOffset * 7);
+  start.setDate(anchor.getDate() - anchor.getDay() + weekOffset * 7);
   return Array.from({ length: 7 }, (_, index) => {
     const date = new Date(start);
     date.setDate(start.getDate() + index);

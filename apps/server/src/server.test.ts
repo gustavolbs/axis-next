@@ -5426,7 +5426,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
-            const collected = yield* client[WS_METHODS.providerWorkHubCollect]({
+            return yield* client[WS_METHODS.providerWorkHubCollect]({
               sourceId: snapshot.sourceId,
               contextId: snapshot.contextId,
               provider: snapshot.provider,
@@ -5444,7 +5444,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               previousCursor: null,
               previousRefreshedAt: null,
             });
-            return yield* client[WS_METHODS.axisWorkHubReplaceCache]({ snapshot: collected });
           }),
         ),
       );

@@ -56,20 +56,24 @@ const CALENDAR_HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const CONTEXT_TONES = [
   {
     dot: "bg-blue-500",
+    strip: "border-l-blue-500",
     event: "border-blue-500/55 bg-blue-500/15 text-blue-950 hover:bg-blue-500/20 dark:text-blue-50",
   },
   {
     dot: "bg-violet-500",
+    strip: "border-l-violet-500",
     event:
       "border-violet-500/55 bg-violet-500/15 text-violet-950 hover:bg-violet-500/20 dark:text-violet-50",
   },
   {
     dot: "bg-amber-500",
+    strip: "border-l-amber-500",
     event:
       "border-amber-500/55 bg-amber-500/15 text-amber-950 hover:bg-amber-500/20 dark:text-amber-50",
   },
   {
     dot: "bg-emerald-500",
+    strip: "border-l-emerald-500",
     event:
       "border-emerald-500/55 bg-emerald-500/15 text-emerald-950 hover:bg-emerald-500/20 dark:text-emerald-50",
   },
@@ -79,8 +83,30 @@ function contextTone(index: number): string {
   return CONTEXT_TONES[index % CONTEXT_TONES.length]!.dot;
 }
 
+function contextStripTone(index: number): string {
+  return CONTEXT_TONES[index % CONTEXT_TONES.length]!.strip;
+}
+
 function contextEventTone(index: number): string {
   return CONTEXT_TONES[index % CONTEXT_TONES.length]!.event;
+}
+
+function contextIndexOf(contexts: ReadonlyArray<AxisContext>, contextId: string): number {
+  const index = contexts.findIndex((context) => context.id === contextId);
+  return index === -1 ? 0 : index;
+}
+
+function ContextLegend({ contexts }: { readonly contexts: ReadonlyArray<AxisContext> }) {
+  return (
+    <div className="flex flex-wrap gap-3">
+      {contexts.map((context, index) => (
+        <span key={context.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span className={cn("size-2 rounded-full", contextTone(index))} />
+          {context.name}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function EmptyCollection({ children }: { readonly children: ReactNode }) {
@@ -357,17 +383,7 @@ function CalendarView({
               <ChevronRightIcon />
             </Button>
           </div>
-          <div className="flex flex-wrap gap-3">
-            {contexts.map((context, index) => (
-              <span
-                key={context.id}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground"
-              >
-                <span className={cn("size-2 rounded-full", contextTone(index))} />
-                {context.name}
-              </span>
-            ))}
-          </div>
+          <ContextLegend contexts={contexts} />
         </div>
       </div>
       <div
@@ -375,7 +391,7 @@ function CalendarView({
         className="max-h-[calc(100dvh-14rem)] min-h-[32rem] overflow-auto"
       >
         <div className="grid min-w-[64rem] grid-cols-[4.5rem_repeat(7,minmax(8.5rem,1fr))]">
-          <div className="relative border-r border-border/60 bg-card/75">
+          <div className="relative border-r border-foreground/15 bg-card/75">
             <div className="sticky top-0 z-30 flex h-16 items-end justify-end border-b border-border/70 bg-card px-2 pb-2 text-[10px] text-muted-foreground">
               Time
             </div>
@@ -400,7 +416,7 @@ function CalendarView({
             return (
               <div
                 key={day.toISOString()}
-                className="relative border-r border-border/60 last:border-r-0"
+                className="relative border-r border-foreground/15 last:border-r-0"
               >
                 <div className="sticky top-0 z-20 flex h-16 flex-col items-center justify-center border-b border-border/70 bg-card/95 backdrop-blur-sm">
                   <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -416,7 +432,7 @@ function CalendarView({
                   </p>
                 </div>
                 <div
-                  className="relative bg-[linear-gradient(to_bottom,transparent_calc(100%-1px),var(--border))]"
+                  className="relative bg-[linear-gradient(to_bottom,transparent_calc(100%_-_1px),color-mix(in_srgb,var(--foreground)_15%,transparent))]"
                   style={{
                     height: CALENDAR_DAY_HEIGHT_PX,
                     backgroundSize: `100% ${CALENDAR_HOUR_HEIGHT_PX}px`,
@@ -481,11 +497,14 @@ function MessagesView({
   );
   return (
     <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5">
-      <div className="mb-4">
-        <h2 className="font-medium text-foreground">Important messages</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Priority updates from Slack, Jira, and each Company&apos;s configured tools.
-        </p>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-medium text-foreground">Important messages</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Priority updates from Slack, Jira, and each Company&apos;s configured tools.
+          </p>
+        </div>
+        <ContextLegend contexts={contexts} />
       </div>
       {sorted.length === 0 ? (
         <EmptyCollection>
@@ -493,9 +512,15 @@ function MessagesView({
           comments.
         </EmptyCollection>
       ) : (
-        <div className="divide-y divide-border/60 rounded-xl border border-border/60">
+        <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60">
           {sorted.map((item) => (
-            <article key={item.id} className="flex items-start gap-3 p-3">
+            <article
+              key={item.id}
+              className={cn(
+                "flex items-start gap-3 border-l-[3px] p-3",
+                contextStripTone(contextIndexOf(contexts, item.contextId)),
+              )}
+            >
               <Badge variant="outline" className="mt-0.5 shrink-0">
                 {item.kind === "direct-message"
                   ? "DM"
@@ -506,7 +531,13 @@ function MessagesView({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <h3 className="text-sm font-medium">{item.title}</h3>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span
+                      className={cn(
+                        "size-2 shrink-0 rounded-full",
+                        contextTone(contextIndexOf(contexts, item.contextId)),
+                      )}
+                    />
                     {contextName(contexts, item.contextId)}
                   </span>
                 </div>
@@ -560,51 +591,65 @@ function BoardView({
   readonly items: ReadonlyArray<AxisWorkHubCachedItem>;
 }) {
   return (
-    <div className="overflow-x-auto pb-2">
-      <div className="grid min-w-[72rem] grid-cols-6 gap-3">
-        {BOARD_COLUMNS.map((column) => {
-          const columnItems = items.filter((item) => boardColumn(item.status) === column);
-          return (
-            <section key={column} className="rounded-xl border border-border/70 bg-card/35 p-3">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-sm font-medium text-foreground">{column}</h2>
-                <Badge variant="outline">{columnItems.length}</Badge>
-              </div>
-              <div className="grid min-h-52 content-start gap-2">
-                {columnItems.map((item) => (
-                  <article
-                    key={item.id}
-                    className="rounded-lg border border-border/65 bg-background/60 p-3"
-                  >
-                    <div className="flex items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <h3 className="text-sm font-medium">{item.title}</h3>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {contextName(contexts, item.contextId)}
-                        </p>
+    <div>
+      <div className="mb-3 flex justify-end">
+        <ContextLegend contexts={contexts} />
+      </div>
+      <div className="overflow-x-auto pb-2">
+        <div className="grid min-w-[90rem] grid-cols-5 gap-3">
+          {BOARD_COLUMNS.filter((column) => column !== "Done").map((column) => {
+            const columnItems = items.filter((item) => boardColumn(item.status) === column);
+            return (
+              <section key={column} className="rounded-xl border border-border/70 bg-card/35 p-3">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-medium text-foreground">{column}</h2>
+                  <Badge variant="outline">{columnItems.length}</Badge>
+                </div>
+                <div className="grid min-h-52 content-start gap-2">
+                  {columnItems.map((item) => (
+                    <article
+                      key={item.id}
+                      className={cn(
+                        "rounded-lg border border-border/65 border-l-[3px] bg-background/60 p-3",
+                        contextStripTone(contextIndexOf(contexts, item.contextId)),
+                      )}
+                    >
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="text-sm font-medium">{item.title}</h3>
+                          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <span
+                              className={cn(
+                                "size-2 shrink-0 rounded-full",
+                                contextTone(contextIndexOf(contexts, item.contextId)),
+                              )}
+                            />
+                            {contextName(contexts, item.contextId)}
+                          </p>
+                        </div>
+                        {item.deepLink ? (
+                          <Button
+                            render={<a href={item.deepLink} target="_blank" rel="noreferrer" />}
+                            size="icon-xs"
+                            variant="ghost-muted"
+                            aria-label={`Open ${item.title}`}
+                          >
+                            <ExternalLinkIcon />
+                          </Button>
+                        ) : null}
                       </div>
-                      {item.deepLink ? (
-                        <Button
-                          render={<a href={item.deepLink} target="_blank" rel="noreferrer" />}
-                          size="icon-xs"
-                          variant="ghost-muted"
-                          aria-label={`Open ${item.title}`}
-                        >
-                          <ExternalLinkIcon />
-                        </Button>
+                      {item.summary ? (
+                        <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">
+                          {item.summary}
+                        </p>
                       ) : null}
-                    </div>
-                    {item.summary ? (
-                      <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">
-                        {item.summary}
-                      </p>
-                    ) : null}
-                  </article>
-                ))}
-              </div>
-            </section>
-          );
-        })}
+                    </article>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

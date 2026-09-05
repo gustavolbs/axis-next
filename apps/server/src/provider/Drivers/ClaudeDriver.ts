@@ -263,8 +263,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const collectWorkHubSource: NonNullable<ProviderInstance["collectWorkHubSource"]> = (
         request,
       ) =>
-        Effect.all([discoverMcpServers(), makeClaudeEnvironment(effectiveConfig, processEnv)]).pipe(
-          Effect.flatMap(([servers, claudeEnvironment]) =>
+        // No MCP discovery here: `claude mcp list` health-checks every connector and
+        // adds ~10s per sync. The sync just runs against the requested MCP name and
+        // fails naturally if it does not exist.
+        makeClaudeEnvironment(effectiveConfig, processEnv).pipe(
+          Effect.flatMap((claudeEnvironment) =>
             collectClaudeWorkHubSource({
               request,
               config: effectiveConfig,
@@ -272,7 +275,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               options: {
                 driver: DRIVER_KIND,
                 instanceId,
-                availableMcps: servers,
+                availableMcps: [],
               },
             }).pipe(
               Effect.scoped,

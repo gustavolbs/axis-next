@@ -3,6 +3,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -2030,7 +2031,10 @@ const makeWsRpcLayer = (
                     : `Provider instance '${input.provider.instanceId}' was not found.`,
                 });
               }
-              return yield* instance.collectWorkHubSource(input).pipe(
+              // Detach the sync and persist server-side: a provider sync takes minutes,
+              // and the requesting client navigating away or disconnecting must not
+              // abort it mid-flight. The join is interruptible; the work is not.
+              const fiber = yield* instance.collectWorkHubSource(input).pipe(
                 Effect.mapError(
                   (cause) =>
                     new AxisWorkHubSyncError({
@@ -2039,7 +2043,17 @@ const makeWsRpcLayer = (
                       message: cause.detail || "The provider could not sync this MCP.",
                     }),
                 ),
+                Effect.flatMap((snapshot) =>
+                  Effect.gen(function* () {
+                    const previous = yield* axisWorkHubCache.get(snapshot.sourceId);
+                    const merged = mergeAxisWorkHubCacheSnapshot(previous, snapshot);
+                    yield* axisWorkHubCache.replace(merged);
+                    return merged;
+                  }),
+                ),
+                Effect.forkDetach,
               );
+              return yield* Fiber.join(fiber);
             }),
             { "rpc.aggregate": "axis" },
           ),

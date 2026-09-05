@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { RefreshCwIcon } from "lucide-react";
 
 import {
@@ -33,6 +33,28 @@ function contextTone(index: number): string {
   return ["bg-blue-500", "bg-violet-500", "bg-amber-500", "bg-emerald-500"][index % 4]!;
 }
 
+// Module-scoped so an in-flight sync keeps its "Syncing…" status when the user
+// navigates away and back; component state would reset on every remount.
+const syncingSources = new Set<string>();
+let syncingSnapshot: ReadonlySet<string> = syncingSources;
+const syncingListeners = new Set<() => void>();
+function setSourceSyncing(sourceId: string, active: boolean) {
+  if (active === syncingSources.has(sourceId)) return;
+  if (active) syncingSources.add(sourceId);
+  else syncingSources.delete(sourceId);
+  syncingSnapshot = new Set(syncingSources);
+  for (const listener of syncingListeners) listener();
+}
+function useSyncingSourceIds(): ReadonlySet<string> {
+  return useSyncExternalStore(
+    (listener) => {
+      syncingListeners.add(listener);
+      return () => syncingListeners.delete(listener);
+    },
+    () => syncingSnapshot,
+  );
+}
+
 export function WorkHubSourceManager() {
   const environmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
@@ -47,16 +69,13 @@ export function WorkHubSourceManager() {
   const collectSource = useAtomCommand(serverEnvironment.collectProviderWorkHubSource, {
     reportFailure: false,
   });
-  const replaceCache = useAtomCommand(serverEnvironment.replaceAxisWorkHubCache, {
-    reportFailure: false,
-  });
   const cacheQuery = useEnvironmentQuery(
     environmentId === null
       ? null
       : serverEnvironment.axisWorkHubCache({ environmentId, input: {} }),
   );
   const [saving, setSaving] = useState(false);
-  const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
+  const syncingSourceIds = useSyncingSourceIds();
   const providerLabels = useMemo(
     () =>
       new Map(
@@ -188,8 +207,16 @@ export function WorkHubSourceManager() {
   };
 
   const syncMcp = async (source: AxisWorkHubSource, mcpName: string) => {
-    if (environmentId === null || syncingSourceId !== null) return;
-    setSyncingSourceId(source.id);
+    if (environmentId === null || syncingSources.has(source.id)) return;
+    setSourceSyncing(source.id, true);
+    try {
+      await runSync(source, mcpName);
+    } finally {
+      setSourceSyncing(source.id, false);
+    }
+  };
+
+  const runSync = async (source: AxisWorkHubSource, mcpName: string) => {
     const previous = cacheQuery.data?.find((snapshot) => snapshot.sourceId === source.id);
     const collected = await collectSource({
       environmentId: source.provider.environmentId,
@@ -199,15 +226,29 @@ export function WorkHubSourceManager() {
         provider: source.provider,
         capabilityId: source.capabilityId,
         mcpName,
-        collectionPolicy: source.collectionPolicy,
+        // ponytail: no policy editor exists yet, so stored policies are frozen copies of
+        // old defaults; sync with the current defaults until per-source editing lands.
+        collectionPolicy: DEFAULT_AXIS_WORK_HUB_COLLECTION_POLICY,
         cacheTtlSeconds: source.cacheTtlSeconds,
         previousCursor: previous?.cursor ?? null,
-        previousRefreshedAt: previous?.refreshedAt ?? null,
+        // An incremental window only makes sense when the last sync actually captured
+        // messages; otherwise re-run the full initial lookback so an empty or broken
+        // sync doesn't permanently hide older unread mentions and DMs.
+        previousRefreshedAt: previous?.items.some((item) => item.view === "messages")
+          ? previous.refreshedAt
+          : null,
       },
     });
     if (collected._tag !== "Success") {
-      setSyncingSourceId(null);
-      if (!isAtomCommandInterrupted(collected)) {
+      if (isAtomCommandInterrupted(collected)) {
+        // The server runs the sync detached and persists the result itself, so a
+        // dropped request only loses this client's view of the outcome.
+        toastManager.add({
+          type: "info",
+          title: `${mcpName} sync continues in the background`,
+          description: "The result lands in the Work Hub cache when it finishes.",
+        });
+      } else {
         const error = squashAtomCommandFailure(collected);
         toastManager.add({
           type: "error",
@@ -217,28 +258,14 @@ export function WorkHubSourceManager() {
       }
       return;
     }
-    const stored = await replaceCache({
-      environmentId,
-      input: { snapshot: collected.value },
+    // The server persists the merged snapshot before responding; the sync also
+    // finishes and caches server-side even if this client navigates away mid-flight.
+    cacheQuery.refresh();
+    toastManager.add({
+      type: "success",
+      title: `${mcpName} synced`,
+      description: `${collected.value.items.length} relevant item${collected.value.items.length === 1 ? "" : "s"} cached for ${source.cacheTtlSeconds / 3_600} hours.`,
     });
-    setSyncingSourceId(null);
-    if (stored._tag === "Success") {
-      cacheQuery.refresh();
-      toastManager.add({
-        type: "success",
-        title: `${mcpName} synced`,
-        description: `${stored.value.items.length} relevant item${stored.value.items.length === 1 ? "" : "s"} cached for ${source.cacheTtlSeconds / 3_600} hours.`,
-      });
-      return;
-    }
-    if (!isAtomCommandInterrupted(stored)) {
-      const error = squashAtomCommandFailure(stored);
-      toastManager.add({
-        type: "error",
-        title: `Could not cache ${mcpName} data`,
-        description: error instanceof Error ? error.message : "The cache update failed.",
-      });
-    }
   };
 
   if (!query.data) return null;
@@ -282,7 +309,7 @@ export function WorkHubSourceManager() {
                       <div className="flex items-center gap-3">
                         <Switch
                           checked={providerSelected}
-                          disabled={saving || syncingSourceId !== null || mcps.length === 0}
+                          disabled={saving || syncingSourceIds.size > 0 || mcps.length === 0}
                           aria-label={`Use ${providerLabel} in ${group.context.name}`}
                           onCheckedChange={(selected) =>
                             toggleProvider(
@@ -320,7 +347,7 @@ export function WorkHubSourceManager() {
                               >
                                 <Switch
                                   checked={selectedCapabilityIds.has(mcp.id)}
-                                  disabled={saving || syncingSourceId !== null}
+                                  disabled={saving || syncingSourceIds.size > 0}
                                   aria-label={`Use ${mcp.name} from ${providerLabel} in ${group.context.name}`}
                                   onCheckedChange={(selected) =>
                                     toggleMcp(group.context.id, mcp.id, selected)
@@ -340,15 +367,15 @@ export function WorkHubSourceManager() {
                                     size="xs"
                                     variant="ghost-muted"
                                     className="shrink-0"
-                                    disabled={syncingSourceId !== null}
+                                    disabled={syncingSourceIds.has(source.id)}
                                     onClick={() => void syncMcp(source, mcp.name)}
                                   >
                                     <RefreshCwIcon
                                       className={
-                                        syncingSourceId === source.id ? "animate-spin" : undefined
+                                        syncingSourceIds.has(source.id) ? "animate-spin" : undefined
                                       }
                                     />
-                                    {syncingSourceId === source.id ? "Syncing…" : "Sync"}
+                                    {syncingSourceIds.has(source.id) ? "Syncing…" : "Sync"}
                                   </Button>
                                 ) : null}
                               </div>

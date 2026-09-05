@@ -565,7 +565,11 @@ export const WsAxisWorkHubGetCacheRpc = Rpc.make(WS_METHODS.axisWorkHubGetCache,
 export const WsProviderWorkHubCollectRpc = Rpc.make(WS_METHODS.providerWorkHubCollect, {
   payload: AxisWorkHubCollectInput,
   success: AxisWorkHubCacheSnapshot,
-  error: Schema.Union([AxisWorkHubSyncError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    AxisWorkHubSyncError,
+    AxisWorkHubCachePersistenceError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 export const WsAxisWorkHubReplaceCacheRpc = Rpc.make(WS_METHODS.axisWorkHubReplaceCache, {

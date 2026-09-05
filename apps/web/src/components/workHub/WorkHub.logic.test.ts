@@ -120,13 +120,13 @@ describe("buildWorkHubSourceReadiness", () => {
 });
 
 describe("Work Hub calendar", () => {
-  it("navigates complete Monday-to-Sunday weeks", () => {
+  it("navigates complete Sunday-to-Saturday weeks", () => {
     const anchor = new Date(2026, 8, 5, 12);
     expect(buildWorkHubWeekDays(anchor, -1).map((day) => day.getDate())).toEqual([
-      24, 25, 26, 27, 28, 29, 30,
+      23, 24, 25, 26, 27, 28, 29,
     ]);
     expect(buildWorkHubWeekDays(anchor, 1).map((day) => day.getDate())).toEqual([
-      7, 8, 9, 10, 11, 12, 13,
+      6, 7, 8, 9, 10, 11, 12,
     ]);
   });
 
