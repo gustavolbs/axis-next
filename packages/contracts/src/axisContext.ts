@@ -10,7 +10,12 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { EnvironmentId, IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  IsoDateTime,
+  NonNegativeInt,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const AXIS_ENTITY_ID_MAX_CHARS = 128;
@@ -154,11 +159,51 @@ export const AxisContextCatalogIssueCode = Schema.Literals([
 ]);
 export type AxisContextCatalogIssueCode = typeof AxisContextCatalogIssueCode.Type;
 
-export interface AxisContextCatalogIssue {
-  readonly code: AxisContextCatalogIssueCode;
-  readonly path: string;
-  readonly message: string;
-}
+export const AxisContextCatalogIssue = Schema.Struct({
+  code: AxisContextCatalogIssueCode,
+  path: Schema.String,
+  message: Schema.String,
+});
+export type AxisContextCatalogIssue = typeof AxisContextCatalogIssue.Type;
+
+/** Revisioned server snapshot used for optimistic concurrency across clients. */
+export const AxisContextCatalogSnapshot = Schema.Struct({
+  revision: NonNegativeInt,
+  catalog: AxisContextCatalog,
+  updatedAt: IsoDateTime,
+});
+export type AxisContextCatalogSnapshot = typeof AxisContextCatalogSnapshot.Type;
+
+export const AxisContextCatalogReplaceInput = Schema.Struct({
+  expectedRevision: NonNegativeInt,
+  catalog: AxisContextCatalog,
+});
+export type AxisContextCatalogReplaceInput = typeof AxisContextCatalogReplaceInput.Type;
+
+export class AxisContextCatalogValidationError extends Schema.TaggedErrorClass<AxisContextCatalogValidationError>()(
+  "AxisContextCatalogValidationError",
+  { issues: Schema.Array(AxisContextCatalogIssue) },
+) {}
+
+export class AxisContextCatalogConflictError extends Schema.TaggedErrorClass<AxisContextCatalogConflictError>()(
+  "AxisContextCatalogConflictError",
+  {
+    expectedRevision: NonNegativeInt,
+    actualRevision: NonNegativeInt,
+  },
+) {}
+
+export class AxisContextCatalogPersistenceError extends Schema.TaggedErrorClass<AxisContextCatalogPersistenceError>()(
+  "AxisContextCatalogPersistenceError",
+  { operation: Schema.String },
+) {}
+
+export const AxisContextCatalogError = Schema.Union([
+  AxisContextCatalogValidationError,
+  AxisContextCatalogConflictError,
+  AxisContextCatalogPersistenceError,
+]);
+export type AxisContextCatalogError = typeof AxisContextCatalogError.Type;
 
 export function axisProviderInstanceLocatorKey(provider: AxisProviderInstanceLocator): string {
   return `${provider.environmentId}\u0000${provider.instanceId}`;

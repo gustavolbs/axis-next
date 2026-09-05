@@ -6,6 +6,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 
 import {
   AuthAccessTokenType,
+  AxisContextCatalogSnapshot,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -91,8 +92,10 @@ const decodeTransferThreadSnapshot = Schema.decodeUnknownEffect(
 const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationShellSnapshot),
 );
+const decodeAxisContextCatalogSnapshot = Schema.decodeUnknownEffect(AxisContextCatalogSnapshot);
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
 import * as ServerConfig from "./config.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import {
@@ -535,6 +538,7 @@ const buildAppUnderTest = (options?: {
     desktopTelemetryReceiver?: Partial<
       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
     >;
+    axisContextCatalog?: Partial<AxisContextCatalogStore["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -788,14 +792,19 @@ const buildAppUnderTest = (options?: {
         ),
       ),
       Layer.provide(
-        Layer.mock(ServerSettings.ServerSettingsService)({
-          start: Effect.void,
-          ready: Effect.void,
-          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          streamChanges: Stream.empty,
-          ...options?.layers?.serverSettings,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            start: Effect.void,
+            ready: Effect.void,
+            getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            streamChanges: Stream.empty,
+            ...options?.layers?.serverSettings,
+          }),
+          Layer.mock(AxisContextCatalogStore)({
+            ...options?.layers?.axisContextCatalog,
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mergeAll(
@@ -5289,6 +5298,50 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.deepEqual(response.issues, []);
       assert.deepEqual(response.keybindings, [resolved]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes revisioned Axis context catalog RPCs", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* decodeAxisContextCatalogSnapshot({
+        revision: 4,
+        updatedAt: "2026-09-05T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "personal",
+              kind: "personal",
+              name: "Personal",
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      const replace = vi.fn<AxisContextCatalogStore["Service"]["replace"]>((input) =>
+        Effect.succeed({ ...snapshot, revision: 5, catalog: input.catalog }),
+      );
+      yield* buildAppUnderTest({
+        layers: { axisContextCatalog: { get: Effect.succeed(snapshot), replace } },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const read = yield* client[WS_METHODS.axisContextsGetCatalog]({});
+            const updated = yield* client[WS_METHODS.axisContextsReplaceCatalog]({
+              expectedRevision: read.revision,
+              catalog: read.catalog,
+            });
+            return { read, updated };
+          }),
+        ),
+      );
+
+      assert.equal(response.read.revision, 4);
+      assert.equal(response.updated.revision, 5);
+      assert.deepEqual(replace.mock.calls, [[{ expectedRevision: 4, catalog: snapshot.catalog }]]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
