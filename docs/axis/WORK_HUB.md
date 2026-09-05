@@ -9,6 +9,10 @@ Work Hub is not a new agent runtime, orchestration engine, calendar backend, cha
 tracker. It is an Axis projection of data obtained through MCPs available to provider bindings in
 each context, combined with relevant T3 work state.
 
+Open **Work Hub** from the main sidebar to switch between Overview, Calendar, Messages, and Work
+Board. The initial surface reports real provider/MCP readiness per context; empty collections remain
+explicit until the corresponding MCP ingestion and normalized read model are available.
+
 ## Primary views
 
 ### Overview
@@ -96,8 +100,10 @@ deduplicate, retry, and delete them.
 Collection and storage happen per context. The aggregate Work Hub is assembled for the signed-in
 user from already authorized context projections.
 
-- Company A refreshes only with Company A provider bindings and MCP grants.
-- Company B refreshes only with Company B provider bindings and MCP grants.
+- Company A refreshes only with provider bindings available to Company A and the MCPs attached to
+  those providers.
+- Company B refreshes only with provider bindings available to Company B and the MCPs attached to
+  those providers.
 - Personal refreshes only with Personal bindings.
 - A personal provider granted to Company B executes inside Company B's effective binding; its result
   belongs to Company B and is not added to Personal memory or Company A.
@@ -125,5 +131,6 @@ A Work Hub item may open its supporting T3 Thread in Chat or a task-focused Cowo
 Neither action copies the item into a new conversation model. Follow-up work uses a Thread in the
 item's source context and only the provider/MCP bindings allowed there.
 
-This document defines the Work Hub boundary and information model. It does not implement ingestion,
-background refresh, connector mappings, UI, or source-system writes.
+The initial UI shell and context-scoped source readiness are implemented. Ingestion, background
+refresh, connector mappings, normalized item persistence, and source-system writes remain later
+implementation slices.

@@ -3,6 +3,12 @@ import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
+  AxisContextCatalogError,
+  AxisContextCatalogPersistenceError,
+  AxisContextCatalogReplaceInput,
+  AxisContextCatalogSnapshot,
+} from "./axisContext.ts";
+import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
   ProviderAuthState,
@@ -322,6 +328,10 @@ export const WS_METHODS = {
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
+  // Axis context and capability management
+  axisContextsGetCatalog: "axis.contexts.getCatalog",
+  axisContextsReplaceCatalog: "axis.contexts.replaceCatalog",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -510,6 +520,18 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsAxisContextsGetCatalogRpc = Rpc.make(WS_METHODS.axisContextsGetCatalog, {
+  payload: Schema.Struct({}),
+  success: AxisContextCatalogSnapshot,
+  error: Schema.Union([AxisContextCatalogPersistenceError, EnvironmentAuthorizationError]),
+});
+
+export const WsAxisContextsReplaceCatalogRpc = Rpc.make(WS_METHODS.axisContextsReplaceCatalog, {
+  payload: AxisContextCatalogReplaceInput,
+  success: AxisContextCatalogSnapshot,
+  error: Schema.Union([AxisContextCatalogError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1196,6 +1218,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsAxisContextsGetCatalogRpc,
+  WsAxisContextsReplaceCatalogRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

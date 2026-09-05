@@ -29,7 +29,7 @@ This distinction supports a user with personal projects and multiple jobs: a Com
 employer-provided subscription, a personal subscription, or both. The credential source does not
 decide where the work belongs.
 
-## Four separate concerns
+## Three separate concerns
 
 Keep these concepts independent:
 
@@ -37,12 +37,11 @@ Keep these concepts independent:
 2. **Provider instance** — a T3-configured account/runtime identity such as Claude Enterprise or
    Codex Personal.
 3. **Provider access grant** — lets one target context select a provider instance owned by Personal.
-4. **Capability grant** — optionally makes selected personal MCPs, skills, instructions, or
-   preferences available with that provider inside the target context.
 
-A provider access grant is not a data-sharing grant. A capability grant is not a provider
-credential. Keeping them separate prevents “use my Codex subscription” from silently becoming
-“expose all of Personal to this Company.”
+A provider access grant is not a data-sharing grant. MCPs, skills, instructions, and preferences
+belong to a provider instance and travel with that provider when access is granted. Context-owned
+Projects, Threads, memory, messages, and Work Hub records never travel with it. This lets “use my
+Codex subscription” mean “use that provider as configured,” without exposing the Personal context.
 
 A future Profile may make sets of capabilities and preferences easier to manage, but it should
 compile to these explicit bindings. It must not become a provider, context, session store, or second
@@ -61,8 +60,8 @@ permission system.
   does not reuse a Thread, session, prompt history, checkpoint, or memory.
 - Queries, caches, indexes, notifications, search, and derived records include `contextId` in their
   key. Filtering only in the UI is not isolation.
-- Company-specific MCPs, skills, instructions, preferences, and memory never follow a shared
-  personal provider into another context.
+- Capabilities configured on a Company-owned provider never flow to another context because that
+  provider cannot be granted outside its owner Company.
 - Cross-context joins exist only in explicitly user-owned aggregate experiences such as Work Hub.
   Those joins label every item by source and do not feed one Company's data into another Company's
   agent context.
@@ -78,8 +77,7 @@ When a Company selects a provider, Axis resolves an effective binding for that c
 ```text
 T3 provider instance
 + target Company policy
-+ Company-owned capabilities
-+ explicitly granted portable Personal capabilities
++ capabilities configured on that provider
 = effective binding for one T3 Thread/session
 ```
 
@@ -93,24 +91,25 @@ or config directory. The eventual implementation must prevent those ambient file
 the effective binding. Depending on the driver, that may require an isolated runtime home or a
 driver-supported scoped configuration. It must not be approximated with prompt instructions.
 
-## Personal capabilities inside a Company
+## Provider capabilities inside a Company
 
-Users may explicitly grant portable personal capabilities to a Company. Examples include a general
-code-review skill, a personal editor preference, or an MCP that the user is authorized to use for
-that job.
+When a user grants a Personal provider to a Company, the provider's enabled MCPs, skills,
+instructions, and preferences are available there. There is no separate capability grant. Examples
+include a general code-review skill, a personal editor preference, or an MCP that the user is
+authorized to use for that job.
 
-Capabilities need ownership and portability metadata:
+Capabilities need provider-scoped metadata:
 
-- owner context;
-- allowed target context IDs, or no targets;
+- provider instance locator;
 - capability kind and provider compatibility;
 - required secrets, retained in the environment's secret store;
 - data-access description and revocation state; and
 - whether Company policy permits it.
 
-Granting is directional and individually revocable. Revocation prevents new sessions from receiving
-the capability and removes it from resumable sessions when the provider can do so safely. It does
-not rewrite T3 history.
+Provider access is directional and individually revocable. Revocation prevents new sessions in the
+Company from selecting that Personal provider and therefore removes access to all of its
+capabilities. It does not delete or mutate the provider's capabilities and does not rewrite T3
+history.
 
 ## Management surface
 
@@ -125,10 +124,10 @@ The surface manages four capability kinds:
 - **Instructions** — edit the instruction sets applied to an effective provider binding; and
 - **Preferences** — edit reusable agent/model/tool preferences that are genuinely portable.
 
-Users can view the catalog by owner context or by provider instance. Every entry shows its owner,
-scope, compatible providers, required secrets, enabled state, grants, and health or load errors. The
-same surface grants or revokes a personal capability for a specific Company and previews the
-effective capability set before a new Thread starts.
+Users view the catalog by provider instance. Every entry shows its provider, owning context,
+compatibility, required secrets, enabled state, and health or load errors. The same surface grants
+or revokes Company access to an entire Personal provider and previews the effective capability set
+before a new Thread starts.
 
 Provider credentials, executable paths, account login, and raw environment variables remain under
 T3 provider-instance settings. Axis capability settings reference those instances and use T3's
@@ -167,5 +166,6 @@ therefore requires an explicit migration that checks provider bindings, capabili
 connectors, and retained derived data. The first implementation should prefer creating the correct
 association at the start rather than supporting moves prematurely.
 
-This document defines the model only. Contexts, grants, Profiles, and capability materialization are
-not implemented by the architecture-foundation change.
+The initial catalog and Settings surface implement context ownership, provider access grants, and
+provider-scoped capability metadata. Runtime materialization, policy enforcement at launch, and
+Profiles remain later implementation slices.
