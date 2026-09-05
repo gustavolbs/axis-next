@@ -8,6 +8,7 @@ import {
   AxisContextCatalogReplaceInput,
   AxisContextCatalogSnapshot,
 } from "./axisContext.ts";
+import { AxisWorkHubCachePersistenceError, AxisWorkHubCacheSnapshot } from "./axisWorkHub.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -337,6 +338,7 @@ export const WS_METHODS = {
   // Axis context and capability management
   axisContextsGetCatalog: "axis.contexts.getCatalog",
   axisContextsReplaceCatalog: "axis.contexts.replaceCatalog",
+  axisWorkHubGetCache: "axis.workHub.getCache",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -544,6 +546,12 @@ export const WsAxisContextsReplaceCatalogRpc = Rpc.make(WS_METHODS.axisContextsR
   payload: AxisContextCatalogReplaceInput,
   success: AxisContextCatalogSnapshot,
   error: Schema.Union([AxisContextCatalogError, EnvironmentAuthorizationError]),
+});
+
+export const WsAxisWorkHubGetCacheRpc = Rpc.make(WS_METHODS.axisWorkHubGetCache, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(AxisWorkHubCacheSnapshot),
+  error: Schema.Union([AxisWorkHubCachePersistenceError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1233,6 +1241,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderCapabilitiesGetRpc,
   WsAxisContextsGetCatalogRpc,
   WsAxisContextsReplaceCatalogRpc,
+  WsAxisWorkHubGetCacheRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

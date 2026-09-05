@@ -2,7 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { AxisContextCatalog } from "@t3tools/contracts";
-import { buildWorkHubSourceGroups, buildWorkHubSourceReadiness } from "./WorkHub.logic";
+import {
+  buildWorkHubSourceGroups,
+  buildWorkHubSourceReadiness,
+  buildWorkHubWeekDays,
+  workHubCurrentTimePercentage,
+} from "./WorkHub.logic";
 
 const decodeCatalog = Schema.decodeUnknownSync(AxisContextCatalog);
 const now = "2026-09-05T00:00:00.000Z";
@@ -111,5 +116,21 @@ describe("buildWorkHubSourceReadiness", () => {
       availableMcpCount: 0,
       selectedMcpCount: 0,
     });
+  });
+});
+
+describe("Work Hub calendar", () => {
+  it("navigates complete Monday-to-Sunday weeks", () => {
+    const anchor = new Date(2026, 8, 5, 12);
+    expect(buildWorkHubWeekDays(anchor, -1).map((day) => day.getDate())).toEqual([
+      24, 25, 26, 27, 28, 29, 30,
+    ]);
+    expect(buildWorkHubWeekDays(anchor, 1).map((day) => day.getDate())).toEqual([
+      7, 8, 9, 10, 11, 12, 13,
+    ]);
+  });
+
+  it("positions the current-time indicator within the day", () => {
+    expect(workHubCurrentTimePercentage(new Date(2026, 8, 5, 12))).toBe(50);
   });
 });

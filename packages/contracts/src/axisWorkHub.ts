@@ -29,6 +29,8 @@ export const AxisWorkHubCachedItem = Schema.Struct({
   endsAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   status: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   deepLink: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  meetingLink: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  location: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   updatedAt: IsoDateTime,
 });
 export type AxisWorkHubCachedItem = typeof AxisWorkHubCachedItem.Type;

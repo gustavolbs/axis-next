@@ -146,6 +146,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
+import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -523,6 +524,7 @@ const makeWsRpcLayer = (
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const axisContextCatalog = yield* AxisContextCatalogStore;
+      const axisWorkHubCache = yield* AxisWorkHubCacheStore;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2006,6 +2008,10 @@ const makeWsRpcLayer = (
             axisContextCatalog.replace(input),
             { "rpc.aggregate": "axis" },
           ),
+        [WS_METHODS.axisWorkHubGetCache]: (_input) =>
+          observeRpcEffect(WS_METHODS.axisWorkHubGetCache, axisWorkHubCache.list, {
+            "rpc.aggregate": "axis",
+          }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,

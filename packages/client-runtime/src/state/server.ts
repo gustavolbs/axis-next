@@ -990,6 +990,11 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    axisWorkHubCache: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:work-hub-cache",
+      tag: WS_METHODS.axisWorkHubGetCache,
+      staleTimeMs: 30_000,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   AxisContextCatalog,
   AxisContextId,
+  AxisWorkHubSource,
   resolveAxisContextCapabilities,
   resolveAxisContextProviderInstances,
   validateAxisContextCatalog,
@@ -11,6 +12,7 @@ import {
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeCatalog = Schema.decodeUnknownSync(AxisContextCatalog);
+const decodeWorkHubSource = Schema.decodeUnknownSync(AxisWorkHubSource);
 const now = "2026-09-05T00:00:00.000Z";
 
 function validCatalog() {
@@ -81,8 +83,28 @@ describe("AxisContextCatalog", () => {
 
     const catalog = validCatalog();
     expect(catalog.capabilities[0]).toMatchObject({ enabled: true });
-    expect(catalog.workHubSources[0]).toMatchObject({ enabled: true });
+    expect(catalog.workHubSources[0]).toMatchObject({
+      enabled: true,
+      cacheTtlSeconds: 28_800,
+      collectionPolicy: {
+        calendarLookbackDays: 14,
+        calendarLookaheadDays: 90,
+        assignedWorkItemsOnly: true,
+        directMessages: true,
+        mentions: true,
+        assignedIssueComments: true,
+      },
+    });
     expect(catalog.providerAccessGrants[0]?.revokedAt).toBeNull();
+  });
+
+  it("requires Work Hub cache entries to live for at least eight hours", () => {
+    expect(() =>
+      decodeWorkHubSource({
+        ...validCatalog().workHubSources[0],
+        cacheTtlSeconds: 15 * 60,
+      }),
+    ).toThrow();
   });
 
   it("accepts a Personal-to-Company provider grant", () => {

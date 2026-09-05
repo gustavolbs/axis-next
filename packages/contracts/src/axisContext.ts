@@ -108,6 +108,30 @@ export const AxisCapability = Schema.Struct({
 });
 export type AxisCapability = typeof AxisCapability.Type;
 
+export const AXIS_WORK_HUB_DEFAULT_CACHE_TTL_SECONDS = 8 * 60 * 60;
+const AxisWorkHubCacheTtlSeconds = PositiveInt.check(
+  Schema.isGreaterThanOrEqualTo(AXIS_WORK_HUB_DEFAULT_CACHE_TTL_SECONDS),
+);
+
+export const AxisWorkHubCollectionPolicy = Schema.Struct({
+  calendarLookbackDays: NonNegativeInt,
+  calendarLookaheadDays: PositiveInt,
+  assignedWorkItemsOnly: Schema.Boolean,
+  directMessages: Schema.Boolean,
+  mentions: Schema.Boolean,
+  assignedIssueComments: Schema.Boolean,
+});
+export type AxisWorkHubCollectionPolicy = typeof AxisWorkHubCollectionPolicy.Type;
+
+export const DEFAULT_AXIS_WORK_HUB_COLLECTION_POLICY: AxisWorkHubCollectionPolicy = {
+  calendarLookbackDays: 14,
+  calendarLookaheadDays: 90,
+  assignedWorkItemsOnly: true,
+  directMessages: true,
+  mentions: true,
+  assignedIssueComments: true,
+};
+
 /** One context-approved provider/MCP binding queried by Work Hub. */
 export const AxisWorkHubSource = Schema.Struct({
   id: AxisWorkHubSourceId,
@@ -115,7 +139,12 @@ export const AxisWorkHubSource = Schema.Struct({
   provider: AxisProviderInstanceLocator,
   capabilityId: AxisCapabilityId,
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  cacheTtlSeconds: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(900))),
+  cacheTtlSeconds: AxisWorkHubCacheTtlSeconds.pipe(
+    Schema.withDecodingDefault(Effect.succeed(AXIS_WORK_HUB_DEFAULT_CACHE_TTL_SECONDS)),
+  ),
+  collectionPolicy: AxisWorkHubCollectionPolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AXIS_WORK_HUB_COLLECTION_POLICY)),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

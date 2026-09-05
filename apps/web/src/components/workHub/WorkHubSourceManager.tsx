@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 
 import {
   axisProviderInstanceLocatorKey,
+  AXIS_WORK_HUB_DEFAULT_CACHE_TTL_SECONDS,
+  DEFAULT_AXIS_WORK_HUB_COLLECTION_POLICY,
   AxisWorkHubSourceId,
   type AxisCapabilityId,
   type AxisContextCatalog,
@@ -111,7 +113,8 @@ export function WorkHubSourceManager() {
                 provider: capability.provider,
                 capabilityId,
                 enabled: true,
-                cacheTtlSeconds: 900,
+                cacheTtlSeconds: AXIS_WORK_HUB_DEFAULT_CACHE_TTL_SECONDS,
+                collectionPolicy: DEFAULT_AXIS_WORK_HUB_COLLECTION_POLICY,
                 createdAt: now,
                 updatedAt: now,
               },
@@ -160,7 +163,8 @@ export function WorkHubSourceManager() {
             provider,
             capabilityId,
             enabled: true,
-            cacheTtlSeconds: 900,
+            cacheTtlSeconds: AXIS_WORK_HUB_DEFAULT_CACHE_TTL_SECONDS,
+            collectionPolicy: DEFAULT_AXIS_WORK_HUB_COLLECTION_POLICY,
             createdAt: now,
             updatedAt: now,
           })),
@@ -179,7 +183,7 @@ export function WorkHubSourceManager() {
             Choose the providers and MCPs Work Hub may query inside each isolated context.
           </p>
         </div>
-        <Badge variant="secondary">15 min cache</Badge>
+        <Badge variant="secondary">8 hour cache</Badge>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         {groups.map((group, contextIndex) => (
