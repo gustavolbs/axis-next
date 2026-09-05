@@ -1011,6 +1011,40 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.snapshot.sourceId]),
       },
     }),
+    axisScheduledActivities: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:scheduled-activities",
+      tag: WS_METHODS.axisScheduledActivitiesList,
+      staleTimeMs: 5_000,
+    }),
+    createAxisScheduledActivity: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:create-scheduled-activity",
+      tag: WS_METHODS.axisScheduledActivitiesCreate,
+    }),
+    updateAxisScheduledActivity: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:update-scheduled-activity",
+      tag: WS_METHODS.axisScheduledActivitiesUpdate,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.activity.id]),
+      },
+    }),
+    deleteAxisScheduledActivity: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:delete-scheduled-activity",
+      tag: WS_METHODS.axisScheduledActivitiesDelete,
+    }),
+    runAxisScheduledActivityNow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:run-scheduled-activity-now",
+      tag: WS_METHODS.axisScheduledActivitiesRunNow,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.id]),
+      },
+    }),
+    axisScheduledActivityRuns: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:scheduled-activity-runs",
+      tag: WS_METHODS.axisScheduledActivitiesListRuns,
+      staleTimeMs: 5_000,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

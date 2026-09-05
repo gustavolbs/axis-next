@@ -155,6 +155,20 @@ Claude Enterprise · managed by Company A
 The selection is persisted as the real T3 `ProviderInstanceId`; Axis metadata records the context,
 owner, and grant used for authorization and audit.
 
+### Subscription quota fallback
+
+A user can configure a second Codex or Claude provider instance with an API key and select it when a
+subscription-backed instance reaches its quota. The add-instance flow stores the key as a sensitive
+provider environment variable and assigns a separate provider home, so subscription credentials and
+API-key credentials do not silently override one another.
+
+Fallback selection is manual in the current implementation: the user chooses the API-key instance
+from the ordinary provider picker. Automatic failover remains a later slice because it must observe
+an authoritative quota failure, preserve the Thread's context and compatible continuation identity,
+show the billing boundary before paid API usage begins, and never retry a non-quota provider error
+on a different account. It must also provide an explicit way to return to the subscription instance;
+creating an API-key instance alone does not authorize automatic paid fallback.
+
 ## Workspaces and T3 Projects
 
 Every Axis Workspace belongs to exactly one context. It references one or more T3 Projects using

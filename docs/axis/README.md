@@ -21,14 +21,36 @@ conflicts without adding product value.
   directional reuse of personal providers and capabilities inside a Company.
 - [Work Hub](./WORK_HUB.md) defines the cross-context Overview, Calendar, Messages, and Work Board
   projections sourced through provider-connected MCPs.
+- [Learning layer](./LEARNING.md) defines how Hermes or a compatible engine can propose safe,
+  context-scoped improvements with review, versioning, and rollback.
 - [Upstream](./UPSTREAM.md) defines how the fork stays close to `pingdotgg/t3code` and how upstream
   changes are synchronized.
 - [Legacy migration](./LEGACY_MIGRATION.md) defines the decision framework for moving useful Axis
   Legacy behavior without moving its infrastructure debt.
 
-These documents describe durable boundaries, not implemented Axis features. Companies, Workspaces,
-Profiles, Shared Memory, Work Hub, Calendar, tasks, cross-agent orchestration, notifications, and
-Axis-specific remote/mobile experiences are intentionally outside this foundation change.
+These documents describe durable boundaries and may cover both implemented and planned slices. The
+current implementation includes the Axis context/provider catalog, provider-owned MCP and skill
+controls, API-key provider instances, and a web Work Hub with persisted source selection,
+source-specific collection policy, per-source cache, manual Codex/Claude MCP sync, calendar
+presentation, and scheduled source refresh. Runtime context enforcement, native provider connector
+configuration, scheduled agent activities, automatic provider failover, Shared Memory, the learning
+layer, source-system mutations, and native mobile presentation remain staged work.
+
+## Implementation sequence
+
+The durable dependency order is:
+
+1. enforce context ownership and effective provider bindings at runtime;
+2. complete provider-owned MCP, skill, instruction, and preference management;
+3. make Work Hub connector acquisition and normalization reliable across supported providers;
+4. evolve context-scoped scheduled refresh into reusable T3 scheduling, then add agent activities;
+5. derive Shared Memory and learning evidence with provenance and retention;
+6. add proposal review, immutable versions, activation, rejection, and rollback; and
+7. connect Hermes as an optional learning engine, then expand evaluated improvement types.
+
+This sequence is dependency guidance rather than a release-date promise. A slice is complete only
+after its server behavior, applicable clients and providers, reverse states, remote modes, and
+focused tests agree.
 
 ## Decision shorthand
 

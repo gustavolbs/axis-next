@@ -134,6 +134,24 @@ incremental messages are merged so a later sync does not erase still-relevant DM
 assigned-ticket comments. A failure keeps the prior snapshot and allows an individual retry. Cache
 records remain context-keyed so deduplication cannot create a cross-Company data path.
 
+## Scheduled refresh
+
+A user may schedule refresh for one MCP or an explicit set of selected Work Hub sources. The
+schedule retains its context, provider instance, MCP capability, time zone, enabled state, next run,
+last confirmed result, and delivery behavior. It uses the same source-specific acquisition and
+atomic cache replacement as manual **Sync**; it does not create a second collection path.
+
+Scheduled refresh currently runs through a narrow server-side Axis worker because T3 does not yet
+provide a reusable generic scheduler. It reuses the same Work Hub synchronization and cache path as
+manual refresh rather than introducing a second acquisition implementation. Each source runs and
+reports independently, so an offline Company, expired connector authorization, or malformed source
+result does not block other sources or erase their last confirmed snapshots. Users can pause,
+resume, edit, delete, or run a schedule immediately.
+
+Scheduled agent activities, such as a morning briefing generated from confirmed Work Hub
+snapshots, are separate from source refresh. They run in the selected context with only its allowed
+provider/MCP bindings and preserve the normal T3 approval and Thread lifecycle.
+
 Source mutations—calendar responses, message replies, issue transitions, assignments—are separate
 capabilities. Each needs typed input/output, authorization, approval behavior, an idempotency key,
 and confirmation from the source. They should not be inferred as part of the initial read model.
@@ -144,7 +162,7 @@ A Work Hub item may open its supporting T3 Thread in Chat or a task-focused Cowo
 Neither action copies the item into a new conversation model. Follow-up work uses a Thread in the
 item's source context and only the provider/MCP bindings allowed there.
 
-The UI, persisted source selection, per-source cache policy, cache store, and manual Codex/Claude MCP
-sync are implemented. Scheduled refresh, provider adapters beyond Codex and Claude, richer
-connector-specific mappings, source-system writes, and a native mobile presentation remain later
-implementation slices.
+The UI, persisted source selection, per-source cache policy, cache store, manual Codex/Claude MCP
+sync, and scheduled source refresh are implemented. Scheduled agent activities, provider adapters
+beyond Codex and Claude, richer connector-specific mappings, source-system writes, and a native
+mobile presentation remain later implementation slices.

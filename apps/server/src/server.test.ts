@@ -99,6 +99,7 @@ const decodeAxisWorkHubCacheSnapshot = Schema.decodeUnknownEffect(AxisWorkHubCac
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
 import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
+import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActivityRunner.ts";
 import * as ServerConfig from "./config.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import {
@@ -543,6 +544,7 @@ const buildAppUnderTest = (options?: {
     >;
     axisContextCatalog?: Partial<AxisContextCatalogStore["Service"]>;
     axisWorkHubCache?: Partial<AxisWorkHubCacheStore["Service"]>;
+    axisScheduledActivities?: Partial<AxisScheduledActivityRunner["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -814,6 +816,16 @@ const buildAppUnderTest = (options?: {
             replace: () => Effect.void,
             remove: () => Effect.void,
             ...options?.layers?.axisWorkHubCache,
+          }),
+          Layer.mock(AxisScheduledActivityRunner)({
+            list: Effect.succeed([]),
+            create: () => Effect.die("Scheduled activity create is not stubbed in this test"),
+            update: () => Effect.die("Scheduled activity update is not stubbed in this test"),
+            remove: () => Effect.die("Scheduled activity delete is not stubbed in this test"),
+            listRuns: () => Effect.succeed([]),
+            runNow: () => Effect.die("Scheduled activity run is not stubbed in this test"),
+            tick: Effect.void,
+            ...options?.layers?.axisScheduledActivities,
           }),
         ),
       ),

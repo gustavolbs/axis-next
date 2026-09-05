@@ -16,6 +16,17 @@ import {
   AxisWorkHubSyncError,
 } from "./axisWorkHub.ts";
 import {
+  AxisScheduledActivity,
+  AxisScheduledActivityCreateInput,
+  AxisScheduledActivityDeleteInput,
+  AxisScheduledActivityError,
+  AxisScheduledActivityListRunsInput,
+  AxisScheduledActivityPersistenceError,
+  AxisScheduledActivityRun,
+  AxisScheduledActivityRunNowInput,
+  AxisScheduledActivityUpdateInput,
+} from "./axisScheduledActivity.ts";
+import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
   ProviderAuthState,
@@ -347,6 +358,12 @@ export const WS_METHODS = {
   axisWorkHubGetCache: "axis.workHub.getCache",
   providerWorkHubCollect: "provider.workHub.collect",
   axisWorkHubReplaceCache: "axis.workHub.replaceCache",
+  axisScheduledActivitiesList: "axis.scheduledActivities.list",
+  axisScheduledActivitiesCreate: "axis.scheduledActivities.create",
+  axisScheduledActivitiesUpdate: "axis.scheduledActivities.update",
+  axisScheduledActivitiesDelete: "axis.scheduledActivities.delete",
+  axisScheduledActivitiesRunNow: "axis.scheduledActivities.runNow",
+  axisScheduledActivitiesListRuns: "axis.scheduledActivities.listRuns",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -577,6 +594,57 @@ export const WsAxisWorkHubReplaceCacheRpc = Rpc.make(WS_METHODS.axisWorkHubRepla
   success: AxisWorkHubCacheSnapshot,
   error: Schema.Union([AxisWorkHubCachePersistenceError, EnvironmentAuthorizationError]),
 });
+
+export const WsAxisScheduledActivitiesListRpc = Rpc.make(WS_METHODS.axisScheduledActivitiesList, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(AxisScheduledActivity),
+  error: Schema.Union([AxisScheduledActivityPersistenceError, EnvironmentAuthorizationError]),
+});
+
+export const WsAxisScheduledActivitiesCreateRpc = Rpc.make(
+  WS_METHODS.axisScheduledActivitiesCreate,
+  {
+    payload: AxisScheduledActivityCreateInput,
+    success: AxisScheduledActivity,
+    error: Schema.Union([AxisScheduledActivityError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsAxisScheduledActivitiesUpdateRpc = Rpc.make(
+  WS_METHODS.axisScheduledActivitiesUpdate,
+  {
+    payload: AxisScheduledActivityUpdateInput,
+    success: AxisScheduledActivity,
+    error: Schema.Union([AxisScheduledActivityError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsAxisScheduledActivitiesDeleteRpc = Rpc.make(
+  WS_METHODS.axisScheduledActivitiesDelete,
+  {
+    payload: AxisScheduledActivityDeleteInput,
+    success: Schema.Void,
+    error: Schema.Union([AxisScheduledActivityError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsAxisScheduledActivitiesRunNowRpc = Rpc.make(
+  WS_METHODS.axisScheduledActivitiesRunNow,
+  {
+    payload: AxisScheduledActivityRunNowInput,
+    success: AxisScheduledActivityRun,
+    error: Schema.Union([AxisScheduledActivityError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsAxisScheduledActivitiesListRunsRpc = Rpc.make(
+  WS_METHODS.axisScheduledActivitiesListRuns,
+  {
+    payload: AxisScheduledActivityListRunsInput,
+    success: Schema.Array(AxisScheduledActivityRun),
+    error: Schema.Union([AxisScheduledActivityPersistenceError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
@@ -1268,6 +1336,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsAxisWorkHubGetCacheRpc,
   WsProviderWorkHubCollectRpc,
   WsAxisWorkHubReplaceCacheRpc,
+  WsAxisScheduledActivitiesListRpc,
+  WsAxisScheduledActivitiesCreateRpc,
+  WsAxisScheduledActivitiesUpdateRpc,
+  WsAxisScheduledActivitiesDeleteRpc,
+  WsAxisScheduledActivitiesRunNowRpc,
+  WsAxisScheduledActivitiesListRunsRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

@@ -9,10 +9,13 @@ import {
   type EnvironmentId,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
-import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { ACPRegistryIcon, Gemini, GithubCopilotIcon, PiAgentIcon, type Icon } from "../Icons";
 import {
@@ -32,6 +35,8 @@ import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSe
 import { AnimatedHeight } from "../AnimatedHeight";
 import {
   ADD_PROVIDER_WIZARD_STEPS,
+  apiKeyEnvironmentVariableForDriver,
+  buildApiKeyProviderInstance,
   resolveWizardNavigation,
   type WizardNavigation,
 } from "./AddProviderInstanceDialog.logic";
@@ -129,12 +134,14 @@ export function AddProviderInstanceDialog({
   onOpenChange,
 }: AddProviderInstanceDialogProps) {
   const settings = useEnvironmentSettings(environmentId);
-  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
   const [label, setLabel] = useState("");
   const [accentColor, setAccentColor] = useState<string>("");
+  const [credentialMode, setCredentialMode] = useState<"existing" | "apiKey">("existing");
+  const [apiKeysByDriver, setApiKeysByDriver] = useState<Record<string, string>>({});
   const [instanceIdOverride, setInstanceIdOverride] = useState<string | null>(null);
   // Driver-specific config drafts keyed by driver so toggling between drivers
   // during the same dialog session does not lose in-progress input.
@@ -142,6 +149,7 @@ export function AddProviderInstanceDialog({
   // Errors are suppressed until the user has tried to submit once. After that
   // they update live so fixing the problem clears the message in place.
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const existingIds = useMemo(
     () => new Set(Object.keys(settings.providerInstances ?? {})),
@@ -155,8 +163,18 @@ export function AddProviderInstanceDialog({
     [driverOption],
   );
   const instanceIdError = validateInstanceId(instanceId, existingIds);
+  const apiKeyEnvironmentVariable = apiKeyEnvironmentVariableForDriver(driver);
+  const usesApiKey = credentialMode === "apiKey" && apiKeyEnvironmentVariable !== null;
+  const apiKey = apiKeysByDriver[driver] ?? "";
+  const apiKeyError =
+    usesApiKey && apiKey.trim().length === 0
+      ? "API key is required for this provider instance."
+      : null;
   const showInstanceIdError = hasAttemptedSubmit && instanceIdError !== null;
-  const previewLabel = label.trim() || `${driverOption.label} Workspace`;
+  const showApiKeyError = hasAttemptedSubmit && apiKeyError !== null;
+  const previewLabel =
+    label.trim() ||
+    (usesApiKey ? `${driverOption.label} API Key` : `${driverOption.label} Workspace`);
   const wizardStepSummaries = [driverOption.label, previewLabel, null] as const;
 
   const configDraft = configByDriver[driver] ?? EMPTY_CONFIG_DRAFT;
@@ -187,49 +205,78 @@ export function AddProviderInstanceDialog({
     );
   };
 
-  const handleSave = () => {
+  const closeDialog = () => {
+    // Do not retain bearer credentials in the mounted settings tree after
+    // the dialog closes. The server owns persistence in its secret store.
+    setApiKeysByDriver({});
+    onOpenChange(false);
+  };
+
+  const handleSave = async () => {
     setHasAttemptedSubmit(true);
-    if (instanceIdError !== null) return;
+    if (instanceIdError !== null || apiKeyError !== null || saving) return;
 
     const config = configByDriver[driver] ?? {};
     const hasConfig = Object.keys(config).length > 0;
     const normalizedAccentColor = normalizeProviderAccentColor(accentColor);
 
-    const nextInstance: ProviderInstanceConfig = {
-      driver,
-      enabled: true,
-      ...(label.trim().length > 0 ? { displayName: label.trim() } : {}),
-      ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
-      ...(hasConfig ? { config } : {}),
-    };
     // `ProviderInstanceId.make` revalidates the slug; we've already checked
     // it via `validateInstanceId`, but going through the brand constructor
     // keeps the type boundary honest and guards against any future drift in
     // the slug rules.
     const brandedId = ProviderInstanceId.make(instanceId);
+    const displayName = label.trim() || (usesApiKey ? previewLabel : undefined);
+    const nextInstance: ProviderInstanceConfig = usesApiKey
+      ? buildApiKeyProviderInstance({
+          instanceId: brandedId,
+          driver,
+          ...(displayName ? { displayName } : {}),
+          ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
+          apiKey,
+          config,
+        })
+      : {
+          driver,
+          enabled: true,
+          ...(displayName ? { displayName } : {}),
+          ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
+          ...(hasConfig ? { config } : {}),
+        };
     const nextMap = {
       ...settings.providerInstances,
       [brandedId]: nextInstance,
     };
-    try {
-      updateSettings({ providerInstances: nextMap });
-      toastManager.add({
-        type: "success",
-        title: "Provider instance added",
-        description: `${driverOption.label} instance '${instanceId}' was added.`,
-      });
-      onOpenChange(false);
-    } catch (error) {
+    setSaving(true);
+    const result = await updateSettings({
+      environmentId,
+      input: { patch: { providerInstances: nextMap } },
+    });
+    setSaving(false);
+    if (result._tag !== "Success") {
+      const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
         title: "Could not add provider instance",
         description: error instanceof Error ? error.message : "Update failed.",
       });
+      return;
     }
+    toastManager.add({
+      type: "success",
+      title: "Provider instance added",
+      description: `${driverOption.label} instance '${instanceId}' was added.`,
+    });
+    closeDialog();
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) setApiKeysByDriver({});
+        onOpenChange(nextOpen);
+      }}
+    >
       <DialogPopup className="max-w-xl overflow-hidden">
         <div className="flex min-h-0 flex-col overflow-hidden">
           <DialogHeader>
@@ -396,6 +443,66 @@ export function AddProviderInstanceDialog({
 
               {driverSettingsFields.length > 0 ? (
                 <div className={cn("grid gap-4", wizardStep !== 2 && "hidden")}>
+                  {apiKeyEnvironmentVariable ? (
+                    <div className="grid gap-3 rounded-xl border border-border/65 bg-background/60 p-3">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Authentication</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          Add a separate API-key instance to keep available when subscription quota
+                          is exhausted.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={credentialMode === "existing" ? "secondary" : "outline"}
+                          aria-pressed={credentialMode === "existing"}
+                          onClick={() => setCredentialMode("existing")}
+                        >
+                          CLI sign-in
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={credentialMode === "apiKey" ? "secondary" : "outline"}
+                          aria-pressed={credentialMode === "apiKey"}
+                          onClick={() => setCredentialMode("apiKey")}
+                        >
+                          API key
+                        </Button>
+                      </div>
+                      {credentialMode === "apiKey" ? (
+                        <label className="grid gap-1.5">
+                          <span className="text-xs font-medium text-foreground">
+                            {apiKeyEnvironmentVariable}
+                          </span>
+                          <Input
+                            className="bg-background"
+                            type="password"
+                            autoComplete="off"
+                            value={apiKey}
+                            placeholder="Enter API key"
+                            aria-invalid={showApiKeyError}
+                            onChange={(event) =>
+                              setApiKeysByDriver((current) => ({
+                                ...current,
+                                [driver]: event.target.value,
+                              }))
+                            }
+                          />
+                          {showApiKeyError ? (
+                            <span className="text-[11px] text-destructive">{apiKeyError}</span>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground">
+                              Stored separately as a sensitive environment secret. This instance
+                              uses an isolated provider home.
+                            </span>
+                          )}
+                        </label>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <ProviderSettingsForm
                     definition={driverOption}
                     value={configDraft}
@@ -419,7 +526,7 @@ export function AddProviderInstanceDialog({
               variant="outline"
               onClick={() => {
                 if (wizardStep === 0) {
-                  onOpenChange(false);
+                  closeDialog();
                   return;
                 }
                 setWizardStep((step) => Math.max(0, step - 1));
@@ -430,7 +537,9 @@ export function AddProviderInstanceDialog({
             {wizardStep < ADD_PROVIDER_WIZARD_STEPS.length - 1 ? (
               <Button onClick={() => navigateToStep(wizardStep + 1)}>Next</Button>
             ) : (
-              <Button onClick={handleSave}>Add instance</Button>
+              <Button disabled={saving} onClick={() => void handleSave()}>
+                {saving ? "Adding…" : "Add instance"}
+              </Button>
             )}
           </DialogFooter>
         </div>

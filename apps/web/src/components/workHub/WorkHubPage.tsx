@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CalendarDaysIcon,
+  CalendarClockIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CircleAlertIcon,
@@ -34,8 +35,9 @@ import {
   workHubCurrentTimePercentage,
 } from "./WorkHub.logic";
 import { WorkHubSourceManager } from "./WorkHubSourceManager";
+import { WorkHubScheduledActivities } from "./WorkHubScheduledActivities";
 
-type WorkHubView = "overview" | "calendar" | "messages" | "board";
+type WorkHubView = "overview" | "calendar" | "messages" | "board" | "scheduled";
 
 const VIEWS: ReadonlyArray<{
   readonly id: WorkHubView;
@@ -46,6 +48,7 @@ const VIEWS: ReadonlyArray<{
   { id: "calendar", label: "Calendar", icon: CalendarDaysIcon },
   { id: "messages", label: "Messages", icon: InboxIcon },
   { id: "board", label: "Work Board", icon: Columns3Icon },
+  { id: "scheduled", label: "Scheduled", icon: CalendarClockIcon },
 ];
 
 const BOARD_COLUMNS = ["To do", "Working", "Blocked", "Code review", "QA", "Done"] as const;
@@ -778,6 +781,12 @@ export function WorkHubPage() {
             <MessagesView
               contexts={query.data.catalog.contexts}
               items={cachedItems.filter((item) => item.view === "messages")}
+            />
+          ) : view === "scheduled" ? (
+            <WorkHubScheduledActivities
+              catalog={query.data.catalog}
+              environmentId={environmentId}
+              onWorkHubCacheChanged={cacheQuery.refresh}
             />
           ) : (
             <BoardView

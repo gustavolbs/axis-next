@@ -156,6 +156,32 @@ is collected through MCPs available to provider bindings in each context, normal
 context-owned Axis projections, and combined only in the user's Work Hub view. See
 [Work Hub](./WORK_HUB.md) for the source and isolation model.
 
+### Scheduled activities
+
+Axis scheduled activities add context and product policy to T3 orchestration. Because the server
+does not yet expose a reusable generic scheduler, the first implemented slice has a narrow Axis
+worker that executes context-scoped Work Hub refreshes. A schedule records the source context,
+allowed provider and MCP bindings, timing and time zone, enabled state, and last confirmed outcome.
+Running now, pausing, resuming, updating, and deleting are explicit operations over the same
+persisted activity and run history.
+
+A scheduled Work Hub refresh updates selected context-owned source projections. A future scheduled
+agent activity must create work through the normal T3 lifecycle rather than the narrow refresh
+worker. These are different operations even when one uses the other's cached data, and a failure in
+one source must not block unrelated sources.
+
+### Learning layer
+
+Hermes, or a compatible engine, may power an optional Axis learning layer that derives improvement
+proposals from authorized T3 and Axis evidence. It is not a provider, scheduler, permission system,
+or self-modifying runtime. Proposed changes remain inactive until reviewed, produce immutable
+versions when approved, and can be rolled back to a known-good version.
+
+Evidence, proposals, evaluations, and learned memory are context-scoped. Reusing a Personal
+provider in a Company does not merge learning data or allow Company-derived improvements to escape
+that Company without an explicit, policy-checked promotion. See
+[Learning layer](./LEARNING.md) for the authority, isolation, and delivery model.
+
 ### Chat and Cowork
 
 Chat and Cowork are product experiences, not separate conversation models. Both use the same T3

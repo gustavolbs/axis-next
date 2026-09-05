@@ -148,6 +148,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
+import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActivityRunner.ts";
 import {
   AxisWorkHubCacheStore,
   mergeAxisWorkHubCacheSnapshot,
@@ -530,6 +531,7 @@ const makeWsRpcLayer = (
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const axisContextCatalog = yield* AxisContextCatalogStore;
       const axisWorkHubCache = yield* AxisWorkHubCacheStore;
+      const axisScheduledActivities = yield* AxisScheduledActivityRunner;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2066,6 +2068,40 @@ const makeWsRpcLayer = (
               yield* axisWorkHubCache.replace(merged);
               return merged;
             }),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisScheduledActivitiesList]: (_input) =>
+          observeRpcEffect(WS_METHODS.axisScheduledActivitiesList, axisScheduledActivities.list, {
+            "rpc.aggregate": "axis",
+          }),
+        [WS_METHODS.axisScheduledActivitiesCreate]: ({ activity }) =>
+          observeRpcEffect(
+            WS_METHODS.axisScheduledActivitiesCreate,
+            axisScheduledActivities.create(activity),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisScheduledActivitiesUpdate]: ({ activity }) =>
+          observeRpcEffect(
+            WS_METHODS.axisScheduledActivitiesUpdate,
+            axisScheduledActivities.update(activity),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisScheduledActivitiesDelete]: ({ id }) =>
+          observeRpcEffect(
+            WS_METHODS.axisScheduledActivitiesDelete,
+            axisScheduledActivities.remove(id),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisScheduledActivitiesRunNow]: ({ id }) =>
+          observeRpcEffect(
+            WS_METHODS.axisScheduledActivitiesRunNow,
+            axisScheduledActivities.runNow(id),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisScheduledActivitiesListRuns]: ({ activityId, limit }) =>
+          observeRpcEffect(
+            WS_METHODS.axisScheduledActivitiesListRuns,
+            axisScheduledActivities.listRuns(activityId, limit),
             { "rpc.aggregate": "axis" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>

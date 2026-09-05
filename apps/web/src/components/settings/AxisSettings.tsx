@@ -6,6 +6,7 @@ import {
   axisProviderInstanceLocatorKey,
   AxisContextId,
   AxisProviderAccessGrantId,
+  type AxisCapability,
   type AxisCapabilityKind,
   type AxisContextCatalog,
   type AxisContextCatalogSnapshot,
@@ -17,6 +18,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { randomUUID } from "~/lib/utils";
+import { ensureLocalApi } from "~/localApi";
 import { environmentCatalog } from "~/connection/catalog";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
@@ -33,6 +35,10 @@ import {
   removeAxisProviderAccessGrant,
   setAxisProviderOwner,
 } from "./AxisSettings.logic";
+import {
+  removeAxisProviderCapability,
+  setAxisProviderCapabilityEnabled,
+} from "./ProviderCapabilities.logic";
 
 const CAPABILITY_LABELS: Readonly<Record<AxisCapabilityKind, string>> = {
   mcp: "MCP",
@@ -148,6 +154,46 @@ export function AxisSettingsPanel() {
       });
     }
     return false;
+  };
+
+  const toggleCapability = (capability: AxisCapability, enabled: boolean) => {
+    if (!snapshot) return;
+    void save(
+      snapshot,
+      setAxisProviderCapabilityEnabled({
+        catalog: snapshot.catalog,
+        provider: capability.provider,
+        capabilityId: capability.id,
+        enabled,
+        updatedAt: new Date().toISOString(),
+      }),
+      enabled ? "Capability enabled" : "Capability disabled",
+    );
+  };
+
+  const removeCapability = async (capability: AxisCapability) => {
+    if (!snapshot) return;
+    const bindingCount = snapshot.catalog.workHubSources.filter(
+      (source) => source.capabilityId === capability.id,
+    ).length;
+    const bindingMessage =
+      bindingCount === 0
+        ? "It is not currently selected by any Work Hub context."
+        : `This will also remove ${bindingCount} Work Hub source binding${bindingCount === 1 ? "" : "s"}.`;
+    const confirmed = await ensureLocalApi().dialogs.confirm(
+      `Remove “${capability.name}” from Axis? ${bindingMessage} Its native provider configuration will not be changed.`,
+      { variant: "destructive" },
+    );
+    if (!confirmed) return;
+    void save(
+      snapshot,
+      removeAxisProviderCapability({
+        catalog: snapshot.catalog,
+        provider: capability.provider,
+        capabilityId: capability.id,
+      }),
+      "Capability removed",
+    );
   };
 
   const addCompany = async () => {
@@ -428,42 +474,15 @@ export function AxisSettingsPanel() {
                     checked={capability.enabled}
                     disabled={saving}
                     aria-label={`Enable ${capability.name}`}
-                    onCheckedChange={(enabled) => {
-                      const now = new Date().toISOString();
-                      void save(
-                        snapshot,
-                        {
-                          ...snapshot.catalog,
-                          capabilities: snapshot.catalog.capabilities.map((candidate) =>
-                            candidate.id === capability.id
-                              ? { ...candidate, enabled, updatedAt: now }
-                              : candidate,
-                          ),
-                        },
-                        enabled ? "Capability enabled" : "Capability disabled",
-                      );
-                    }}
+                    onCheckedChange={(enabled) => toggleCapability(capability, enabled)}
                   />
                   <Button
                     size="icon-sm"
                     variant="ghost-muted"
                     disabled={saving}
                     aria-label={`Remove ${capability.name}`}
-                    onClick={() =>
-                      void save(
-                        snapshot,
-                        {
-                          ...snapshot.catalog,
-                          capabilities: snapshot.catalog.capabilities.filter(
-                            (candidate) => candidate.id !== capability.id,
-                          ),
-                          workHubSources: snapshot.catalog.workHubSources.filter(
-                            (source) => source.capabilityId !== capability.id,
-                          ),
-                        },
-                        "Capability removed",
-                      )
-                    }
+                    title="Remove from Axis"
+                    onClick={() => void removeCapability(capability)}
                   >
                     <Trash2Icon />
                   </Button>
