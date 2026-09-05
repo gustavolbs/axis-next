@@ -364,6 +364,7 @@ export function AxisSettingsPanel() {
                     search={{
                       environmentId: provider.locator.environmentId,
                       instanceId: provider.locator.instanceId,
+                      section: "mcps",
                     }}
                   />
                 }

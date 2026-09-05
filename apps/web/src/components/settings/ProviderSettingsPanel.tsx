@@ -264,13 +264,32 @@ function EnvironmentUnavailablePlaceholder({
 interface ProviderSettingsTarget {
   readonly environmentId?: EnvironmentId;
   readonly instanceId?: ProviderInstanceId;
+  readonly section?: ProviderSettingsSection;
 }
+
+export type ProviderSettingsSection =
+  | "general"
+  | "mcps"
+  | "skills"
+  | "instructions"
+  | "preferences";
+
+const PROVIDER_SECTION_LABELS: ReadonlyArray<{
+  readonly value: ProviderSettingsSection;
+  readonly label: string;
+}> = [
+  { value: "general", label: "General" },
+  { value: "mcps", label: "MCPs" },
+  { value: "skills", label: "Skills" },
+  { value: "instructions", label: "Instructions" },
+  { value: "preferences", label: "Preferences" },
+];
 
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
     <SettingsPageContainer width="wide" className="gap-8">
       <ProviderSettingsPanelContent
-        key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
+        key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}:${target.section ?? "general"}`}
         {...target}
       />
     </SettingsPageContainer>
@@ -407,6 +426,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
               ? target.instanceId
               : undefined
           }
+          targetSection={target.section}
         />
       ) : null}
     </>
@@ -417,10 +437,12 @@ function SelectedEnvironmentProviderSettings({
   environment,
   deviceTabs,
   targetInstanceId,
+  targetSection,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
+  readonly targetSection?: ProviderSettingsSection | undefined;
 }) {
   const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
   if (isPrimary) {
@@ -433,6 +455,7 @@ function SelectedEnvironmentProviderSettings({
           operateAccess="granted"
           deviceTabs={deviceTabs}
           targetInstanceId={targetInstanceId}
+          targetSection={targetSection}
         />
       );
     }
@@ -441,6 +464,7 @@ function SelectedEnvironmentProviderSettings({
         environment={environment}
         deviceTabs={deviceTabs}
         targetInstanceId={targetInstanceId}
+        targetSection={targetSection}
       />
     );
   }
@@ -449,6 +473,7 @@ function SelectedEnvironmentProviderSettings({
       environment={environment}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
+      targetSection={targetSection}
     />
   );
 }
@@ -457,10 +482,12 @@ function PrimarySessionGatedProviderSettings({
   environment,
   deviceTabs,
   targetInstanceId,
+  targetSection,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
+  readonly targetSection?: ProviderSettingsSection | undefined;
 }) {
   const primarySessionState = usePrimarySessionState();
   const operateAccess = resolvePrimaryOperateAccess({
@@ -476,6 +503,7 @@ function PrimarySessionGatedProviderSettings({
       operateAccess={operateAccess}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
+      targetSection={targetSection}
     />
   );
 }
@@ -484,10 +512,12 @@ function RemoteSessionGatedProviderSettings({
   environment,
   deviceTabs,
   targetInstanceId,
+  targetSection,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
+  readonly targetSection?: ProviderSettingsSection | undefined;
 }) {
   const sessionState = useEnvironmentSessionState(environment.environmentId);
   const operateAccess = resolveRemoteOperateAccess({
@@ -501,6 +531,7 @@ function RemoteSessionGatedProviderSettings({
       operateAccess={operateAccess}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
+      targetSection={targetSection}
     />
   );
 }
@@ -510,11 +541,13 @@ function AccessGatedProviderSettings({
   operateAccess,
   deviceTabs,
   targetInstanceId,
+  targetSection,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly operateAccess: ProviderOperateAccess;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
+  readonly targetSection?: ProviderSettingsSection | undefined;
 }) {
   const access = classifyProviderEnvironmentAccess({
     connectionPhase: environment.connection.phase,
@@ -537,6 +570,7 @@ function AccessGatedProviderSettings({
       readOnly={access.kind === "read-only"}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
+      targetSection={targetSection}
     />
   );
 }
@@ -547,11 +581,13 @@ export function EnvironmentProviderSettings({
   readOnly = false,
   deviceTabs,
   targetInstanceId,
+  targetSection = "general",
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
+  readonly targetSection?: ProviderSettingsSection | undefined;
   /**
    * Grey out and freeze every write control when this session's credential
    * lacks `orchestration:operate` on the environment. Selecting providers
@@ -575,6 +611,7 @@ export function EnvironmentProviderSettings({
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
     targetInstanceId ?? null,
   );
+  const [selectedSection, setSelectedSection] = useState<ProviderSettingsSection>(targetSection);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
   >(() => new Set());
@@ -908,7 +945,14 @@ export function EnvironmentProviderSettings({
         liveProvider={liveProvider}
         mode={mode}
         selected={mode === "list" && selectedRow?.instanceId === row.instanceId}
-        onSelect={mode === "list" ? () => setSelectedInstanceId(row.instanceId) : undefined}
+        onSelect={
+          mode === "list"
+            ? () => {
+                setSelectedInstanceId(row.instanceId);
+                setSelectedSection("general");
+              }
+            : undefined
+        }
         readOnly={readOnly}
         setup={
           mode === "editor" && row.driver === "antigravity" ? (
@@ -922,14 +966,6 @@ export function EnvironmentProviderSettings({
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
-            />
-          ) : null
-        }
-        capabilities={
-          mode === "editor" ? (
-            <ProviderCapabilitiesSection
-              environmentId={environmentId}
-              instanceId={row.instanceId}
             />
           ) : null
         }
@@ -1069,9 +1105,34 @@ export function EnvironmentProviderSettings({
 
           <div className="min-w-0 lg:min-h-0">
             {selectedRow ? (
-              <ScrollArea scrollFade chainVerticalScroll className="lg:h-full">
-                <div className="space-y-6 p-4">{renderProviderInstance(selectedRow, "editor")}</div>
-              </ScrollArea>
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border/60 px-3 py-2">
+                  {PROVIDER_SECTION_LABELS.map((section) => (
+                    <Button
+                      key={section.value}
+                      type="button"
+                      size="xs"
+                      variant={selectedSection === section.value ? "secondary" : "ghost-muted"}
+                      onClick={() => setSelectedSection(section.value)}
+                    >
+                      {section.label}
+                    </Button>
+                  ))}
+                </div>
+                <ScrollArea scrollFade chainVerticalScroll className="min-h-0 flex-1">
+                  <div className="space-y-6 p-4">
+                    {selectedSection === "general" ? (
+                      renderProviderInstance(selectedRow, "editor")
+                    ) : (
+                      <ProviderCapabilitiesSection
+                        environmentId={environmentId}
+                        instanceId={selectedRow.instanceId}
+                        section={selectedSection}
+                      />
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
             ) : (
               <div className="p-6 text-sm text-muted-foreground">
                 {targetInstanceMissing

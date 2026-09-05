@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { RefreshCwIcon } from "lucide-react";
+import { useMemo, useState } from "react";
+import { RefreshCwIcon, SearchIcon } from "lucide-react";
 import {
   axisProviderInstanceLocatorKey,
   AxisCapabilityId,
@@ -18,8 +18,13 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+
+type CapabilitySection = "mcps" | "skills" | "instructions" | "preferences";
+type McpFilter = "all" | "connected" | "attention";
+type SkillFilter = "all" | "enabled" | "disabled";
 
 const MCP_STATUS_LABELS = {
   connected: "Connected",
@@ -30,26 +35,45 @@ const MCP_STATUS_LABELS = {
   configured: "Configured",
 } as const;
 
+function EmptyCapabilityPage({ title, description }: { title: string; description: string }) {
+  return (
+    <SettingsSection title={title} description={description}>
+      <SettingsRow
+        title={`No ${title.toLowerCase()} discovered yet`}
+        description="This area is isolated to the selected provider instance. Native discovery and editing will be added adapter by adapter."
+      />
+    </SettingsSection>
+  );
+}
+
 export function ProviderCapabilitiesSection({
   environmentId,
   instanceId,
+  section,
 }: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
+  readonly section: CapabilitySection;
 }) {
   const axisEnvironmentId = usePrimaryEnvironmentId();
+  const needsInventory = section === "mcps" || section === "skills";
   const query = useEnvironmentQuery(
-    serverEnvironment.providerCapabilities({ environmentId, input: { instanceId } }),
+    needsInventory
+      ? serverEnvironment.providerCapabilities({ environmentId, input: { instanceId } })
+      : null,
   );
   const axisQuery = useEnvironmentQuery(
-    axisEnvironmentId === null
-      ? null
-      : serverEnvironment.axisContextCatalog({ environmentId: axisEnvironmentId, input: {} }),
+    section === "mcps" && axisEnvironmentId !== null
+      ? serverEnvironment.axisContextCatalog({ environmentId: axisEnvironmentId, input: {} })
+      : null,
   );
   const replaceCatalog = useAtomCommand(serverEnvironment.replaceAxisContextCatalog, {
     reportFailure: false,
   });
   const [publishingMcp, setPublishingMcp] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [mcpFilter, setMcpFilter] = useState<McpFilter>("all");
+  const [skillFilter, setSkillFilter] = useState<SkillFilter>("all");
   const inventory = query.data;
   const providerKey = axisProviderInstanceLocatorKey({ environmentId, instanceId });
   const providerIsAssigned =
@@ -64,6 +88,39 @@ export function ProviderCapabilitiesSection({
           axisProviderInstanceLocatorKey(capability.provider) === providerKey,
       )
       .map((capability) => capability.name) ?? [],
+  );
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const visibleMcps = useMemo(
+    () =>
+      (inventory?.mcpServers ?? []).filter((server) => {
+        const matchesSearch =
+          normalizedSearch.length === 0 ||
+          `${server.name} ${server.target ?? ""}`.toLocaleLowerCase().includes(normalizedSearch);
+        const matchesFilter =
+          mcpFilter === "all" ||
+          (mcpFilter === "connected"
+            ? server.status === "connected" || server.status === "configured"
+            : server.status === "authentication-required" ||
+              server.status === "failed" ||
+              server.status === "pending-approval" ||
+              server.status === "disabled");
+        return matchesSearch && matchesFilter;
+      }),
+    [inventory, mcpFilter, normalizedSearch],
+  );
+  const visibleSkills = useMemo(
+    () =>
+      (inventory?.skills ?? []).filter((skill) => {
+        const matchesSearch =
+          normalizedSearch.length === 0 ||
+          `${skill.displayName ?? skill.name} ${skill.description ?? ""}`
+            .toLocaleLowerCase()
+            .includes(normalizedSearch);
+        const matchesFilter =
+          skillFilter === "all" || (skillFilter === "enabled" ? skill.enabled : !skill.enabled);
+        return matchesSearch && matchesFilter;
+      }),
+    [inventory, normalizedSearch, skillFilter],
   );
 
   const publishMcpToWorkHub = async (name: string, enabled: boolean) => {
@@ -111,10 +168,36 @@ export function ProviderCapabilitiesSection({
     }
   };
 
+  if (section === "instructions") {
+    return (
+      <EmptyCapabilityPage
+        title="Instructions"
+        description="Provider-specific instructions, kept separate from every other provider and Company."
+      />
+    );
+  }
+  if (section === "preferences") {
+    return (
+      <EmptyCapabilityPage
+        title="Preferences"
+        description="Provider-native behavior and defaults for this specific account and home."
+      />
+    );
+  }
+
+  const isMcpPage = section === "mcps";
+  const filters = isMcpPage
+    ? (["all", "connected", "attention"] as const)
+    : (["all", "enabled", "disabled"] as const);
+
   return (
     <SettingsSection
-      title="Capabilities"
-      description="MCPs and skills discovered from this provider instance. Nothing is copied between providers."
+      title={isMcpPage ? "MCP connections" : "Skills"}
+      description={
+        isMcpPage
+          ? "Connections discovered from this provider's native configuration. Secrets and command arguments are never returned to the client."
+          : "Skills discovered in the scopes understood by this provider instance."
+      }
       headerAction={
         <Button
           type="button"
@@ -128,115 +211,140 @@ export function ProviderCapabilitiesSection({
         </Button>
       }
     >
+      <div className="grid gap-3 border-b border-border/60 p-3 sm:p-4">
+        <div className="relative max-w-md">
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={isMcpPage ? "Search MCP connections" : "Search skills"}
+            className="pl-8"
+          />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {filters.map((filter) => (
+            <Button
+              key={filter}
+              type="button"
+              size="xs"
+              variant={
+                (isMcpPage ? mcpFilter : skillFilter) === filter ? "secondary" : "ghost-muted"
+              }
+              onClick={() =>
+                isMcpPage
+                  ? setMcpFilter(filter as McpFilter)
+                  : setSkillFilter(filter as SkillFilter)
+              }
+            >
+              {filter === "all"
+                ? "All"
+                : filter === "attention"
+                  ? "Needs attention"
+                  : filter[0]!.toUpperCase() + filter.slice(1)}
+            </Button>
+          ))}
+        </div>
+      </div>
+
       {query.error ? (
         <SettingsRow
-          title="Could not inspect capabilities"
+          title={`Could not inspect ${isMcpPage ? "MCP connections" : "skills"}`}
           description={query.error}
-          control={
-            <Button type="button" size="xs" variant="outline" onClick={query.refresh}>
-              Retry
-            </Button>
-          }
+          control={<Button onClick={query.refresh}>Retry</Button>}
         />
       ) : null}
-
       {!query.error && query.isPending && !inventory ? (
-        <SettingsRow title="Inspecting provider" description="Reading its native configuration…" />
+        <SettingsRow title="Inspecting provider" description="Reading native configuration…" />
       ) : null}
 
-      {inventory ? (
-        <>
-          <div className="border-b border-border/60 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:px-4">
-            MCP connections · {inventory.mcpServers.length}
-          </div>
-          {!inventory.mcpDiscoverySupported ? (
-            <SettingsRow
-              title="Native MCP discovery is not available"
-              description="This provider adapter does not expose its MCP configuration yet."
-            />
-          ) : inventory.mcpServers.length === 0 ? (
-            <SettingsRow
-              title="No MCP connections found"
-              description="Add one with the provider CLI, then refresh this inventory."
-            />
-          ) : (
-            inventory.mcpServers.map((server) => (
-              <SettingsRow
+      {inventory && isMcpPage ? (
+        !inventory.mcpDiscoverySupported ? (
+          <SettingsRow
+            title="Native MCP discovery is not available"
+            description="This adapter will gain its own connector implementation in a later pass."
+          />
+        ) : visibleMcps.length === 0 ? (
+          <SettingsRow
+            title={inventory.mcpServers.length === 0 ? "No MCP connections found" : "No matches"}
+            description="Add connections with the provider's native tooling, then refresh."
+          />
+        ) : (
+          <div className="divide-y divide-border/50">
+            <div className="hidden grid-cols-[minmax(12rem,1fr)_8rem_9rem_11rem_auto] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid">
+              <span>Connector</span>
+              <span>Type</span>
+              <span>Scope</span>
+              <span>Status</span>
+              <span>Work Hub</span>
+            </div>
+            {visibleMcps.map((server) => (
+              <div
                 key={`${server.scope ?? "provider"}:${server.name}`}
-                title={server.name}
-                description={
-                  <span className="grid gap-0.5">
-                    {server.target ? (
-                      <code className="line-clamp-1 text-[11px] text-muted-foreground">
-                        {server.target}
-                      </code>
-                    ) : null}
-                    {server.detail ? <span className="line-clamp-2">{server.detail}</span> : null}
-                  </span>
-                }
-                control={
-                  <span className="flex items-center gap-1.5">
-                    {server.scope ? <Badge variant="outline">{server.scope}</Badge> : null}
-                    <Badge variant={server.status === "failed" ? "destructive" : "secondary"}>
-                      {MCP_STATUS_LABELS[server.status]}
-                    </Badge>
-                    {workHubMcpNames.has(server.name) ? (
-                      <Badge variant="success">Work Hub</Badge>
-                    ) : (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={!providerIsAssigned || publishingMcp !== null}
-                        title={
-                          providerIsAssigned
-                            ? undefined
-                            : "Assign this provider to Personal or a Company in Axis first."
-                        }
-                        onClick={() => void publishMcpToWorkHub(server.name, server.enabled)}
-                      >
-                        {publishingMcp === server.name ? "Adding…" : "Add to Work Hub"}
-                      </Button>
-                    )}
-                  </span>
-                }
-              />
-            ))
-          )}
-
-          <div className="border-y border-border/60 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:px-4">
-            Skills · {inventory.skills.length}
+                className="grid items-center gap-2 px-3 py-3 lg:grid-cols-[minmax(12rem,1fr)_8rem_9rem_11rem_auto] lg:gap-3 lg:px-4"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{server.name}</span>
+                  {server.target ? (
+                    <code className="block truncate text-[11px] text-muted-foreground">
+                      {server.target}
+                    </code>
+                  ) : null}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {server.transport ?? "Native"}
+                </span>
+                <span className="text-xs text-muted-foreground">{server.scope ?? "Provider"}</span>
+                <Badge
+                  variant={server.status === "failed" ? "destructive" : "secondary"}
+                  className="w-fit"
+                >
+                  {MCP_STATUS_LABELS[server.status]}
+                </Badge>
+                {workHubMcpNames.has(server.name) ? (
+                  <Badge variant="success" className="w-fit">
+                    Available
+                  </Badge>
+                ) : (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={!providerIsAssigned || publishingMcp !== null}
+                    title={providerIsAssigned ? undefined : "Assign this provider in Axis first."}
+                    onClick={() => void publishMcpToWorkHub(server.name, server.enabled)}
+                  >
+                    {publishingMcp === server.name ? "Adding…" : "Add"}
+                  </Button>
+                )}
+              </div>
+            ))}
           </div>
-          {inventory.skills.length === 0 ? (
-            <SettingsRow
-              title="No skills found"
-              description="Skills are read from the directories and scopes understood by this provider."
-            />
-          ) : (
-            inventory.skills.map((skill) => (
+        )
+      ) : null}
+
+      {inventory && !isMcpPage ? (
+        visibleSkills.length === 0 ? (
+          <SettingsRow
+            title={inventory.skills.length === 0 ? "No skills found" : "No matches"}
+            description="Skills are read from this provider's native user and project scopes."
+          />
+        ) : (
+          <div className="divide-y divide-border/50">
+            {visibleSkills.map((skill) => (
               <SettingsRow
                 key={skill.path}
                 title={skill.displayName ?? skill.name}
                 description={skill.shortDescription ?? skill.description ?? skill.path}
+                status={skill.scope ?? "Provider"}
                 control={
-                  <span className="flex items-center gap-1.5">
-                    {skill.scope ? <Badge variant="outline">{skill.scope}</Badge> : null}
-                    <Badge variant={skill.enabled ? "secondary" : "outline"}>
-                      {skill.enabled ? "Enabled" : "Disabled"}
-                    </Badge>
-                  </span>
+                  <Badge variant={skill.enabled ? "success" : "outline"}>
+                    {skill.enabled ? "Enabled" : "Disabled"}
+                  </Badge>
                 }
               />
-            ))
-          )}
-
-          <div className="border-t border-border/60">
-            <SettingsRow
-              title="Instructions and preferences"
-              description="These remain isolated in this provider instance's native home and environment configuration."
-            />
+            ))}
           </div>
-        </>
+        )
       ) : null}
     </SettingsSection>
   );
