@@ -43,6 +43,7 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
+  BriefcaseBusinessIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderIcon,
@@ -1716,6 +1717,17 @@ function OpenCommandPaletteDialog(props: {
         themeHalves,
         initialAppearance: resolvedTheme,
       });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:work-hub",
+    searchTerms: ["work hub", "overview", "calendar", "messages", "board", "jira", "slack"],
+    title: "Open Work Hub",
+    icon: <BriefcaseBusinessIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/work-hub" });
     },
   });
 
