@@ -112,6 +112,34 @@ Granting is directional and individually revocable. Revocation prevents new sess
 the capability and removes it from resumable sessions when the provider can do so safely. It does
 not rewrite T3 history.
 
+## Management surface
+
+Axis must provide a first-class management surface at **Settings → Axis → Agent capabilities**. It
+cannot require users to edit provider files by hand as the only workflow.
+
+The surface manages four capability kinds:
+
+- **MCPs** — add, configure, test, enable, disable, remove, and inspect connection/permission state;
+- **Skills** — install or create, inspect source and compatibility, enable, disable, update, and
+  remove;
+- **Instructions** — edit the instruction sets applied to an effective provider binding; and
+- **Preferences** — edit reusable agent/model/tool preferences that are genuinely portable.
+
+Users can view the catalog by owner context or by provider instance. Every entry shows its owner,
+scope, compatible providers, required secrets, enabled state, grants, and health or load errors. The
+same surface grants or revokes a personal capability for a specific Company and previews the
+effective capability set before a new Thread starts.
+
+Provider credentials, executable paths, account login, and raw environment variables remain under
+T3 provider-instance settings. Axis capability settings reference those instances and use T3's
+secret store; they do not copy credentials into an Axis database. Driver-specific writes to native
+MCP or skill configuration happen through the provider adapter and must be reversible. A capability
+is not shown as active until the target provider confirms it loaded successfully.
+
+Web, desktop, and mobile must be able to inspect this state through the same RPC contracts. Mutating
+controls may initially be limited by platform capability, but a remote client must never present a
+different effective capability set from the server that will run the provider.
+
 ## Policy and disclosure
 
 Using a personal provider for Company work may send Company prompts or files to an account and data

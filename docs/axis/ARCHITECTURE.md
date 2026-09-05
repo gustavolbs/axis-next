@@ -99,6 +99,11 @@ The full model, examples, and isolation invariants are in
 [Contexts and provider access](./CONTEXTS.md). Profiles remain a possible future convenience for
 grouping preferences and capabilities, not an execution runtime or isolation boundary.
 
+MCPs, skills, instructions, and preferences require a dedicated management surface; discovering
+them only in a composer or editing provider files manually is insufficient. The management UI and
+its server-authoritative behavior are defined in
+[Contexts and provider access](./CONTEXTS.md#management-surface).
+
 ### Axis metadata on Threads
 
 Axis metadata should be stored as an extension record keyed by
