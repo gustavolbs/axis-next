@@ -48,10 +48,11 @@ The following defaults apply unless code-level investigation proves otherwise:
 | Git, diffs, worktrees, checkpoints, revert                                      | `REPLACE_WITH_T3`                 | T3 Git and checkpointing                                                 |
 | Project, Thread, Turn, approval, and session records                            | `REPLACE_WITH_T3`                 | T3 orchestration events and projections                                  |
 | WebSocket, RPC, pairing, relay/tunnel, remote environment sync                  | `REPLACE_WITH_T3`                 | T3 contracts and client connection runtime                               |
-| Company and Workspace organization                                              | `PORT`                            | Axis metadata referencing environment-scoped T3 Projects                 |
-| Provider grouping and shared agent preferences                                  | `PORT`                            | Future Axis Profiles referencing provider instance IDs                   |
+| Personal, Company, and Workspace organization                                   | `PORT`                            | Context-scoped Axis metadata referencing environment-scoped T3 Projects  |
+| Provider grouping, access, and shared agent capabilities                        | `PORT`                            | Directional grants over T3 provider instance IDs                         |
 | Shared Memory                                                                   | `PORT`                            | Axis-derived memory with provenance to T3 history                        |
-| Work Hub                                                                        | `PORT`                            | Axis projection over T3 work state                                       |
+| Work Hub                                                                        | `PORT`                            | Context-owned MCP data projected into four aggregate views               |
+| Separate Cowork/Chat conversation engines                                       | `DELETE` or `REPLACE_WITH_T3`     | Two presentations over the same T3 Thread/Turn lifecycle                 |
 | Calendar, tasks, and notifications                                              | `KEEP` or `PORT` after validation | Axis capabilities integrated through existing T3 identities and commands |
 | Duplicate orchestration or cross-provider runtime                               | `DELETE` or `REPLACE_WITH_T3`     | T3 orchestration; add only narrow higher-level coordination              |
 

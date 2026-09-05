@@ -47,8 +47,8 @@ The boundary is based on the current code, not an aspirational model:
 
 | T3 owns                                                                                               | Axis owns                                                                                       |
 | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Provider drivers, instances, adapters, sessions, authentication, configuration, and process lifecycle | Optional semantic grouping and policy across existing provider instance IDs                     |
-| Environment-local Projects and workspace roots                                                        | Companies and Workspaces that reference environment-scoped T3 Projects                          |
+| Provider drivers, instances, adapters, sessions, authentication, configuration, and process lifecycle | Context ownership, directional access grants, and policy across existing provider instance IDs  |
+| Environment-local Projects and workspace roots                                                        | Personal/Company contexts and Workspaces that reference environment-scoped T3 Projects          |
 | Threads, Turns, messages, activities, approvals, sessions, events, and checkpoints                    | Axis metadata attached to stable T3 identities and projections derived from T3 records          |
 | Terminal, filesystem, Git, diffs, worktrees, and checkpoints                                          | Product workflows that invoke those existing capabilities                                       |
 | Event-sourced command handling and provider orchestration                                             | Higher-level coordination expressed through T3 commands and observed through T3 events/receipts |
@@ -64,48 +64,47 @@ merely to give an existing T3 concept an Axis name.
 The intended relationship is additive:
 
 ```text
-Company (Axis)
-└── Workspace (Axis)
-    └── Project reference (Axis) ──> T3 Project in one environment
-        └── T3 Thread
-            └── T3 provider instance selection/session
+Axis account
+├── Personal context (Axis isolation boundary)
+│   ├── owned provider instances
+│   └── Workspace (Axis) ──> T3 Projects in their environments
+└── Company context (Axis isolation boundary)
+    ├── owned or explicitly granted provider instances
+    └── Workspace (Axis) ──> T3 Projects in their environments
+        └── T3 Thread ──> T3 provider instance selection/session
 ```
 
 T3 IDs are environment-local. Any Axis reference to a Project or Thread must therefore include the
 environment identity as well as the T3 ID. A bare `projectId` or `threadId` is not a globally safe
 foreign key.
 
-### Companies and Workspaces
+### Personal, Companies, Workspaces, and provider access
 
-A Company is an Axis organizational and policy boundary. A Workspace is an Axis grouping within a
-Company. Neither replaces the T3 Project, whose workspace root, repository identity, scripts, Git
-state, and thread lifecycle remain environment-owned.
+Personal and each Company are peer context and isolation boundaries. A Company may use its own
+provider instances and selected instances owned by Personal, but that access is an explicit,
+directional grant. It does not merge the contexts or let Personal, Company A, and Company B see one
+another's Projects, Threads, memory, MCP results, or Work Hub records.
 
-When implemented, a Workspace should hold explicit references to T3 Projects, scoped by
-environment. It may supply Axis policy or defaults, but changes to a Project still flow through T3
-contracts and commands. Axis must tolerate referenced environments being offline and Projects being
-removed, moved, or temporarily unavailable; it must not copy a Project to make it appear local.
+A Workspace is an Axis grouping inside exactly one context. It holds references to T3 Projects,
+scoped by environment, rather than replacing or copying them. Credentials remain in the T3
+environment's settings and secret store, and execution still routes by `ProviderInstanceId`.
 
-### Profiles and provider instances
+Provider access and capability access are separate. Reusing a personal subscription in a Company
+does not implicitly import every personal MCP, skill, instruction, preference, memory, or provider
+session. Selected portable personal capabilities may be granted separately; Company-owned
+capabilities never flow to another context. A Company can also prohibit personal providers when its
+policy requires company-managed accounts.
 
-A future Profile is a semantic grouping above T3 provider instances. For example, a Personal
-Profile may reference both a Claude instance and a Codex instance. The Profile can own shared Axis
-preferences, instructions, skills, or MCP policy, while execution continues to route through each
-instance's `ProviderInstanceId`.
-
-Profile membership must be references, not cloned provider configuration. Credentials and sensitive
-environment variables remain in the T3 environment's settings and secret store. Provider-specific
-translation stays at the existing driver/adapter boundary. A Profile must also preserve each
-driver's real continuation constraints; membership alone does not make sessions portable between
-providers or between incompatible homes/config directories.
-
-Profiles are not implemented by this foundation change.
+The full model, examples, and isolation invariants are in
+[Contexts and provider access](./CONTEXTS.md). Profiles remain a possible future convenience for
+grouping preferences and capabilities, not an execution runtime or isolation boundary.
 
 ### Axis metadata on Threads
 
-Axis metadata should be stored as an extension record keyed by `(environmentId, threadId)` unless a
-field is truly part of the generic T3 thread lifecycle. Examples include future Company/Workspace
-placement, Axis labels, Work Hub state, or memory-processing cursors.
+Axis metadata should be stored as an extension record keyed by
+`(contextId, environmentId, threadId)` unless a field is truly part of the generic T3 thread
+lifecycle. Examples include Company/Workspace placement, Axis labels, Work Hub state, or
+memory-processing cursors.
 
 The T3 Thread remains canonical for title, project membership, model/provider-instance selection,
 runtime and interaction modes, messages, activities, approvals, checkpoints, and lifecycle state.
@@ -130,10 +129,11 @@ curated facts, summaries, embeddings, provenance, and processing cursors that ar
 memory retrieval.
 
 Every memory item should retain provenance back to its environment, Thread, Turn or message/event,
-and source sequence where available. Reprocessing must be idempotent. Deletion, permission, and
-retention policy must be able to invalidate derived memory without altering T3 history. Memory must
-not monitor provider subprocesses, scrape provider session files, or maintain parallel Turn and
-Thread timelines.
+source context, and source sequence where available. Reprocessing must be idempotent. Deletion,
+permission, and retention policy must be able to invalidate derived memory without altering T3
+history. Memory retrieval is context-scoped: using the same personal provider in two Companies does
+not join their memories. Memory must not monitor provider subprocesses, scrape provider session
+files, or maintain parallel Turn and Thread timelines.
 
 ### Work Hub
 
@@ -145,6 +145,22 @@ Actions originating in Work Hub dispatch existing T3 commands or narrowly added 
 Completion is observed through persisted events, projections, and receipts—not guessed from client
 timers or provider process output. The UI should consume shared client-runtime state where that state
 already exists, adding Axis-specific selectors or projections only for genuinely new behavior.
+
+Its four primary views are Overview, Calendar, Messages, and Work Board. Company and Personal data
+is collected through MCPs available to provider bindings in each context, normalized into
+context-owned Axis projections, and combined only in the user's Work Hub view. See
+[Work Hub](./WORK_HUB.md) for the source and isolation model.
+
+### Chat and Cowork
+
+Chat and Cowork are product experiences, not separate conversation models. Both use the same T3
+Project, Thread, Turn, provider instance, approval, activity, and checkpoint lifecycle.
+
+Chat is the conversation-focused presentation of a Thread. Cowork is a task-focused presentation
+that can add Axis organization, status, and derived work context around that same Thread. A user may
+move between those presentations without converting or copying the underlying conversation. Future
+multi-agent coordination remains above the individual T3 Threads; it does not introduce an
+`AxisChat`, `AxisCoworkSession`, or another turn engine.
 
 ### Remote and mobile
 

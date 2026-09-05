@@ -17,6 +17,10 @@ conflicts without adding product value.
 
 - [Architecture](./ARCHITECTURE.md) defines the ownership boundary, future composition model, and
   rules for Axis-specific code.
+- [Contexts and provider access](./CONTEXTS.md) defines Personal/Company isolation and the safe,
+  directional reuse of personal providers and capabilities inside a Company.
+- [Work Hub](./WORK_HUB.md) defines the cross-context Overview, Calendar, Messages, and Work Board
+  projections sourced through provider-connected MCPs.
 - [Upstream](./UPSTREAM.md) defines how the fork stays close to `pingdotgg/t3code` and how upstream
   changes are synchronized.
 - [Legacy migration](./LEGACY_MIGRATION.md) defines the decision framework for moving useful Axis
