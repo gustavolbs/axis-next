@@ -89,11 +89,11 @@ A Workspace is an Axis grouping inside exactly one context. It holds references 
 scoped by environment, rather than replacing or copying them. Credentials remain in the T3
 environment's settings and secret store, and execution still routes by `ProviderInstanceId`.
 
-Provider access and capability access are separate. Reusing a personal subscription in a Company
-does not implicitly import every personal MCP, skill, instruction, preference, memory, or provider
-session. Selected portable personal capabilities may be granted separately; Company-owned
-capabilities never flow to another context. A Company can also prohibit personal providers when its
-policy requires company-managed accounts.
+MCPs, skills, instructions, and preferences belong to provider instances. Reusing a Personal
+provider in a Company therefore makes that provider's enabled capabilities available there, without
+importing Personal memory, Projects, Threads, messages, Work Hub records, or provider sessions.
+Company-owned providers and their capabilities never flow to another context. A Company can also
+prohibit Personal providers when its policy requires company-managed accounts.
 
 The full model, examples, and isolation invariants are in
 [Contexts and provider access](./CONTEXTS.md). Profiles remain a possible future convenience for

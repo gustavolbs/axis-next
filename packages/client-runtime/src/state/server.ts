@@ -972,6 +972,19 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    axisContextCatalog: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:context-catalog",
+      tag: WS_METHODS.axisContextsGetCatalog,
+      staleTimeMs: 5_000,
+    }),
+    replaceAxisContextCatalog: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:replace-context-catalog",
+      tag: WS_METHODS.axisContextsReplaceCatalog,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

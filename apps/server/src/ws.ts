@@ -144,6 +144,7 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -520,6 +521,7 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const axisContextCatalog = yield* AxisContextCatalogStore;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1958,6 +1960,16 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.axisContextsGetCatalog]: (_input) =>
+          observeRpcEffect(WS_METHODS.axisContextsGetCatalog, axisContextCatalog.get, {
+            "rpc.aggregate": "axis",
+          }),
+        [WS_METHODS.axisContextsReplaceCatalog]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisContextsReplaceCatalog,
+            axisContextCatalog.replace(input),
+            { "rpc.aggregate": "axis" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
