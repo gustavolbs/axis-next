@@ -10,13 +10,13 @@ tracker. It is an Axis projection of data obtained through MCPs available to pro
 each context, combined with relevant T3 work state.
 
 Open **Work Hub** from the main sidebar to switch between Overview, Calendar, Messages, and Work
-Board. The initial surface reports real provider/MCP readiness per context; empty collections remain
-explicit until the corresponding MCP ingestion and normalized read model are available.
+Board. The surface reports provider/MCP readiness per context and renders the last confirmed data
+cached for each selected source.
 
 In Overview, **Work Hub sources** lets the user opt in per context, then per available provider and
 MCP. Provider access and MCP selection are separate decisions: granting a Personal provider to a
 Company makes its MCPs eligible, but Work Hub does not query them until the user selects them for
-that Company.
+that Company. Each selected MCP has its own **Sync** action.
 
 ## Primary views
 
@@ -74,7 +74,7 @@ context:
 
 ```text
 Context-scoped refresh or user action
-  → T3 Thread/Turn routed to an allowed provider instance
+  → dedicated ephemeral read routed to an allowed provider instance
   → context-approved MCP invocation
   → provider result with source references
   → validated Axis normalization
@@ -82,10 +82,10 @@ Context-scoped refresh or user action
   → user-facing aggregate view
 ```
 
-This reuses T3 provider instances, Threads, Turns, approvals, activities, event persistence, and
-remote RPC. Axis adds the connector-specific normalization and Work Hub read model. It does not
-scrape provider session files, call a Company connector from Personal, or create a second provider
-session lifecycle.
+This reuses T3 provider instances, provider credentials, and remote RPC. Manual collection runs in
+an ephemeral provider process without creating a visible Thread or durable provider session. Axis
+adds focused collection policy, validated normalization, and the Work Hub read model. It does not
+scrape provider session files or call a Company connector from Personal.
 
 The normalized record should include at least:
 
@@ -122,17 +122,17 @@ ambient Company-to-Company data path.
 
 ## Refresh and writes
 
-Work Hub should begin as a read projection. Refreshes can be manual or scheduled later, but both use
-the same context-scoped acquisition path and idempotent cursors. A failure in one connector is shown
+Work Hub begins as a read projection. Manual sync uses the context-scoped acquisition path and
+passes the last cursor and refresh timestamp to the provider. A failure in one connector is shown
 against that source and does not discard the last confirmed snapshot.
 
-Fetched data is cached by `(contextId, providerInstanceId, mcpCapabilityId)` with a bounded TTL. A
-read serves the last confirmed snapshot without calling the MCP again while it is fresh. Manual
-**Refresh** revalidates only the currently selected sources; it does not erase the visible snapshot
-while requests are running. Successful results atomically replace that source snapshot and advance
-its cursor. A failure keeps the prior snapshot, marks it stale with the source error, and allows an
-individual retry. Cache records and refresh jobs remain context-keyed so deduplication cannot create
-a cross-Company data path.
+Fetched data is cached by `(contextId, providerInstanceId, mcpCapabilityId)` for at least eight
+hours. Normal reads serve the last confirmed snapshot without calling the MCP. Manual **Sync**
+refreshes one selected MCP and does not erase the visible snapshot while its request is running.
+Successful results atomically replace that source snapshot and advance its cursor; recent
+incremental messages are merged so a later sync does not erase still-relevant DMs, mentions, or
+assigned-ticket comments. A failure keeps the prior snapshot and allows an individual retry. Cache
+records remain context-keyed so deduplication cannot create a cross-Company data path.
 
 Source mutations—calendar responses, message replies, issue transitions, assignments—are separate
 capabilities. Each needs typed input/output, authorization, approval behavior, an idempotency key,
@@ -144,6 +144,7 @@ A Work Hub item may open its supporting T3 Thread in Chat or a task-focused Cowo
 Neither action copies the item into a new conversation model. Follow-up work uses a Thread in the
 item's source context and only the provider/MCP bindings allowed there.
 
-The initial UI shell, persisted source selection, per-source cache policy, cache snapshot store, and
-context-scoped source readiness are implemented. MCP ingestion, the background/manual refresh
-worker, connector mappings, and source-system writes remain later implementation slices.
+The UI, persisted source selection, per-source cache policy, cache store, and manual Codex/Claude MCP
+sync are implemented. Scheduled refresh, provider adapters beyond Codex and Claude, richer
+connector-specific mappings, source-system writes, and a native mobile presentation remain later
+implementation slices.

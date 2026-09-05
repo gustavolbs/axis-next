@@ -8,7 +8,13 @@ import {
   AxisContextCatalogReplaceInput,
   AxisContextCatalogSnapshot,
 } from "./axisContext.ts";
-import { AxisWorkHubCachePersistenceError, AxisWorkHubCacheSnapshot } from "./axisWorkHub.ts";
+import {
+  AxisWorkHubCachePersistenceError,
+  AxisWorkHubCacheSnapshot,
+  AxisWorkHubCollectInput,
+  AxisWorkHubReplaceCacheInput,
+  AxisWorkHubSyncError,
+} from "./axisWorkHub.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -339,6 +345,8 @@ export const WS_METHODS = {
   axisContextsGetCatalog: "axis.contexts.getCatalog",
   axisContextsReplaceCatalog: "axis.contexts.replaceCatalog",
   axisWorkHubGetCache: "axis.workHub.getCache",
+  providerWorkHubCollect: "provider.workHub.collect",
+  axisWorkHubReplaceCache: "axis.workHub.replaceCache",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -551,6 +559,18 @@ export const WsAxisContextsReplaceCatalogRpc = Rpc.make(WS_METHODS.axisContextsR
 export const WsAxisWorkHubGetCacheRpc = Rpc.make(WS_METHODS.axisWorkHubGetCache, {
   payload: Schema.Struct({}),
   success: Schema.Array(AxisWorkHubCacheSnapshot),
+  error: Schema.Union([AxisWorkHubCachePersistenceError, EnvironmentAuthorizationError]),
+});
+
+export const WsProviderWorkHubCollectRpc = Rpc.make(WS_METHODS.providerWorkHubCollect, {
+  payload: AxisWorkHubCollectInput,
+  success: AxisWorkHubCacheSnapshot,
+  error: Schema.Union([AxisWorkHubSyncError, EnvironmentAuthorizationError]),
+});
+
+export const WsAxisWorkHubReplaceCacheRpc = Rpc.make(WS_METHODS.axisWorkHubReplaceCache, {
+  payload: AxisWorkHubReplaceCacheInput,
+  success: AxisWorkHubCacheSnapshot,
   error: Schema.Union([AxisWorkHubCachePersistenceError, EnvironmentAuthorizationError]),
 });
 
@@ -1242,6 +1262,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsAxisContextsGetCatalogRpc,
   WsAxisContextsReplaceCatalogRpc,
   WsAxisWorkHubGetCacheRpc,
+  WsProviderWorkHubCollectRpc,
+  WsAxisWorkHubReplaceCacheRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

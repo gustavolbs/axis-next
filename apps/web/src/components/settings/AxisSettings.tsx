@@ -17,7 +17,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { randomUUID } from "~/lib/utils";
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { environmentCatalog } from "~/connection/catalog";
+import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -45,13 +46,16 @@ function entityId(prefix: string): string {
 }
 
 export function AxisSettingsPanel() {
-  const environmentId = usePrimaryEnvironmentId();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const environmentId = primaryEnvironment?.environmentId ?? null;
   const { environments } = useEnvironments();
+  const axisSupported = primaryEnvironment?.serverConfig?.environment.capabilities.axis === true;
   const query = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !axisSupported
       ? null
       : serverEnvironment.axisContextCatalog({ environmentId, input: {} }),
   );
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const replaceCatalog = useAtomCommand(serverEnvironment.replaceAxisContextCatalog, {
     reportFailure: false,
   });
@@ -59,6 +63,7 @@ export function AxisSettingsPanel() {
   const [providerGrantProvider, setProviderGrantProvider] = useState("");
   const [providerGrantCompany, setProviderGrantCompany] = useState("");
   const [saving, setSaving] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
 
   const snapshot = query.data;
   const contextNames = useMemo(
@@ -215,18 +220,47 @@ export function AxisSettingsPanel() {
   }
 
   if (!snapshot) {
+    const isConnected = primaryEnvironment?.connection.phase === "connected";
+    const needsUpdate = isConnected && primaryEnvironment.serverConfig !== null && !axisSupported;
+    const reconnect = async () => {
+      if (environmentId === null || reconnecting) return;
+      setReconnecting(true);
+      const result = await retryEnvironment(environmentId);
+      setReconnecting(false);
+      if (result._tag === "Success") query.refresh();
+    };
     return (
       <SettingsPageContainer>
         <SettingsSection title="Axis" description="Contexts, providers, MCPs, and skills.">
           <SettingsRow
-            title={query.error ? "Could not load Axis settings" : "Loading Axis settings"}
+            title={
+              needsUpdate
+                ? "Axis requires a backend update"
+                : !isConnected
+                  ? "Primary environment is offline"
+                  : query.error
+                    ? "Could not load Axis settings"
+                    : "Loading Axis settings"
+            }
             description={
-              query.error
-                ? "The selected environment is offline or its backend does not include Axis yet. Restart or update that environment, then reload."
-                : undefined
+              needsUpdate
+                ? "Update or restart the primary environment with an Axis-enabled build. Retrying this older backend cannot load Axis."
+                : !isConnected
+                  ? "Reconnect the primary environment to load its Axis catalog."
+                  : query.error
+                    ? "The Axis request failed after the environment connected. Retry the request."
+                    : undefined
             }
             status={query.error ?? undefined}
-            control={query.error ? <Button onClick={query.refresh}>Reload</Button> : undefined}
+            control={
+              !isConnected ? (
+                <Button disabled={reconnecting} onClick={() => void reconnect()}>
+                  {reconnecting ? "Reconnecting…" : "Reconnect"}
+                </Button>
+              ) : query.error ? (
+                <Button onClick={query.refresh}>Retry request</Button>
+              ) : undefined
+            }
           />
         </SettingsSection>
       </SettingsPageContainer>

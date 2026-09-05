@@ -54,6 +54,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.axisContextsGetCatalog]: AuthOrchestrationReadScope,
   [WS_METHODS.axisContextsReplaceCatalog]: AuthOrchestrationOperateScope,
   [WS_METHODS.axisWorkHubGetCache]: AuthOrchestrationReadScope,
+  [WS_METHODS.providerWorkHubCollect]: AuthOrchestrationOperateScope,
+  [WS_METHODS.axisWorkHubReplaceCache]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthOrchestrationReadScope,

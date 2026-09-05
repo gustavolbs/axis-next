@@ -2,16 +2,55 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { AxisContextCatalog } from "@t3tools/contracts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { AxisContextCatalogStore, layer as storeLayer } from "./AxisContextCatalogStore.ts";
 
-const testLayer = storeLayer.pipe(Layer.provide(SqlitePersistenceMemory));
+const testLayer = Layer.merge(
+  SqlitePersistenceMemory,
+  storeLayer.pipe(Layer.provide(SqlitePersistenceMemory)),
+);
 const layer = it.layer(testLayer);
 const decodeCatalog = Schema.decodeUnknownSync(AxisContextCatalog);
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 layer("AxisContextCatalogStore", (it) => {
+  it.effect("loads legacy fifteen-minute Work Hub sources as eight-hour sources", () =>
+    Effect.gen(function* () {
+      const store = yield* AxisContextCatalogStore;
+      const sql = yield* SqlClient.SqlClient;
+      const initial = yield* store.get;
+      const catalogJson = encodeUnknownJson({
+        ...initial.catalog,
+        workHubSources: [
+          {
+            id: "legacy_calendar",
+            contextId: "personal",
+            provider: { environmentId: "env", instanceId: "codex" },
+            capabilityId: "calendar",
+            enabled: true,
+            cacheTtlSeconds: 15 * 60,
+            createdAt: initial.updatedAt,
+            updatedAt: initial.updatedAt,
+          },
+        ],
+      });
+      yield* sql`UPDATE axis_context_catalog SET catalog_json = ${catalogJson} WHERE singleton = 1`;
+
+      const loaded = yield* store.get;
+
+      assert.equal(loaded.catalog.workHubSources[0]?.cacheTtlSeconds, 8 * 60 * 60);
+      const restoredCatalogJson = encodeUnknownJson(initial.catalog);
+      yield* sql`
+        UPDATE axis_context_catalog
+        SET catalog_json = ${restoredCatalogJson}
+        WHERE singleton = 1
+      `;
+    }),
+  );
+
   it.effect("persists valid revisions and rejects stale or invalid replacements", () =>
     Effect.gen(function* () {
       const store = yield* AxisContextCatalogStore;

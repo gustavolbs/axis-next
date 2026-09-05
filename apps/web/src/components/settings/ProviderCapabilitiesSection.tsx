@@ -12,7 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { randomUUID } from "~/lib/utils";
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { usePrimaryEnvironment } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -55,7 +55,9 @@ export function ProviderCapabilitiesSection({
   readonly instanceId: ProviderInstanceId;
   readonly section: CapabilitySection;
 }) {
-  const axisEnvironmentId = usePrimaryEnvironmentId();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const axisEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  const axisSupported = primaryEnvironment?.serverConfig?.environment.capabilities.axis === true;
   const needsInventory = section === "mcps" || section === "skills";
   const query = useEnvironmentQuery(
     needsInventory
@@ -63,7 +65,7 @@ export function ProviderCapabilitiesSection({
       : null,
   );
   const axisQuery = useEnvironmentQuery(
-    section === "mcps" && axisEnvironmentId !== null
+    section === "mcps" && axisEnvironmentId !== null && axisSupported
       ? serverEnvironment.axisContextCatalog({ environmentId: axisEnvironmentId, input: {} })
       : null,
   );
@@ -309,8 +311,14 @@ export function ProviderCapabilitiesSection({
                     type="button"
                     size="xs"
                     variant="outline"
-                    disabled={!providerIsAssigned || publishingMcp !== null}
-                    title={providerIsAssigned ? undefined : "Assign this provider in Axis first."}
+                    disabled={!axisSupported || !providerIsAssigned || publishingMcp !== null}
+                    title={
+                      !axisSupported
+                        ? "Update the primary environment to enable Axis."
+                        : providerIsAssigned
+                          ? undefined
+                          : "Assign this provider in Axis first."
+                    }
                     onClick={() => void publishMcpToWorkHub(server.name, server.enabled)}
                   >
                     {publishingMcp === server.name ? "Adding…" : "Add"}

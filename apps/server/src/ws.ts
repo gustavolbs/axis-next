@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
+  AxisWorkHubSyncError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
@@ -146,7 +147,10 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
-import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
+import {
+  AxisWorkHubCacheStore,
+  mergeAxisWorkHubCacheSnapshot,
+} from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -2012,6 +2016,44 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.axisWorkHubGetCache, axisWorkHubCache.list, {
             "rpc.aggregate": "axis",
           }),
+        [WS_METHODS.providerWorkHubCollect]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerWorkHubCollect,
+            Effect.gen(function* () {
+              const instance = yield* providerInstances.getInstance(input.provider.instanceId);
+              if (!instance?.collectWorkHubSource) {
+                return yield* new AxisWorkHubSyncError({
+                  sourceId: input.sourceId,
+                  instanceId: input.provider.instanceId,
+                  message: instance
+                    ? `Provider '${instance.driverKind}' does not support Work Hub sync.`
+                    : `Provider instance '${input.provider.instanceId}' was not found.`,
+                });
+              }
+              return yield* instance.collectWorkHubSource(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new AxisWorkHubSyncError({
+                      sourceId: input.sourceId,
+                      instanceId: input.provider.instanceId,
+                      message: cause.detail || "The provider could not sync this MCP.",
+                    }),
+                ),
+              );
+            }),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisWorkHubReplaceCache]: ({ snapshot }) =>
+          observeRpcEffect(
+            WS_METHODS.axisWorkHubReplaceCache,
+            Effect.gen(function* () {
+              const previous = yield* axisWorkHubCache.get(snapshot.sourceId);
+              const merged = mergeAxisWorkHubCacheSnapshot(previous, snapshot);
+              yield* axisWorkHubCache.replace(merged);
+              return merged;
+            }),
+            { "rpc.aggregate": "axis" },
+          ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,

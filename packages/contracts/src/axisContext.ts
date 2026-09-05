@@ -9,6 +9,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   EnvironmentId,
@@ -109,8 +110,17 @@ export const AxisCapability = Schema.Struct({
 export type AxisCapability = typeof AxisCapability.Type;
 
 export const AXIS_WORK_HUB_DEFAULT_CACHE_TTL_SECONDS = 8 * 60 * 60;
-const AxisWorkHubCacheTtlSeconds = PositiveInt.check(
+const MinimumAxisWorkHubCacheTtlSeconds = PositiveInt.check(
   Schema.isGreaterThanOrEqualTo(AXIS_WORK_HUB_DEFAULT_CACHE_TTL_SECONDS),
+);
+const AxisWorkHubCacheTtlSeconds = PositiveInt.pipe(
+  Schema.decodeTo(
+    MinimumAxisWorkHubCacheTtlSeconds,
+    SchemaTransformation.transform({
+      decode: (seconds) => Math.max(seconds, AXIS_WORK_HUB_DEFAULT_CACHE_TTL_SECONDS),
+      encode: (seconds) => seconds,
+    }),
+  ),
 );
 
 export const AxisWorkHubCollectionPolicy = Schema.Struct({

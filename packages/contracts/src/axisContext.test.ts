@@ -98,13 +98,13 @@ describe("AxisContextCatalog", () => {
     expect(catalog.providerAccessGrants[0]?.revokedAt).toBeNull();
   });
 
-  it("requires Work Hub cache entries to live for at least eight hours", () => {
-    expect(() =>
+  it("upgrades legacy Work Hub cache entries to at least eight hours", () => {
+    expect(
       decodeWorkHubSource({
         ...validCatalog().workHubSources[0],
         cacheTtlSeconds: 15 * 60,
-      }),
-    ).toThrow();
+      }).cacheTtlSeconds,
+    ).toBe(28_800);
   });
 
   it("accepts a Personal-to-Company provider grant", () => {

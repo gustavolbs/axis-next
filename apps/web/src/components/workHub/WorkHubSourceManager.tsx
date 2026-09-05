@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { RefreshCwIcon } from "lucide-react";
 
 import {
   axisProviderInstanceLocatorKey,
@@ -10,6 +11,7 @@ import {
   type AxisContextCatalogSnapshot,
   type AxisContextId,
   type AxisProviderInstanceLocator,
+  type AxisWorkHubSource,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -22,6 +24,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { buildWorkHubSourceGroups } from "./WorkHub.logic";
@@ -41,7 +44,19 @@ export function WorkHubSourceManager() {
   const replaceCatalog = useAtomCommand(serverEnvironment.replaceAxisContextCatalog, {
     reportFailure: false,
   });
+  const collectSource = useAtomCommand(serverEnvironment.collectProviderWorkHubSource, {
+    reportFailure: false,
+  });
+  const replaceCache = useAtomCommand(serverEnvironment.replaceAxisWorkHubCache, {
+    reportFailure: false,
+  });
+  const cacheQuery = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.axisWorkHubCache({ environmentId, input: {} }),
+  );
   const [saving, setSaving] = useState(false);
+  const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
   const providerLabels = useMemo(
     () =>
       new Map(
@@ -172,8 +187,63 @@ export function WorkHubSourceManager() {
     });
   };
 
+  const syncMcp = async (source: AxisWorkHubSource, mcpName: string) => {
+    if (environmentId === null || syncingSourceId !== null) return;
+    setSyncingSourceId(source.id);
+    const previous = cacheQuery.data?.find((snapshot) => snapshot.sourceId === source.id);
+    const collected = await collectSource({
+      environmentId: source.provider.environmentId,
+      input: {
+        sourceId: source.id,
+        contextId: source.contextId,
+        provider: source.provider,
+        capabilityId: source.capabilityId,
+        mcpName,
+        collectionPolicy: source.collectionPolicy,
+        cacheTtlSeconds: source.cacheTtlSeconds,
+        previousCursor: previous?.cursor ?? null,
+        previousRefreshedAt: previous?.refreshedAt ?? null,
+      },
+    });
+    if (collected._tag !== "Success") {
+      setSyncingSourceId(null);
+      if (!isAtomCommandInterrupted(collected)) {
+        const error = squashAtomCommandFailure(collected);
+        toastManager.add({
+          type: "error",
+          title: `Could not sync ${mcpName}`,
+          description: error instanceof Error ? error.message : "The provider sync failed.",
+        });
+      }
+      return;
+    }
+    const stored = await replaceCache({
+      environmentId,
+      input: { snapshot: collected.value },
+    });
+    setSyncingSourceId(null);
+    if (stored._tag === "Success") {
+      cacheQuery.refresh();
+      toastManager.add({
+        type: "success",
+        title: `${mcpName} synced`,
+        description: `${stored.value.items.length} relevant item${stored.value.items.length === 1 ? "" : "s"} cached for ${source.cacheTtlSeconds / 3_600} hours.`,
+      });
+      return;
+    }
+    if (!isAtomCommandInterrupted(stored)) {
+      const error = squashAtomCommandFailure(stored);
+      toastManager.add({
+        type: "error",
+        title: `Could not cache ${mcpName} data`,
+        description: error instanceof Error ? error.message : "The cache update failed.",
+      });
+    }
+  };
+
   if (!query.data) return null;
-  const groups = buildWorkHubSourceGroups(query.data.catalog);
+  const catalog = query.data.catalog;
+  const groups = buildWorkHubSourceGroups(catalog);
   return (
     <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5 xl:col-span-2">
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -212,7 +282,7 @@ export function WorkHubSourceManager() {
                       <div className="flex items-center gap-3">
                         <Switch
                           checked={providerSelected}
-                          disabled={saving || mcps.length === 0}
+                          disabled={saving || syncingSourceId !== null || mcps.length === 0}
                           aria-label={`Use ${providerLabel} in ${group.context.name}`}
                           onCheckedChange={(selected) =>
                             toggleProvider(
@@ -234,22 +304,56 @@ export function WorkHubSourceManager() {
                       </div>
                       {mcps.length > 0 ? (
                         <div className="ml-8 mt-3 grid gap-2">
-                          {mcps.map((mcp) => (
-                            <label
-                              key={mcp.id}
-                              className="flex items-center gap-2 text-sm text-muted-foreground"
-                            >
-                              <Switch
-                                checked={selectedCapabilityIds.has(mcp.id)}
-                                disabled={saving}
-                                aria-label={`Use ${mcp.name} from ${providerLabel} in ${group.context.name}`}
-                                onCheckedChange={(selected) =>
-                                  toggleMcp(group.context.id, mcp.id, selected)
-                                }
-                              />
-                              <span className="truncate">{mcp.name}</span>
-                            </label>
-                          ))}
+                          {mcps.map((mcp) => {
+                            const source = catalog.workHubSources.find(
+                              (candidate) =>
+                                candidate.contextId === group.context.id &&
+                                candidate.capabilityId === mcp.id,
+                            );
+                            const cached = source
+                              ? cacheQuery.data?.find((snapshot) => snapshot.sourceId === source.id)
+                              : undefined;
+                            return (
+                              <div
+                                key={mcp.id}
+                                className="flex items-center gap-2 text-sm text-muted-foreground"
+                              >
+                                <Switch
+                                  checked={selectedCapabilityIds.has(mcp.id)}
+                                  disabled={saving || syncingSourceId !== null}
+                                  aria-label={`Use ${mcp.name} from ${providerLabel} in ${group.context.name}`}
+                                  onCheckedChange={(selected) =>
+                                    toggleMcp(group.context.id, mcp.id, selected)
+                                  }
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate">{mcp.name}</span>
+                                  {cached ? (
+                                    <span className="block text-[11px] text-muted-foreground/80">
+                                      Last synced {new Date(cached.refreshedAt).toLocaleString()}
+                                    </span>
+                                  ) : null}
+                                </span>
+                                {source?.enabled ? (
+                                  <Button
+                                    type="button"
+                                    size="xs"
+                                    variant="ghost-muted"
+                                    className="shrink-0"
+                                    disabled={syncingSourceId !== null}
+                                    onClick={() => void syncMcp(source, mcp.name)}
+                                  >
+                                    <RefreshCwIcon
+                                      className={
+                                        syncingSourceId === source.id ? "animate-spin" : undefined
+                                      }
+                                    />
+                                    {syncingSourceId === source.id ? "Syncing…" : "Sync"}
+                                  </Button>
+                                ) : null}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : null}
                     </div>

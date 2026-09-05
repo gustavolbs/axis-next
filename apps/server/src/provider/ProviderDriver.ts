@@ -23,6 +23,8 @@
  */
 import type {
   ProviderConsumeResetCreditOutcome,
+  AxisWorkHubCacheSnapshot,
+  AxisWorkHubCollectInput,
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
@@ -78,6 +80,9 @@ export interface ProviderInstance {
     ReadonlyArray<ProviderMcpServer>,
     ProviderDriverError
   >;
+  readonly collectWorkHubSource?: (
+    input: AxisWorkHubCollectInput,
+  ) => Effect.Effect<AxisWorkHubCacheSnapshot, ProviderDriverError>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   /**
    * Redeem one banked rate-limit reset credit on the signed-in account, then

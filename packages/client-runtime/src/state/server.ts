@@ -995,6 +995,22 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.axisWorkHubGetCache,
       staleTimeMs: 30_000,
     }),
+    collectProviderWorkHubSource: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:provider:work-hub-collect",
+      tag: WS_METHODS.providerWorkHubCollect,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceId]),
+      },
+    }),
+    replaceAxisWorkHubCache: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:work-hub-replace-cache",
+      tag: WS_METHODS.axisWorkHubReplaceCache,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.snapshot.sourceId]),
+      },
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

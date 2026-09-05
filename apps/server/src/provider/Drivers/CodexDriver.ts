@@ -54,6 +54,7 @@ import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { discoverProviderMcpServers, parseCodexMcpList } from "./ProviderMcpDiscovery.ts";
+import { collectCodexWorkHubSource } from "../../axis/workHub/ProviderWorkHubSync.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -108,6 +109,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
       const resetCreditCoordinator = yield* CodexResetCreditCoordinator;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
@@ -259,6 +261,27 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               }),
           ),
         );
+      const collectWorkHubSource: NonNullable<ProviderInstance["collectWorkHubSource"]> = (
+        request,
+      ) =>
+        discoverMcpServers().pipe(
+          Effect.flatMap((servers) =>
+            collectCodexWorkHubSource({
+              request,
+              config: effectiveConfig,
+              environment: processEnv,
+              options: {
+                driver: DRIVER_KIND,
+                instanceId,
+                availableMcpNames: servers.map((server) => server.name),
+              },
+            }).pipe(
+              Effect.scoped,
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            ),
+          ),
+        );
 
       // Redemption spends something on the user's account. It serialises on
       // the account (instances sharing a Codex home share the credit), keeps
@@ -332,6 +355,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         snapshot,
         snapshotForCwd,
         discoverMcpServers,
+        collectWorkHubSource,
         consumeResetCredit,
         adapter,
         textGeneration,

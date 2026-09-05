@@ -64,6 +64,7 @@ import {
 } from "./ClaudeHome.ts";
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 import { discoverProviderMcpServers, parseClaudeMcpList } from "./ProviderMcpDiscovery.ts";
+import { collectClaudeWorkHubSource } from "../../axis/workHub/ProviderWorkHubSync.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -259,6 +260,28 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               }),
           ),
         );
+      const collectWorkHubSource: NonNullable<ProviderInstance["collectWorkHubSource"]> = (
+        request,
+      ) =>
+        Effect.all([discoverMcpServers(), makeClaudeEnvironment(effectiveConfig, processEnv)]).pipe(
+          Effect.flatMap(([servers, claudeEnvironment]) =>
+            collectClaudeWorkHubSource({
+              request,
+              config: effectiveConfig,
+              environment: claudeEnvironment,
+              options: {
+                driver: DRIVER_KIND,
+                instanceId,
+                availableMcpNames: servers.map((server) => server.name),
+              },
+            }).pipe(
+              Effect.scoped,
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            ),
+          ),
+          Effect.provideService(Path.Path, path),
+        );
 
       return {
         instanceId,
@@ -273,6 +296,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         snapshotForCwd,
         discoverMcpServers,
+        collectWorkHubSource,
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

@@ -5,6 +5,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   Columns3Icon,
+  ExternalLinkIcon,
   InboxIcon,
   LayoutDashboardIcon,
   VideoIcon,
@@ -17,9 +18,11 @@ import {
 } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { environmentCatalog } from "~/connection/catalog";
+import { usePrimaryEnvironment } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -59,8 +62,25 @@ function EmptyCollection({ children }: { readonly children: ReactNode }) {
   );
 }
 
-function OverviewView({ catalog }: { readonly catalog: AxisContextCatalog }) {
+function contextName(contexts: ReadonlyArray<AxisContext>, contextId: string): string {
+  return contexts.find((context) => context.id === contextId)?.name ?? contextId;
+}
+
+function OverviewView({
+  catalog,
+  items,
+}: {
+  readonly catalog: AxisContextCatalog;
+  readonly items: ReadonlyArray<AxisWorkHubCachedItem>;
+}) {
   const sources = buildWorkHubSourceReadiness(catalog);
+  const today = new Date().toDateString();
+  const todayItems = items
+    .filter((item) => {
+      const timestamp = item.startsAt ?? item.occurredAt;
+      return item.view !== "board" && timestamp && new Date(timestamp).toDateString() === today;
+    })
+    .slice(0, 8);
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.55fr)]">
       <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5">
@@ -71,11 +91,29 @@ function OverviewView({ catalog }: { readonly catalog: AxisContextCatalog }) {
               Meetings, priority messages, and active work across every context.
             </p>
           </div>
-          <Badge variant="secondary">0 items</Badge>
+          <Badge variant="secondary">{todayItems.length} items</Badge>
         </div>
-        <EmptyCollection>
-          Work Hub will place today&apos;s MCP-backed activity here as sources finish connecting.
-        </EmptyCollection>
+        {todayItems.length === 0 ? (
+          <EmptyCollection>
+            Sync a selected MCP to place today&apos;s meetings and important messages here.
+          </EmptyCollection>
+        ) : (
+          <div className="divide-y divide-border/60 rounded-xl border border-border/60">
+            {todayItems.map((item) => (
+              <div key={item.id} className="flex items-start gap-3 px-3 py-2.5">
+                <Badge variant="outline" className="mt-0.5 shrink-0">
+                  {item.view === "calendar" ? "Event" : "Message"}
+                </Badge>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{item.title}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {contextName(catalog.contexts, item.contextId)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5">
@@ -293,7 +331,16 @@ function CalendarView({
   );
 }
 
-function MessagesView() {
+function MessagesView({
+  contexts,
+  items,
+}: {
+  readonly contexts: ReadonlyArray<AxisContext>;
+  readonly items: ReadonlyArray<AxisWorkHubCachedItem>;
+}) {
+  const sorted = [...items].sort(
+    (left, right) => Date.parse(right.occurredAt ?? "") - Date.parse(left.occurredAt ?? ""),
+  );
   return (
     <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5">
       <div className="mb-4">
@@ -302,26 +349,124 @@ function MessagesView() {
           Priority updates from Slack, Jira, and each Company&apos;s configured tools.
         </p>
       </div>
-      <EmptyCollection>
-        Messages selected by connected provider MCPs will appear here with their source context.
-      </EmptyCollection>
+      {sorted.length === 0 ? (
+        <EmptyCollection>
+          Sync Slack, Jira, or another selected MCP to load DMs, mentions, and new assigned-ticket
+          comments.
+        </EmptyCollection>
+      ) : (
+        <div className="divide-y divide-border/60 rounded-xl border border-border/60">
+          {sorted.map((item) => (
+            <article key={item.id} className="flex items-start gap-3 p-3">
+              <Badge variant="outline" className="mt-0.5 shrink-0">
+                {item.kind === "direct-message"
+                  ? "DM"
+                  : item.kind === "mention"
+                    ? "Mention"
+                    : "Comment"}
+              </Badge>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <h3 className="text-sm font-medium">{item.title}</h3>
+                  <span className="text-xs text-muted-foreground">
+                    {contextName(contexts, item.contextId)}
+                  </span>
+                </div>
+                {item.summary ? (
+                  <p className="mt-1 text-sm text-muted-foreground">{item.summary}</p>
+                ) : null}
+                {item.occurredAt ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {new Date(item.occurredAt).toLocaleString()}
+                  </p>
+                ) : null}
+              </div>
+              {item.deepLink ? (
+                <Button
+                  render={<a href={item.deepLink} target="_blank" rel="noreferrer" />}
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={`Open ${item.title}`}
+                >
+                  <ExternalLinkIcon />
+                </Button>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
 
-function BoardView() {
+function boardColumn(status: string | null): (typeof BOARD_COLUMNS)[number] {
+  const normalized = status?.trim().toLocaleLowerCase().replaceAll("_", " ") ?? "";
+  if (normalized.includes("block")) return "Blocked";
+  if (normalized.includes("review")) return "Code review";
+  if (normalized === "qa" || normalized.includes("quality")) return "QA";
+  if (normalized.includes("done") || normalized.includes("closed")) return "Done";
+  if (
+    normalized.includes("progress") ||
+    normalized.includes("working") ||
+    normalized.includes("doing")
+  )
+    return "Working";
+  return "To do";
+}
+
+function BoardView({
+  contexts,
+  items,
+}: {
+  readonly contexts: ReadonlyArray<AxisContext>;
+  readonly items: ReadonlyArray<AxisWorkHubCachedItem>;
+}) {
   return (
     <div className="overflow-x-auto pb-2">
       <div className="grid min-w-[72rem] grid-cols-6 gap-3">
-        {BOARD_COLUMNS.map((column) => (
-          <section key={column} className="rounded-xl border border-border/70 bg-card/35 p-3">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="text-sm font-medium text-foreground">{column}</h2>
-              <Badge variant="outline">0</Badge>
-            </div>
-            <div className="min-h-52 rounded-lg border border-dashed border-border/65 bg-muted/10" />
-          </section>
-        ))}
+        {BOARD_COLUMNS.map((column) => {
+          const columnItems = items.filter((item) => boardColumn(item.status) === column);
+          return (
+            <section key={column} className="rounded-xl border border-border/70 bg-card/35 p-3">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h2 className="text-sm font-medium text-foreground">{column}</h2>
+                <Badge variant="outline">{columnItems.length}</Badge>
+              </div>
+              <div className="grid min-h-52 content-start gap-2">
+                {columnItems.map((item) => (
+                  <article
+                    key={item.id}
+                    className="rounded-lg border border-border/65 bg-background/60 p-3"
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-sm font-medium">{item.title}</h3>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {contextName(contexts, item.contextId)}
+                        </p>
+                      </div>
+                      {item.deepLink ? (
+                        <Button
+                          render={<a href={item.deepLink} target="_blank" rel="noreferrer" />}
+                          size="icon-xs"
+                          variant="ghost-muted"
+                          aria-label={`Open ${item.title}`}
+                        >
+                          <ExternalLinkIcon />
+                        </Button>
+                      ) : null}
+                    </div>
+                    {item.summary ? (
+                      <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">
+                        {item.summary}
+                      </p>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
     </div>
   );
@@ -329,18 +474,22 @@ function BoardView() {
 
 export function WorkHubPage() {
   const [view, setView] = useState<WorkHubView>("overview");
-  const environmentId = usePrimaryEnvironmentId();
+  const [reconnecting, setReconnecting] = useState(false);
+  const primaryEnvironment = usePrimaryEnvironment();
+  const environmentId = primaryEnvironment?.environmentId ?? null;
+  const axisSupported = primaryEnvironment?.serverConfig?.environment.capabilities.axis === true;
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const query = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !axisSupported
       ? null
       : serverEnvironment.axisContextCatalog({ environmentId, input: {} }),
   );
   const cacheQuery = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !axisSupported
       ? null
       : serverEnvironment.axisWorkHubCache({ environmentId, input: {} }),
   );
-  const calendarItems = useMemo(() => {
+  const cachedItems = useMemo(() => {
     const selectedSourceIds = new Set(
       query.data?.catalog.workHubSources
         .filter((source) => source.enabled)
@@ -348,12 +497,22 @@ export function WorkHubPage() {
     );
     return (
       cacheQuery.data?.flatMap((snapshot) =>
-        selectedSourceIds.has(snapshot.sourceId)
-          ? snapshot.items.filter((item) => item.view === "calendar")
-          : [],
+        selectedSourceIds.has(snapshot.sourceId) ? snapshot.items : [],
       ) ?? []
     );
   }, [cacheQuery.data, query.data]);
+  const reconnect = async () => {
+    if (environmentId === null || reconnecting) return;
+    setReconnecting(true);
+    const result = await retryEnvironment(environmentId);
+    setReconnecting(false);
+    if (result._tag === "Success") {
+      query.refresh();
+      cacheQuery.refresh();
+    }
+  };
+  const isConnected = primaryEnvironment?.connection.phase === "connected";
+  const needsUpdate = isConnected && primaryEnvironment.serverConfig !== null && !axisSupported;
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
@@ -392,31 +551,56 @@ export function WorkHubPage() {
             <EmptyCollection>Connect a primary environment to load Work Hub.</EmptyCollection>
           ) : !query.data ? (
             <div className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-2xl border border-border/70 bg-card/35 px-5 text-center">
-              {query.error ? <CircleAlertIcon className="size-6 text-destructive" /> : null}
+              {query.error || needsUpdate || !isConnected ? (
+                <CircleAlertIcon className="size-6 text-destructive" />
+              ) : null}
               <div>
                 <p className="text-sm font-medium text-foreground">
-                  {query.error ? "Could not load Work Hub" : "Loading Work Hub"}
+                  {needsUpdate
+                    ? "Work Hub requires a backend update"
+                    : !isConnected
+                      ? "Primary environment is offline"
+                      : query.error
+                        ? "Could not load Work Hub"
+                        : "Loading Work Hub"}
                 </p>
                 <p className="mt-1 max-w-md text-sm text-muted-foreground">
-                  {query.error
-                    ? "Restart or update the selected environment, then reload the Axis catalog."
-                    : "Reading contexts and provider-connected MCP sources."}
+                  {needsUpdate
+                    ? "Update or restart the primary environment with an Axis-enabled build. Retrying an older backend cannot load Work Hub."
+                    : !isConnected
+                      ? "Reconnect the primary environment to load cached MCP data."
+                      : query.error
+                        ? "The Axis request failed after the environment connected. Retry the request."
+                        : "Reading contexts and provider-connected MCP sources."}
                 </p>
               </div>
-              {query.error ? (
+              {!isConnected ? (
+                <Button size="sm" disabled={reconnecting} onClick={() => void reconnect()}>
+                  {reconnecting ? "Reconnecting…" : "Reconnect"}
+                </Button>
+              ) : query.error ? (
                 <Button size="sm" onClick={query.refresh}>
-                  Reload
+                  Retry request
                 </Button>
               ) : null}
             </div>
           ) : view === "overview" ? (
-            <OverviewView catalog={query.data.catalog} />
+            <OverviewView catalog={query.data.catalog} items={cachedItems} />
           ) : view === "calendar" ? (
-            <CalendarView contexts={query.data.catalog.contexts} items={calendarItems} />
+            <CalendarView
+              contexts={query.data.catalog.contexts}
+              items={cachedItems.filter((item) => item.view === "calendar")}
+            />
           ) : view === "messages" ? (
-            <MessagesView />
+            <MessagesView
+              contexts={query.data.catalog.contexts}
+              items={cachedItems.filter((item) => item.view === "messages")}
+            />
           ) : (
-            <BoardView />
+            <BoardView
+              contexts={query.data.catalog.contexts}
+              items={cachedItems.filter((item) => item.view === "board")}
+            />
           )}
         </main>
       </div>

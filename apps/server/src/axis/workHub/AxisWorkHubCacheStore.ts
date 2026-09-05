@@ -11,6 +11,29 @@ import {
 } from "@t3tools/contracts";
 
 type CacheRow = { readonly snapshotJson: unknown };
+const RETAIN_INCREMENTAL_MESSAGES_MS = 14 * 86_400_000;
+
+export function mergeAxisWorkHubCacheSnapshot(
+  previous: AxisWorkHubCacheSnapshot | null,
+  incoming: AxisWorkHubCacheSnapshot,
+): AxisWorkHubCacheSnapshot {
+  if (!previous) return incoming;
+  const cutoff = Date.parse(incoming.refreshedAt) - RETAIN_INCREMENTAL_MESSAGES_MS;
+  const items = new Map(
+    previous.items
+      .filter(
+        (item) =>
+          item.view === "messages" &&
+          item.occurredAt !== null &&
+          Date.parse(item.occurredAt) >= cutoff,
+      )
+      .map((item) => [`${item.kind}\u0000${item.nativeId}`, item] as const),
+  );
+  for (const item of incoming.items) {
+    items.set(`${item.kind}\u0000${item.nativeId}`, item);
+  }
+  return { ...incoming, items: [...items.values()] };
+}
 
 const decodeSnapshotJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(AxisWorkHubCacheSnapshot),
