@@ -13,6 +13,7 @@ import {
   ArchiveIcon,
   BlocksIcon,
   BotIcon,
+  Building2Icon,
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
@@ -66,6 +67,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
+  "/settings/axis": Building2Icon,
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
@@ -106,6 +108,11 @@ const SETTINGS_PAGE_SECTIONS: Partial<
   "/settings/connections": [
     { label: "This environment", targetId: "connections-environment" },
     { label: "Remote environments", targetId: "remote-environments" },
+  ],
+  "/settings/axis": [
+    { label: "Personal & Companies", targetId: "axis-contexts" },
+    { label: "Agent capabilities", targetId: "axis-capabilities" },
+    { label: "Provider & company grants", targetId: "axis-provider-access" },
   ],
 };
 
