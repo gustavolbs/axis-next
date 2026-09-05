@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CalendarDaysIcon,
   ChevronLeftIcon,
@@ -50,8 +50,37 @@ const VIEWS: ReadonlyArray<{
 
 const BOARD_COLUMNS = ["To do", "Working", "Blocked", "Code review", "QA", "Done"] as const;
 
+const CALENDAR_HOUR_HEIGHT_PX = 64;
+const CALENDAR_DAY_HEIGHT_PX = 24 * CALENDAR_HOUR_HEIGHT_PX;
+const CALENDAR_HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+const CONTEXT_TONES = [
+  {
+    dot: "bg-blue-500",
+    event: "border-blue-500/55 bg-blue-500/15 text-blue-950 hover:bg-blue-500/20 dark:text-blue-50",
+  },
+  {
+    dot: "bg-violet-500",
+    event:
+      "border-violet-500/55 bg-violet-500/15 text-violet-950 hover:bg-violet-500/20 dark:text-violet-50",
+  },
+  {
+    dot: "bg-amber-500",
+    event:
+      "border-amber-500/55 bg-amber-500/15 text-amber-950 hover:bg-amber-500/20 dark:text-amber-50",
+  },
+  {
+    dot: "bg-emerald-500",
+    event:
+      "border-emerald-500/55 bg-emerald-500/15 text-emerald-950 hover:bg-emerald-500/20 dark:text-emerald-50",
+  },
+] as const;
+
 function contextTone(index: number): string {
-  return ["bg-blue-500", "bg-violet-500", "bg-amber-500", "bg-emerald-500"][index % 4]!;
+  return CONTEXT_TONES[index % CONTEXT_TONES.length]!.dot;
+}
+
+function contextEventTone(index: number): string {
+  return CONTEXT_TONES[index % CONTEXT_TONES.length]!.event;
 }
 
 function EmptyCollection({ children }: { readonly children: ReactNode }) {
@@ -151,36 +180,90 @@ function OverviewView({
   );
 }
 
-function CalendarEvent({ item }: { readonly item: AxisWorkHubCachedItem }) {
+function calendarMeetingLink(item: AxisWorkHubCachedItem): string | null {
+  if (item.meetingLink) return item.meetingLink;
+  if (!item.location) return null;
+  try {
+    const url = new URL(item.location);
+    const hostname = url.hostname.toLocaleLowerCase();
+    const meetingHost = [
+      "meet.google.com",
+      "teams.microsoft.com",
+      "teams.live.com",
+      "zoom.us",
+      "whereby.com",
+      "webex.com",
+      "meet.alex.com",
+    ].some((host) => hostname === host || hostname.endsWith(`.${host}`));
+    return meetingHost ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function CalendarEvent({
+  item,
+  contextLabel,
+  contextIndex,
+}: {
+  readonly item: AxisWorkHubCachedItem;
+  readonly contextLabel: string;
+  readonly contextIndex: number;
+}) {
   const startsAt = item.startsAt ? new Date(item.startsAt) : null;
   const endsAt = item.endsAt ? new Date(item.endsAt) : null;
-  const meetingLink = item.meetingLink;
+  const meetingLink = calendarMeetingLink(item);
+  const timeLabel = startsAt
+    ? `${startsAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}${
+        endsAt
+          ? `–${endsAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
+          : ""
+      }`
+    : null;
   return (
-    <div className="h-full min-h-9 overflow-hidden rounded-md border border-primary/25 bg-primary/10 p-1.5 shadow-xs">
+    <div
+      className={cn(
+        "group relative h-full min-h-11 overflow-hidden rounded-md border-l-[3px] p-1.5 shadow-xs transition-colors",
+        contextEventTone(contextIndex),
+      )}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
-            <button
-              type="button"
-              className="block w-full truncate text-left text-xs font-medium text-foreground"
+            <div
+              tabIndex={0}
+              className="absolute inset-0 cursor-default p-1.5 pr-11 outline-none"
             />
           }
         >
-          {item.title}
+          {timeLabel ? (
+            <p className="truncate text-[10px] font-medium opacity-75">{timeLabel}</p>
+          ) : null}
+          <p className="truncate text-left text-xs font-semibold">{item.title}</p>
         </TooltipTrigger>
-        <TooltipPopup side="right" className="max-w-72">
-          <p className="font-medium">{item.title}</p>
+        <TooltipPopup side="right" align="start" className="w-72 max-w-[calc(100vw-2rem)] p-1.5">
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className={cn("size-2 shrink-0 rounded-full", contextTone(contextIndex))} />
+            {contextLabel}
+          </div>
+          <p className="mt-1 font-medium text-foreground">{item.title}</p>
           {startsAt ? (
-            <p className="mt-1 text-xs">
-              {startsAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-              {endsAt
-                ? ` – ${endsAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
-                : ""}
+            <p className="mt-1 text-xs text-muted-foreground">
+              {startsAt.toLocaleDateString(undefined, {
+                weekday: "long",
+                month: "short",
+                day: "numeric",
+              })}
+              {` · ${timeLabel}`}
             </p>
           ) : null}
-          {item.location ? <p className="mt-1 text-xs">{item.location}</p> : null}
+          {item.location ? (
+            <p className="mt-1 break-words text-xs text-muted-foreground">{item.location}</p>
+          ) : null}
           {item.summary ? (
-            <p className="mt-1 text-xs text-muted-foreground">{item.summary}</p>
+            <p className="mt-2 line-clamp-6 whitespace-pre-wrap text-xs text-muted-foreground">
+              {item.summary}
+            </p>
           ) : null}
         </TooltipPopup>
       </Tooltip>
@@ -188,10 +271,21 @@ function CalendarEvent({ item }: { readonly item: AxisWorkHubCachedItem }) {
         <Button
           render={<a href={meetingLink} target="_blank" rel="noreferrer" />}
           size="xs"
-          variant="ghost-muted"
-          className="mt-1 h-5 px-1 text-[10px]"
+          variant="secondary"
+          className="absolute top-1 right-1 z-10 h-6 gap-1 px-1.5 text-[10px] shadow-sm"
+          aria-label={`Join ${item.title}`}
         >
           <VideoIcon className="size-3" /> Join
+        </Button>
+      ) : item.deepLink ? (
+        <Button
+          render={<a href={item.deepLink} target="_blank" rel="noreferrer" />}
+          size="icon-xs"
+          variant="ghost-muted"
+          className="absolute top-1 right-1 z-10 size-6"
+          aria-label={`Open ${item.title}`}
+        >
+          <ExternalLinkIcon className="size-3" />
         </Button>
       ) : null}
     </div>
@@ -207,12 +301,22 @@ function CalendarView({
 }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [now, setNow] = useState(() => new Date());
+  const calendarScrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (!calendarScrollRef.current) return;
+    const firstVisibleHour = Math.max(0, new Date().getHours() - 2);
+    calendarScrollRef.current.scrollTop = firstVisibleHour * CALENDAR_HOUR_HEIGHT_PX;
+  }, []);
   const days = useMemo(() => buildWorkHubWeekDays(now, weekOffset), [now, weekOffset]);
   const currentTimePosition = `${workHubCurrentTimePercentage(now)}%`;
+  const contextIndexes = useMemo(
+    () => new Map(contexts.map((context, index) => [context.id, index])),
+    [contexts],
+  );
   const weekLabel = `${days[0]!.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -266,8 +370,27 @@ function CalendarView({
           </div>
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <div className="grid min-w-[46rem] grid-cols-7">
+      <div
+        ref={calendarScrollRef}
+        className="max-h-[calc(100dvh-14rem)] min-h-[32rem] overflow-auto"
+      >
+        <div className="grid min-w-[64rem] grid-cols-[4.5rem_repeat(7,minmax(8.5rem,1fr))]">
+          <div className="relative border-r border-border/60 bg-card/75">
+            <div className="sticky top-0 z-30 flex h-16 items-end justify-end border-b border-border/70 bg-card px-2 pb-2 text-[10px] text-muted-foreground">
+              Time
+            </div>
+            <div className="relative" style={{ height: CALENDAR_DAY_HEIGHT_PX }}>
+              {CALENDAR_HOURS.map((hour) => (
+                <span
+                  key={hour}
+                  className="absolute right-2 -translate-y-1/2 text-[10px] tabular-nums text-muted-foreground"
+                  style={{ top: hour * CALENDAR_HOUR_HEIGHT_PX }}
+                >
+                  {hour.toString().padStart(2, "0")}:00
+                </span>
+              ))}
+            </div>
+          </div>
           {days.map((day) => {
             const isToday = day.toDateString() === now.toDateString();
             const dayItems = items.filter(
@@ -277,20 +400,28 @@ function CalendarView({
             return (
               <div
                 key={day.toISOString()}
-                className="relative min-h-[48rem] border-r border-border/60 bg-[linear-gradient(to_bottom,transparent_calc(4.166%-1px),var(--border)_4.166%,transparent_calc(4.166%+1px))] bg-[length:100%_4.166%] p-3 last:border-r-0"
+                className="relative border-r border-border/60 last:border-r-0"
               >
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {day.toLocaleDateString(undefined, { weekday: "short" })}
-                </p>
-                <p
-                  className={cn(
-                    "mt-1 flex size-8 items-center justify-center rounded-full text-lg font-medium text-foreground",
-                    isToday && "bg-primary text-primary-foreground",
-                  )}
+                <div className="sticky top-0 z-20 flex h-16 flex-col items-center justify-center border-b border-border/70 bg-card/95 backdrop-blur-sm">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {day.toLocaleDateString(undefined, { weekday: "short" })}
+                  </p>
+                  <p
+                    className={cn(
+                      "mt-0.5 flex size-8 items-center justify-center rounded-full text-base font-medium text-foreground",
+                      isToday && "bg-primary text-primary-foreground",
+                    )}
+                  >
+                    {day.getDate()}
+                  </p>
+                </div>
+                <div
+                  className="relative bg-[linear-gradient(to_bottom,transparent_calc(100%-1px),var(--border))]"
+                  style={{
+                    height: CALENDAR_DAY_HEIGHT_PX,
+                    backgroundSize: `100% ${CALENDAR_HOUR_HEIGHT_PX}px`,
+                  }}
                 >
-                  {day.getDate()}
-                </p>
-                <div className="absolute inset-x-2 top-16 bottom-2">
                   {isToday ? (
                     <div
                       className="pointer-events-none absolute right-0 left-0 z-10 flex items-center"
@@ -308,16 +439,23 @@ function CalendarView({
                     const durationMinutes = end
                       ? Math.max(30, (end.getTime() - start.getTime()) / 60_000)
                       : 60;
+                    const top = (minute / 60) * CALENDAR_HOUR_HEIGHT_PX;
+                    const height = Math.max(44, (durationMinutes / 60) * CALENDAR_HOUR_HEIGHT_PX);
+                    const contextIndex = contextIndexes.get(item.contextId) ?? 0;
                     return (
                       <div
                         key={item.id}
-                        className="absolute right-0 left-0"
+                        className="absolute right-1 left-1"
                         style={{
-                          top: `${(minute / (24 * 60)) * 100}%`,
-                          height: `${(durationMinutes / (24 * 60)) * 100}%`,
+                          top,
+                          height: Math.min(height, CALENDAR_DAY_HEIGHT_PX - top),
                         }}
                       >
-                        <CalendarEvent item={item} />
+                        <CalendarEvent
+                          item={item}
+                          contextLabel={contextName(contexts, item.contextId)}
+                          contextIndex={contextIndex}
+                        />
                       </div>
                     );
                   })}
