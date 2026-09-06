@@ -238,6 +238,50 @@ connection/orchestration runtime rather than add an Axis transport.
       expiry, blocked work, reviews, and meetings.
 - [ ] Add notification preferences, quiet hours, deduplication, read/dismiss, and deep links.
 
+## Token efficiency and context compression
+
+Token efficiency is a separate runtime concern from Hermes. Hermes proposes process improvements;
+this layer measures and reduces the tokens used to execute a Turn without changing its intent.
+Caveman is a candidate engine, not a mandatory global writing style.
+
+Research baseline: [Caveman's measured limitations](https://github.com/JuliusBrussee/caveman/blob/main/docs/HONEST-NUMBERS.md),
+the [recoverable Caveman Engine](https://github.com/JuliusBrussee/caveman/blob/main/engine/README.md),
+and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
+
+- [x] Separate token efficiency from providers, Company policy, Shared Memory, and the Hermes
+      learning lifecycle.
+- [x] Record the adoption rule: no compressor ships enabled by default until an Axis/T3 A/B proves
+      lower provider-billed tokens with equivalent task quality and acceptable latency.
+- [ ] Establish per-provider/instance/model baselines for input, cached input, output, reasoning,
+      tool-result, latency, retries, and billed cost where the provider exposes them.
+- [ ] Add an optional provider-owned **Concise output** profile with explicit verbosity limits;
+      preserve normal human-facing language instead of forcing “caveman speak” into every reply.
+- [ ] Define a replaceable `TokenEfficiencyEngine` boundary with `off`, `record`, and `compress`
+      modes so Caveman Engine, LLMLingua-2, or deterministic compactors can be evaluated without
+      changing orchestration.
+- [ ] Start with deterministic compaction of repeated logs, terminal output, search results,
+      accessibility trees, and MCP/tool payloads before applying lossy natural-language
+      compression.
+- [ ] Store the original payload locally before any lossy transform and expose a context-scoped,
+      expiring recovery handle; pass the original through if storage, parsing, compression, or token
+      estimation fails.
+- [ ] Never compress code, diffs, commands, paths, URLs, identifiers, numbers, JSON/schema fields,
+      errors, approvals, security policy, secrets, or the user's current request unless a
+      format-aware lossless transform proves byte-safe.
+- [ ] Preserve stable prompt prefixes and provider-native prompt caching; do not trade cache hits for
+      a smaller but constantly changing prefix.
+- [ ] Integrate Caveman Engine first in `record` mode behind an optional adapter, after dependency,
+      license, privacy, remote-environment, and recovery-store review.
+- [ ] Keep Caveman externally installable rather than bundled unless its BSL 1.1 terms are confirmed
+      compatible with T3's open-core distribution; disable third-party telemetry by default.
+- [ ] Benchmark Caveman Engine against no compression, deterministic shape-aware compaction, and
+      LLMLingua-2 on representative Codex, Claude, Work Hub, remote-dispatch, and scheduled-agent
+      tasks in English and Portuguese.
+- [ ] Gate rollout per provider instance and Axis context with a kill switch, visible savings/
+      accuracy/latency statistics, and automatic pass-through when compression is net-negative.
+- [ ] Feed only aggregate, non-sensitive efficiency outcomes into Hermes; Hermes may propose a
+      compression policy change but cannot activate it.
+
 ## Multi-surface and remote environments
 
 - [x] Keep Axis web behavior compatible with the desktop wrapper.
