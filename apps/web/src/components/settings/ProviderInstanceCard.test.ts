@@ -8,7 +8,40 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 
-import { deriveProviderModelsForDisplay, ProviderInstanceCard } from "./ProviderInstanceCard";
+import {
+  deriveProviderModelsForDisplay,
+  isApiBilledProviderInstance,
+  ProviderInstanceCard,
+} from "./ProviderInstanceCard";
+
+describe("isApiBilledProviderInstance", () => {
+  it("uses explicit credential metadata as the billing boundary", () => {
+    const driver = ProviderDriverKind.make("codex");
+    expect(isApiBilledProviderInstance({ driver, credentialSource: "api-key" })).toBe(true);
+    expect(
+      isApiBilledProviderInstance({
+        driver,
+        credentialSource: "cli",
+        environment: [{ name: "OPENAI_API_KEY", value: "", sensitive: true }],
+      }),
+    ).toBe(false);
+  });
+
+  it("recognizes API-key instances created before credential metadata existed", () => {
+    expect(
+      isApiBilledProviderInstance({
+        driver: ProviderDriverKind.make("claudeAgent"),
+        environment: [{ name: "ANTHROPIC_API_KEY", value: "", sensitive: true }],
+      }),
+    ).toBe(true);
+    expect(
+      isApiBilledProviderInstance({
+        driver: ProviderDriverKind.make("claudeAgent"),
+        environment: [{ name: "ANTHROPIC_API_KEY", value: "", sensitive: false }],
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("deriveProviderModelsForDisplay", () => {
   it("uses current config custom models instead of stale live custom rows", () => {

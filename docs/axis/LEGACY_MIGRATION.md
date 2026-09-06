@@ -56,9 +56,10 @@ The following defaults apply unless code-level investigation proves otherwise:
 | Calendar, tasks, and notifications                                              | `KEEP` or `PORT` after validation | Axis capabilities integrated through existing T3 identities and commands |
 | Duplicate orchestration or cross-provider runtime                               | `DELETE` or `REPLACE_WITH_T3`     | T3 orchestration; add only narrow higher-level coordination              |
 
-These are category defaults, not implementation approval. Companies, Workspaces, Profiles, Shared
-Memory, Work Hub, Calendar, tasks, notifications, and cross-agent coordination remain unimplemented
-until separately designed.
+These are category defaults, not implementation approval. The current Axis implementation now
+includes the context catalog, Work Hub read model, calendar, provider capability catalog, and
+scheduled refresh/agent launch slices. Workspaces, Profiles, Shared Memory, source-system writes,
+notifications, and higher-level cross-agent coordination still require separate implementation.
 
 ## Migration rules
 

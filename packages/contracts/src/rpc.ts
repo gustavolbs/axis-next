@@ -11,8 +11,8 @@ import {
 import {
   AxisWorkHubCachePersistenceError,
   AxisWorkHubCacheSnapshot,
-  AxisWorkHubCollectInput,
-  AxisWorkHubReplaceCacheInput,
+  AxisWorkHubSourceSyncInput,
+  AxisWorkHubSourceValidationError,
   AxisWorkHubSyncError,
 } from "./axisWorkHub.ts";
 import {
@@ -26,6 +26,20 @@ import {
   AxisScheduledActivityRunNowInput,
   AxisScheduledActivityUpdateInput,
 } from "./axisScheduledActivity.ts";
+import {
+  AxisLearningActiveVersion,
+  AxisLearningCreateProposalInput,
+  AxisLearningEvidence,
+  AxisLearningListInput,
+  AxisLearningProposal,
+  AxisLearningProposalActionInput,
+  AxisLearningRecordEvidenceInput,
+  AxisLearningReviewProposalInput,
+  AxisLearningSnapshot,
+  AxisLearningStoreError,
+  AxisLearningVersion,
+  AxisLearningVersionActionInput,
+} from "./axisLearning.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -357,13 +371,20 @@ export const WS_METHODS = {
   axisContextsReplaceCatalog: "axis.contexts.replaceCatalog",
   axisWorkHubGetCache: "axis.workHub.getCache",
   providerWorkHubCollect: "provider.workHub.collect",
-  axisWorkHubReplaceCache: "axis.workHub.replaceCache",
   axisScheduledActivitiesList: "axis.scheduledActivities.list",
   axisScheduledActivitiesCreate: "axis.scheduledActivities.create",
   axisScheduledActivitiesUpdate: "axis.scheduledActivities.update",
   axisScheduledActivitiesDelete: "axis.scheduledActivities.delete",
   axisScheduledActivitiesRunNow: "axis.scheduledActivities.runNow",
   axisScheduledActivitiesListRuns: "axis.scheduledActivities.listRuns",
+  axisLearningGetSnapshot: "axis.learning.getSnapshot",
+  axisLearningRecordEvidence: "axis.learning.recordEvidence",
+  axisLearningCreateProposal: "axis.learning.createProposal",
+  axisLearningSubmitProposal: "axis.learning.submitProposal",
+  axisLearningApproveProposal: "axis.learning.approveProposal",
+  axisLearningRejectProposal: "axis.learning.rejectProposal",
+  axisLearningActivateVersion: "axis.learning.activateVersion",
+  axisLearningRollbackVersion: "axis.learning.rollbackVersion",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -580,19 +601,15 @@ export const WsAxisWorkHubGetCacheRpc = Rpc.make(WS_METHODS.axisWorkHubGetCache,
 });
 
 export const WsProviderWorkHubCollectRpc = Rpc.make(WS_METHODS.providerWorkHubCollect, {
-  payload: AxisWorkHubCollectInput,
+  payload: AxisWorkHubSourceSyncInput,
   success: AxisWorkHubCacheSnapshot,
   error: Schema.Union([
     AxisWorkHubSyncError,
+    AxisWorkHubSourceValidationError,
+    AxisContextCatalogPersistenceError,
     AxisWorkHubCachePersistenceError,
     EnvironmentAuthorizationError,
   ]),
-});
-
-export const WsAxisWorkHubReplaceCacheRpc = Rpc.make(WS_METHODS.axisWorkHubReplaceCache, {
-  payload: AxisWorkHubReplaceCacheInput,
-  success: AxisWorkHubCacheSnapshot,
-  error: Schema.Union([AxisWorkHubCachePersistenceError, EnvironmentAuthorizationError]),
 });
 
 export const WsAxisScheduledActivitiesListRpc = Rpc.make(WS_METHODS.axisScheduledActivitiesList, {
@@ -645,6 +662,49 @@ export const WsAxisScheduledActivitiesListRunsRpc = Rpc.make(
     error: Schema.Union([AxisScheduledActivityPersistenceError, EnvironmentAuthorizationError]),
   },
 );
+
+const AxisLearningRpcError = Schema.Union([AxisLearningStoreError, EnvironmentAuthorizationError]);
+
+export const WsAxisLearningGetSnapshotRpc = Rpc.make(WS_METHODS.axisLearningGetSnapshot, {
+  payload: AxisLearningListInput,
+  success: AxisLearningSnapshot,
+  error: AxisLearningRpcError,
+});
+export const WsAxisLearningRecordEvidenceRpc = Rpc.make(WS_METHODS.axisLearningRecordEvidence, {
+  payload: AxisLearningRecordEvidenceInput,
+  success: AxisLearningEvidence,
+  error: AxisLearningRpcError,
+});
+export const WsAxisLearningCreateProposalRpc = Rpc.make(WS_METHODS.axisLearningCreateProposal, {
+  payload: AxisLearningCreateProposalInput,
+  success: AxisLearningProposal,
+  error: AxisLearningRpcError,
+});
+export const WsAxisLearningSubmitProposalRpc = Rpc.make(WS_METHODS.axisLearningSubmitProposal, {
+  payload: AxisLearningProposalActionInput,
+  success: AxisLearningProposal,
+  error: AxisLearningRpcError,
+});
+export const WsAxisLearningApproveProposalRpc = Rpc.make(WS_METHODS.axisLearningApproveProposal, {
+  payload: AxisLearningReviewProposalInput,
+  success: AxisLearningVersion,
+  error: AxisLearningRpcError,
+});
+export const WsAxisLearningRejectProposalRpc = Rpc.make(WS_METHODS.axisLearningRejectProposal, {
+  payload: AxisLearningReviewProposalInput,
+  success: AxisLearningProposal,
+  error: AxisLearningRpcError,
+});
+export const WsAxisLearningActivateVersionRpc = Rpc.make(WS_METHODS.axisLearningActivateVersion, {
+  payload: AxisLearningVersionActionInput,
+  success: AxisLearningActiveVersion,
+  error: AxisLearningRpcError,
+});
+export const WsAxisLearningRollbackVersionRpc = Rpc.make(WS_METHODS.axisLearningRollbackVersion, {
+  payload: AxisLearningVersionActionInput,
+  success: AxisLearningActiveVersion,
+  error: AxisLearningRpcError,
+});
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
@@ -1335,13 +1395,20 @@ export const WsRpcGroup = RpcGroup.make(
   WsAxisContextsReplaceCatalogRpc,
   WsAxisWorkHubGetCacheRpc,
   WsProviderWorkHubCollectRpc,
-  WsAxisWorkHubReplaceCacheRpc,
   WsAxisScheduledActivitiesListRpc,
   WsAxisScheduledActivitiesCreateRpc,
   WsAxisScheduledActivitiesUpdateRpc,
   WsAxisScheduledActivitiesDeleteRpc,
   WsAxisScheduledActivitiesRunNowRpc,
   WsAxisScheduledActivitiesListRunsRpc,
+  WsAxisLearningGetSnapshotRpc,
+  WsAxisLearningRecordEvidenceRpc,
+  WsAxisLearningCreateProposalRpc,
+  WsAxisLearningSubmitProposalRpc,
+  WsAxisLearningApproveProposalRpc,
+  WsAxisLearningRejectProposalRpc,
+  WsAxisLearningActivateVersionRpc,
+  WsAxisLearningRollbackVersionRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

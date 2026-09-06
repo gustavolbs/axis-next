@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import {
   CalendarClockIcon,
   CircleAlertIcon,
@@ -13,6 +14,9 @@ import {
 
 import {
   AxisScheduledActivityId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  ProjectId,
+  ProviderInstanceId,
   type EnvironmentId,
   type AxisContextCatalog,
   type AxisContextId,
@@ -24,6 +28,7 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { randomUUID } from "~/lib/utils";
+import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -52,9 +57,11 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import {
   formatScheduledActivitySchedule,
+  resolveScheduledAgentTargets,
   validateScheduledActivityForm,
   WEEKDAY_LABELS,
 } from "./WorkHubScheduledActivities.logic";
@@ -63,7 +70,13 @@ type EditorState = {
   readonly activity: AxisScheduledActivity | null;
   readonly name: string;
   readonly contextId: AxisContextId;
+  readonly actionKind: "workHubSync" | "agentTurn";
   readonly sourceIds: ReadonlyArray<AxisWorkHubSourceId>;
+  readonly projectId: string;
+  readonly providerInstanceId: string;
+  readonly model: string;
+  readonly threadTitle: string;
+  readonly prompt: string;
   readonly scheduleKind: "interval" | "weekly";
   readonly everyHours: number;
   readonly daysOfWeek: ReadonlyArray<number>;
@@ -96,13 +109,18 @@ function activityEditorState(
 ): EditorState | null {
   const context = activity
     ? catalog.contexts.find((candidate) => candidate.id === activity.contextId)
-    : catalog.contexts.find((candidate) =>
-        catalog.workHubSources.some(
-          (source) =>
-            source.enabled &&
-            source.contextId === candidate.id &&
-            source.provider.environmentId === environmentId,
-        ),
+    : catalog.contexts.find(
+        (candidate) =>
+          catalog.workHubSources.some(
+            (source) =>
+              source.enabled &&
+              source.contextId === candidate.id &&
+              source.provider.environmentId === environmentId,
+          ) ||
+          catalog.projectBindings.some(
+            (binding) =>
+              binding.contextId === candidate.id && binding.project.environmentId === environmentId,
+          ),
       );
   if (!context) return null;
   const availableSourceIds = catalog.workHubSources
@@ -114,15 +132,31 @@ function activityEditorState(
     )
     .map((source) => source.id);
   const availableSourceIdSet = new Set(availableSourceIds);
+  const targets = resolveScheduledAgentTargets({ catalog, contextId: context.id, environmentId });
+  const defaultProject = targets.projects[0]?.projectId;
+  const defaultProvider = targets.providers[0]?.instanceId;
   return {
     activity,
     name: activity?.name ?? "Work Hub sync",
     contextId: context.id,
+    actionKind: activity?.action.kind ?? "workHubSync",
     // A source may have been disabled or moved since the activity was
     // created. Do not keep an invisible stale selection in the editor.
     sourceIds:
-      activity?.action.sourceIds.filter((sourceId) => availableSourceIdSet.has(sourceId)) ??
-      availableSourceIds,
+      activity?.action.kind === "workHubSync"
+        ? activity.action.sourceIds.filter((sourceId) => availableSourceIdSet.has(sourceId))
+        : availableSourceIds,
+    projectId:
+      activity?.action.kind === "agentTurn"
+        ? activity.action.project.projectId
+        : (defaultProject ?? ""),
+    providerInstanceId:
+      activity?.action.kind === "agentTurn"
+        ? activity.action.provider.instanceId
+        : (defaultProvider ?? ""),
+    model: activity?.action.kind === "agentTurn" ? activity.action.model : "",
+    threadTitle: activity?.action.kind === "agentTurn" ? activity.action.title : "",
+    prompt: activity?.action.kind === "agentTurn" ? activity.action.prompt : "",
     scheduleKind: activity?.schedule.kind ?? "interval",
     everyHours: activity?.schedule.kind === "interval" ? activity.schedule.everyMinutes / 60 : 8,
     daysOfWeek:
@@ -200,6 +234,21 @@ function ScheduledActivityRunsDialog({
                       ))}
                     </div>
                   ) : null}
+                  {run.threadId ? (
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="truncate font-mono text-muted-foreground">
+                        {run.threadId}
+                      </span>
+                      <Link
+                        to="/$environmentId/$threadId"
+                        params={{ environmentId, threadId: run.threadId }}
+                        onClick={onClose}
+                        className="font-medium text-foreground underline-offset-4 hover:underline focus-visible:underline"
+                      >
+                        Open Thread
+                      </Link>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -226,6 +275,7 @@ function ScheduledActivityEditor({
   readonly onClose: () => void;
 }) {
   const [form, setForm] = useState(initial);
+  const projects = useProjects();
   const sources = catalog.workHubSources.filter(
     (source) =>
       source.enabled &&
@@ -238,20 +288,64 @@ function ScheduledActivityEditor({
       source.contextId === form.contextId &&
       source.provider.environmentId !== environmentId,
   ).length;
-  const validationError = validateScheduledActivityForm(form);
+  const agentTargets = resolveScheduledAgentTargets({
+    catalog,
+    contextId: form.contextId,
+    environmentId,
+  });
+  const boundProjects = agentTargets.projects.flatMap((projectLocator) => {
+    const project = projects.find(
+      (candidate) =>
+        candidate.environmentId === projectLocator.environmentId &&
+        candidate.id === projectLocator.projectId,
+    );
+    return project ? [project] : [];
+  });
+  const availableProviders = agentTargets.providers;
+  const validationError = validateScheduledActivityForm({
+    ...form,
+    availableProjectIds: boundProjects.map((project) => project.id),
+    availableProviderInstanceIds: availableProviders.map((provider) => provider.instanceId),
+  });
   const submit = () => {
     if (validationError) return;
     const now = new Date().toISOString();
+    const previousAgentAction =
+      form.activity?.action.kind === "agentTurn" ? form.activity.action : null;
+    const previousInterval =
+      form.activity?.schedule.kind === "interval" ? form.activity.schedule : null;
+    const everyMinutes = form.everyHours * 60;
     onSave({
       id:
         form.activity?.id ??
         AxisScheduledActivityId.make(`scheduled_${randomUUID().replaceAll("-", "")}`),
       name: form.name.trim(),
       contextId: form.contextId,
-      action: { kind: "workHubSync", sourceIds: [...form.sourceIds] },
+      action:
+        form.actionKind === "workHubSync"
+          ? { kind: "workHubSync", sourceIds: [...form.sourceIds] }
+          : {
+              kind: "agentTurn",
+              project: { environmentId, projectId: ProjectId.make(form.projectId) },
+              provider: {
+                environmentId,
+                instanceId: ProviderInstanceId.make(form.providerInstanceId),
+              },
+              model: form.model.trim(),
+              title: form.threadTitle.trim(),
+              prompt: form.prompt.trim(),
+              runtimeMode: previousAgentAction?.runtimeMode ?? "approval-required",
+              interactionMode:
+                previousAgentAction?.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+            },
       schedule:
         form.scheduleKind === "interval"
-          ? { kind: "interval", everyMinutes: form.everyHours * 60, anchorAt: now }
+          ? {
+              kind: "interval",
+              everyMinutes,
+              anchorAt:
+                previousInterval?.everyMinutes === everyMinutes ? previousInterval.anchorAt : now,
+            }
           : {
               kind: "weekly",
               daysOfWeek: [...form.daysOfWeek].sort((left, right) => left - right),
@@ -267,7 +361,9 @@ function ScheduledActivityEditor({
         <DialogHeader>
           <DialogTitle>{form.activity ? "Edit activity" : "Schedule activity"}</DialogTitle>
           <DialogDescription>
-            Refresh selected MCP data in the background while preserving context boundaries.
+            {form.actionKind === "agentTurn"
+              ? "Start agent work in an assigned Project while preserving context boundaries."
+              : "Refresh selected MCP data in the background while preserving context boundaries."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="grid gap-5">
@@ -300,6 +396,19 @@ function ScheduledActivityEditor({
                         source.provider.environmentId === environmentId,
                     )
                     .map((source) => source.id),
+                  projectId:
+                    catalog.projectBindings.find(
+                      (binding) =>
+                        binding.contextId === context.id &&
+                        binding.project.environmentId === environmentId,
+                    )?.project.projectId ?? "",
+                  providerInstanceId:
+                    resolveScheduledAgentTargets({
+                      catalog,
+                      contextId: context.id,
+                      environmentId,
+                    }).providers[0]?.instanceId ?? "",
+                  model: "",
                 });
               }}
             >
@@ -317,40 +426,177 @@ function ScheduledActivityEditor({
               </SelectPopup>
             </Select>
           </div>
-          <fieldset className="grid gap-2">
-            <legend className="mb-1 text-sm font-medium text-foreground">MCP sources</legend>
-            {sources.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                Select at least one MCP for this context in Work Hub sources first.
-              </p>
-            ) : (
-              <div className="grid gap-2 rounded-xl border border-border/65 p-3 sm:grid-cols-2">
-                {sources.map((source) => (
-                  <Label key={source.id} className="font-normal">
-                    <Checkbox
-                      checked={form.sourceIds.includes(source.id)}
-                      onCheckedChange={(checked) =>
-                        setForm({
-                          ...form,
-                          sourceIds: checked
-                            ? [...form.sourceIds, source.id]
-                            : form.sourceIds.filter((sourceId) => sourceId !== source.id),
-                        })
-                      }
-                    />
-                    <span className="truncate">{sourceLabel(catalog, source.id)}</span>
-                  </Label>
-                ))}
+          <div className="grid gap-1.5">
+            <Label htmlFor="scheduled-activity-action">Action</Label>
+            <Select
+              value={form.actionKind}
+              disabled={form.activity !== null}
+              onValueChange={(value) =>
+                (value === "workHubSync" || value === "agentTurn") &&
+                setForm({
+                  ...form,
+                  actionKind: value,
+                  name:
+                    form.activity === null
+                      ? value === "agentTurn"
+                        ? "Scheduled agent"
+                        : "Work Hub sync"
+                      : form.name,
+                })
+              }
+            >
+              <SelectTrigger id="scheduled-activity-action">
+                <SelectValue>
+                  {form.actionKind === "agentTurn" ? "Start agent work" : "Sync Work Hub MCPs"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="workHubSync">Sync Work Hub MCPs</SelectItem>
+                <SelectItem value="agentTurn">Start agent work</SelectItem>
+              </SelectPopup>
+            </Select>
+          </div>
+          {form.actionKind === "workHubSync" ? (
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm font-medium text-foreground">MCP sources</legend>
+              {sources.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                  Select at least one MCP for this context in Work Hub sources first.
+                </p>
+              ) : (
+                <div className="grid gap-2 rounded-xl border border-border/65 p-3 sm:grid-cols-2">
+                  {sources.map((source) => (
+                    <Label key={source.id} className="font-normal">
+                      <Checkbox
+                        checked={form.sourceIds.includes(source.id)}
+                        onCheckedChange={(checked) =>
+                          setForm({
+                            ...form,
+                            sourceIds: checked
+                              ? [...form.sourceIds, source.id]
+                              : form.sourceIds.filter((sourceId) => sourceId !== source.id),
+                          })
+                        }
+                      />
+                      <span className="truncate">{sourceLabel(catalog, source.id)}</span>
+                    </Label>
+                  ))}
+                </div>
+              )}
+              {remoteSourceCount > 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {remoteSourceCount} source{remoteSourceCount === 1 ? " is" : "s are"} hosted by
+                  another environment and cannot be scheduled from this server yet. Manual sync
+                  remains available.
+                </p>
+              ) : null}
+            </fieldset>
+          ) : (
+            <div className="grid gap-4 rounded-xl border border-border/65 p-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="scheduled-agent-project">Project</Label>
+                <Select
+                  value={form.projectId}
+                  onValueChange={(value) => {
+                    if (value === null) return;
+                    const project = boundProjects.find((candidate) => candidate.id === value);
+                    const defaultModel =
+                      project?.defaultModelSelection?.instanceId === form.providerInstanceId
+                        ? project.defaultModelSelection.model
+                        : "";
+                    setForm({
+                      ...form,
+                      projectId: value,
+                      model: form.model || defaultModel,
+                    });
+                  }}
+                >
+                  <SelectTrigger id="scheduled-agent-project">
+                    <SelectValue placeholder="Project assigned to this context" />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {boundProjects.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.title}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+                {boundProjects.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Assign a Project to this context in Axis settings first.
+                  </p>
+                ) : null}
               </div>
-            )}
-            {remoteSourceCount > 0 ? (
-              <p className="text-xs text-muted-foreground">
-                {remoteSourceCount} source{remoteSourceCount === 1 ? " is" : "s are"} hosted by
-                another environment and cannot be scheduled from this server yet. Manual sync
-                remains available.
-              </p>
-            ) : null}
-          </fieldset>
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="scheduled-agent-provider">Provider</Label>
+                  <Select
+                    value={form.providerInstanceId}
+                    onValueChange={(value) => {
+                      if (value === null) return;
+                      const project = boundProjects.find(
+                        (candidate) => candidate.id === form.projectId,
+                      );
+                      setForm({
+                        ...form,
+                        providerInstanceId: value,
+                        model:
+                          value === form.providerInstanceId
+                            ? form.model
+                            : project?.defaultModelSelection?.instanceId === value
+                              ? project.defaultModelSelection.model
+                              : "",
+                      });
+                    }}
+                  >
+                    <SelectTrigger id="scheduled-agent-provider">
+                      <SelectValue placeholder="Provider" />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {availableProviders.map((provider) => (
+                        <SelectItem key={provider.instanceId} value={provider.instanceId}>
+                          {provider.instanceId}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="scheduled-agent-model">Model</Label>
+                  <Input
+                    id="scheduled-agent-model"
+                    value={form.model}
+                    placeholder="Provider model ID"
+                    onChange={(event) => setForm({ ...form, model: event.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="scheduled-agent-title">Thread title</Label>
+                <Input
+                  id="scheduled-agent-title"
+                  value={form.threadTitle}
+                  maxLength={120}
+                  onChange={(event) => setForm({ ...form, threadTitle: event.target.value })}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="scheduled-agent-prompt">Instructions</Label>
+                <Textarea
+                  id="scheduled-agent-prompt"
+                  value={form.prompt}
+                  rows={7}
+                  maxLength={100_000}
+                  placeholder="Describe the work the agent should start."
+                  onChange={(event) => setForm({ ...form, prompt: event.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  The Thread starts in approval-required mode and stays inside this context.
+                </p>
+              </div>
+            </div>
+          )}
           <div className="grid gap-1.5">
             <Label htmlFor="scheduled-activity-frequency">Frequency</Label>
             <Select
@@ -536,10 +782,15 @@ export function WorkHubScheduledActivities({
       return;
     }
     activitiesQuery.refresh();
-    onWorkHubCacheChanged();
+    if (activity.action.kind === "workHubSync") onWorkHubCacheChanged();
     toastManager.add({
       type: result.value.status === "failed" ? "error" : "success",
-      title: result.value.status === "failed" ? "Activity failed" : "Activity finished",
+      title:
+        result.value.status === "failed"
+          ? "Activity failed"
+          : activity.action.kind === "agentTurn"
+            ? "Agent Thread started"
+            : "Activity finished",
       description: result.value.message ?? undefined,
     });
   };
@@ -560,8 +811,8 @@ export function WorkHubScheduledActivities({
     if (!state) {
       toastManager.add({
         type: "info",
-        title: "No Work Hub sources available",
-        description: "Select an MCP source before scheduling a sync.",
+        title: "No schedulable targets available",
+        description: "Select a Work Hub MCP source or assign a Project to an Axis context first.",
       });
       return;
     }
@@ -574,7 +825,7 @@ export function WorkHubScheduledActivities({
         <div>
           <h2 className="font-medium text-foreground">Scheduled activities</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Refresh selected MCP sources automatically without removing manual sync controls.
+            Refresh MCP sources or start context-scoped agent work on a schedule.
           </p>
         </div>
         <Button size="sm" onClick={beginCreate}>
@@ -591,7 +842,7 @@ export function WorkHubScheduledActivities({
           <CalendarClockIcon className="mb-2 size-6 text-muted-foreground" />
           <p className="text-sm font-medium text-foreground">No scheduled activities</p>
           <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            Schedule an MCP sync for every few hours or specific days of the week.
+            Schedule MCP synchronization or agent work for an interval or specific weekdays.
           </p>
         </div>
       ) : (
@@ -634,11 +885,19 @@ export function WorkHubScheduledActivities({
                   />
                 </div>
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {activity.action.sourceIds.map((sourceId) => (
-                    <Badge key={sourceId} variant="outline">
-                      {sourceLabel(catalog, sourceId)}
-                    </Badge>
-                  ))}
+                  {activity.action.kind === "workHubSync" ? (
+                    activity.action.sourceIds.map((sourceId) => (
+                      <Badge key={sourceId} variant="outline">
+                        {sourceLabel(catalog, sourceId)}
+                      </Badge>
+                    ))
+                  ) : (
+                    <>
+                      <Badge variant="outline">Agent Thread</Badge>
+                      <Badge variant="outline">{activity.action.project.projectId}</Badge>
+                      <Badge variant="outline">{activity.action.provider.instanceId}</Badge>
+                    </>
+                  )}
                 </div>
                 <div className="mt-3 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
                   <p>Next: {activity.enabled ? formatTimestamp(activity.nextRunAt) : "Paused"}</p>

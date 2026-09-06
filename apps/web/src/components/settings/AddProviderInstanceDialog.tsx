@@ -238,6 +238,7 @@ export function AddProviderInstanceDialog({
       : {
           driver,
           enabled: true,
+          credentialSource: "cli",
           ...(displayName ? { displayName } : {}),
           ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
           ...(hasConfig ? { config } : {}),

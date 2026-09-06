@@ -62,6 +62,7 @@ describe("API-key provider preset", () => {
     expect(instance).toMatchObject({
       driver: "codex",
       displayName: "OpenAI API fallback",
+      credentialSource: "api-key",
       environment: [{ name: "OPENAI_API_KEY", value: "sk-test", sensitive: true }],
       config: {
         launchArgs: "--quiet",
@@ -79,6 +80,7 @@ describe("API-key provider preset", () => {
         config: {},
       }),
     ).toMatchObject({
+      credentialSource: "api-key",
       environment: [{ name: "ANTHROPIC_API_KEY", sensitive: true }],
       config: { homePath: "~/.t3/provider-homes/claude_api_fallback" },
     });

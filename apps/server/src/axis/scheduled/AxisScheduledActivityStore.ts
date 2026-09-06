@@ -61,6 +61,10 @@ export class AxisScheduledActivityStore extends Context.Service<
       ReadonlyArray<AxisScheduledActivityRunType>,
       AxisScheduledActivityPersistenceError
     >;
+    /** Marks run records left in-flight by a prior server process as failed. */
+    readonly recoverInterruptedRuns: (
+      finishedAt: string,
+    ) => Effect.Effect<number, AxisScheduledActivityPersistenceError>;
   }
 >()("t3/axis/scheduled/AxisScheduledActivityStore") {}
 
@@ -199,6 +203,35 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const recoverInterruptedRuns: AxisScheduledActivityStore["Service"]["recoverInterruptedRuns"] = (
+    finishedAt,
+  ) =>
+    sql<RunRow>`
+        SELECT run_json AS "runJson"
+        FROM axis_scheduled_activity_runs
+        WHERE json_extract(run_json, '$.status') = 'running'
+      `.pipe(
+      Effect.mapError(persistenceError("list interrupted scheduled activity runs")),
+      Effect.flatMap((rows) =>
+        Effect.forEach(
+          rows,
+          (row) =>
+            decodeRun(row.runJson).pipe(
+              Effect.mapError(persistenceError("decode interrupted scheduled activity run")),
+              Effect.flatMap((run) =>
+                saveRun({
+                  ...run,
+                  status: "failed",
+                  finishedAt,
+                  message: "The server stopped before this run finished; the schedule may retry.",
+                }),
+              ),
+            ),
+          { concurrency: 8, discard: true },
+        ).pipe(Effect.as(rows.length)),
+      ),
+    );
+
   return {
     list,
     listDue,
@@ -208,6 +241,7 @@ export const make = Effect.gen(function* () {
     remove,
     saveRun,
     listRuns,
+    recoverInterruptedRuns,
   } satisfies AxisScheduledActivityStore["Service"];
 });
 

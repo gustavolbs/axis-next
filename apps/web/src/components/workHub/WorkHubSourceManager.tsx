@@ -250,25 +250,9 @@ export function WorkHubSourceManager() {
   };
 
   const runSync = async (source: AxisWorkHubSource, mcpName: string) => {
-    const previous = cacheQuery.data?.find((snapshot) => snapshot.sourceId === source.id);
     const collected = await collectSource({
       environmentId: source.provider.environmentId,
-      input: {
-        sourceId: source.id,
-        contextId: source.contextId,
-        provider: source.provider,
-        capabilityId: source.capabilityId,
-        mcpName,
-        collectionPolicy: source.collectionPolicy,
-        cacheTtlSeconds: source.cacheTtlSeconds,
-        previousCursor: previous?.cursor ?? null,
-        // An incremental window only makes sense when the last sync actually captured
-        // messages; otherwise re-run the full initial lookback so an empty or broken
-        // sync doesn't permanently hide older unread mentions and DMs.
-        previousRefreshedAt: previous?.items.some((item) => item.view === "messages")
-          ? previous.refreshedAt
-          : null,
-      },
+      input: { sourceId: source.id },
     });
     if (collected._tag !== "Success") {
       if (isAtomCommandInterrupted(collected)) {

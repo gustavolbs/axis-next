@@ -163,10 +163,11 @@ provider environment variable and assigns a separate provider home, so subscript
 API-key credentials do not silently override one another.
 
 Fallback selection is manual in the current implementation: the user chooses the API-key instance
-from the ordinary provider picker. Automatic failover remains a later slice because it must observe
-an authoritative quota failure, preserve the Thread's context and compatible continuation identity,
-show the billing boundary before paid API usage begins, and never retry a non-quota provider error
-on a different account. It must also provide an explicit way to return to the subscription instance;
+from the ordinary provider picker, where API-billed instances are labeled. Codex and Claude adapters
+now classify only their structured, authoritative quota signals; unknown failures remain non-quota.
+Automatic failover remains a later slice because it must preserve the Thread's context and compatible
+continuation identity, show the billing boundary before paid API usage begins, and avoid duplicating
+tool side effects. It must also provide an explicit way to return to the subscription instance;
 creating an API-key instance alone does not authorize automatic paid fallback.
 
 ## Workspaces and T3 Projects
@@ -180,6 +181,7 @@ therefore requires an explicit migration that checks provider bindings, capabili
 connectors, and retained derived data. The first implementation should prefer creating the correct
 association at the start rather than supporting moves prematurely.
 
-The initial catalog and Settings surface implement context ownership, provider access grants, and
-provider-scoped capability metadata. Runtime materialization, policy enforcement at launch, and
-Profiles remain later implementation slices.
+The catalog and Settings surface implement context ownership, Project-to-context bindings, provider
+access grants, and provider-scoped capability metadata. Scheduled agent launches enforce these
+bindings. Runtime materialization and policy enforcement across every ordinary Thread launch path,
+plus Profiles, remain later implementation slices.

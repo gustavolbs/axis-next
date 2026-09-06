@@ -36,6 +36,13 @@ const storedRun = Schema.decodeUnknownSync(AxisScheduledActivityRun)({
   message: "1 source synced; 0 failed or skipped.",
   sourceResults: [{ sourceId: "calendar", status: "succeeded", itemCount: 2, message: null }],
 });
+const interruptedRun = Schema.decodeUnknownSync(AxisScheduledActivityRun)({
+  ...storedRun,
+  id: "run_interrupted",
+  status: "running",
+  finishedAt: null,
+  message: null,
+});
 
 layer("AxisScheduledActivityStore", (it) => {
   it.effect("persists activities, due queries, and run history", () =>
@@ -47,6 +54,15 @@ layer("AxisScheduledActivityStore", (it) => {
 
       yield* store.saveRun(storedRun);
       assert.equal((yield* store.listRuns(activity.id, 20))[0]?.status, "succeeded");
+
+      yield* store.saveRun(interruptedRun);
+      assert.equal(yield* store.recoverInterruptedRuns("2026-09-05T09:00:00.000Z"), 1);
+      const recovered = (yield* store.listRuns(activity.id, 20)).find(
+        (run) => run.id === interruptedRun.id,
+      );
+      assert.equal(recovered?.status, "failed");
+      assert.equal(recovered?.finishedAt, "2026-09-05T09:00:00.000Z");
+      assert.match(recovered?.message ?? "", /server stopped/);
 
       yield* store.update({ ...activity, enabled: false });
       assert.equal((yield* store.get(activity.id)).enabled, false);

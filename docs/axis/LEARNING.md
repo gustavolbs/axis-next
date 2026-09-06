@@ -97,8 +97,8 @@ The capability is introduced in dependency order:
 
 1. Context identity and provider policy are enforced at Thread launch, projection, cache, and
    retrieval boundaries.
-2. Scheduled activities reuse T3 scheduling and receipts while adding Axis context, provider/MCP
-   selection, history, pause/resume, run-now, and per-source failure isolation.
+2. The narrow Axis scheduler adds context, provider/MCP selection, history, pause/resume, run-now,
+   and per-source failure isolation; agent work enters the normal T3 orchestration lifecycle.
 3. Execution evidence and explicit user corrections are recorded with provenance and retention.
 4. A provider-independent proposal store and review surface add immutable versions, activation,
    rejection, and rollback.

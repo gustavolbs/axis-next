@@ -2,8 +2,24 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { AxisContextId, AxisWorkHubSourceId } from "./axisContext.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import {
+  AxisContextId,
+  AxisProjectLocator,
+  AxisProviderInstanceLocator,
+  AxisWorkHubSourceId,
+} from "./axisContext.ts";
+import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "./orchestration.ts";
 
 const ENTITY_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 const LocalTime = Schema.String.check(Schema.isPattern(/^([01]\d|2[0-3]):[0-5]\d$/));
@@ -36,10 +52,24 @@ export const AxisScheduledActivitySchedule = Schema.Union([
 ]);
 export type AxisScheduledActivitySchedule = typeof AxisScheduledActivitySchedule.Type;
 
-export const AxisScheduledActivityAction = Schema.Struct({
-  kind: Schema.Literal("workHubSync"),
-  sourceIds: Schema.Array(AxisWorkHubSourceId).check(Schema.isMinLength(1)),
-});
+export const AxisScheduledActivityAction = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("workHubSync"),
+    sourceIds: Schema.Array(AxisWorkHubSourceId).check(Schema.isMinLength(1)),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("agentTurn"),
+    project: AxisProjectLocator,
+    provider: AxisProviderInstanceLocator,
+    model: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+    title: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
+    prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(100_000)),
+    runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed("approval-required"))),
+    interactionMode: ProviderInteractionMode.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+    ),
+  }),
+]);
 export type AxisScheduledActivityAction = typeof AxisScheduledActivityAction.Type;
 
 export const AxisScheduledActivityLastRunStatus = Schema.Literals([
@@ -97,7 +127,11 @@ export const AxisScheduledActivityRun = Schema.Struct({
   startedAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(Schema.String),
-  sourceResults: Schema.Array(AxisScheduledActivitySourceRun),
+  sourceResults: Schema.Array(AxisScheduledActivitySourceRun).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Present when this run successfully created a T3 Thread. */
+  threadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type AxisScheduledActivityRun = typeof AxisScheduledActivityRun.Type;
 

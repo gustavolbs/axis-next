@@ -2239,6 +2239,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context: ClaudeSessionContext,
     message: string,
     cause?: unknown,
+    failureKind?: "quota-exhausted",
   ) {
     if (cause !== undefined) {
       void cause;
@@ -2255,6 +2256,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       payload: {
         message,
         class: "provider_error",
+        ...(failureKind !== undefined ? { failureKind } : {}),
         ...(cause !== undefined ? { detail: cause } : {}),
       },
       providerRefs: nativeProviderRefs(context),
@@ -3220,7 +3222,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const errorMessage = resultUserFacingError(message);
 
     if (status === "failed") {
-      yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
+      yield* emitRuntimeError(
+        context,
+        errorMessage ?? "Claude turn failed.",
+        undefined,
+        message.terminal_reason === "blocking_limit" ? "quota-exhausted" : undefined,
+      );
     }
 
     yield* completeTurn(context, status, errorMessage, message);

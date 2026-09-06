@@ -26,7 +26,10 @@ describe("AxisScheduledActivity", () => {
     });
 
     expect(draft.enabled).toBe(true);
-    expect(draft.action.sourceIds).toEqual(["calendar"]);
+    expect(draft.action.kind).toBe("workHubSync");
+    if (draft.action.kind === "workHubSync") {
+      expect(draft.action.sourceIds).toEqual(["calendar"]);
+    }
   });
 
   it("rejects empty source lists and invalid weekly times", () => {
@@ -39,6 +42,33 @@ describe("AxisScheduledActivity", () => {
         schedule: { kind: "weekly", daysOfWeek: [1], localTime: "25:00", timezone: "UTC" },
       }),
     ).toThrow();
+  });
+
+  it("decodes scheduled agent work with safe unattended defaults", () => {
+    const draft = decodeDraft({
+      id: "morning_brief",
+      name: "Morning brief",
+      contextId: "company_a",
+      action: {
+        kind: "agentTurn",
+        project: { environmentId: "env", projectId: "project_a" },
+        provider: { environmentId: "env", instanceId: "claude_personal" },
+        model: "claude-sonnet",
+        title: "Daily brief",
+        prompt: "Review my assigned work and prepare today's brief.",
+      },
+      schedule: {
+        kind: "interval",
+        everyMinutes: 480,
+        anchorAt: "2026-09-05T08:00:00.000Z",
+      },
+    });
+
+    expect(draft.action.kind).toBe("agentTurn");
+    if (draft.action.kind === "agentTurn") {
+      expect(draft.action.runtimeMode).toBe("approval-required");
+      expect(draft.action.interactionMode).toBe("default");
+    }
   });
 
   it("decodes partial run history with per-source outcomes", () => {
@@ -54,6 +84,7 @@ describe("AxisScheduledActivity", () => {
         { sourceId: "calendar", status: "succeeded", itemCount: 4, message: null },
         { sourceId: "jira", status: "failed", itemCount: 0, message: "offline" },
       ],
+      threadId: null,
     });
 
     expect(run.sourceResults.map((result) => result.status)).toEqual(["succeeded", "failed"]);

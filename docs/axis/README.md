@@ -15,6 +15,8 @@ conflicts without adding product value.
 
 ## Documents
 
+- [Implementation roadmap](../../ROADMAP.md) is the tested checklist of completed work and upcoming
+  milestones.
 - [Architecture](./ARCHITECTURE.md) defines the ownership boundary, future composition model, and
   rules for Axis-specific code.
 - [Contexts and provider access](./CONTEXTS.md) defines Personal/Company isolation and the safe,
@@ -32,9 +34,11 @@ These documents describe durable boundaries and may cover both implemented and p
 current implementation includes the Axis context/provider catalog, provider-owned MCP and skill
 controls, API-key provider instances, and a web Work Hub with persisted source selection,
 source-specific collection policy, per-source cache, manual Codex/Claude MCP sync, calendar
-presentation, and scheduled source refresh. Runtime context enforcement, native provider connector
-configuration, scheduled agent activities, automatic provider failover, Shared Memory, the learning
-layer, source-system mutations, and native mobile presentation remain staged work.
+presentation, scheduled source refresh, and context-scoped scheduled agent Threads. Runtime context
+enforcement for all ordinary Thread entry points, native provider connector configuration,
+automatic provider failover, Shared Memory, source-system mutations, and native mobile presentation
+remain staged work. The first Learning review slice now persists evidence/proposals/versions and
+exposes explicit review, activation, rollback, and audit controls in Axis settings.
 
 ## Implementation sequence
 

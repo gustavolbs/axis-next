@@ -21,6 +21,7 @@ import { randomUUID } from "~/lib/utils";
 import { ensureLocalApi } from "~/localApi";
 import { environmentCatalog } from "~/connection/catalog";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
+import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -33,12 +34,14 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import {
   removeAxisCompany,
   removeAxisProviderAccessGrant,
+  setAxisProjectContext,
   setAxisProviderOwner,
 } from "./AxisSettings.logic";
 import {
   removeAxisProviderCapability,
   setAxisProviderCapabilityEnabled,
 } from "./ProviderCapabilities.logic";
+import { AxisLearningSettings } from "./AxisLearningSettings";
 
 const CAPABILITY_LABELS: Readonly<Record<AxisCapabilityKind, string>> = {
   mcp: "MCP",
@@ -55,6 +58,7 @@ export function AxisSettingsPanel() {
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
   const { environments } = useEnvironments();
+  const projects = useProjects();
   const axisSupported = primaryEnvironment?.serverConfig?.environment.capabilities.axis === true;
   const query = useEnvironmentQuery(
     environmentId === null || !axisSupported
@@ -100,6 +104,16 @@ export function AxisSettingsPanel() {
   const companies =
     snapshot?.catalog.contexts.filter((context) => context.kind === "company") ?? [];
   const personalContext = snapshot?.catalog.contexts.find((context) => context.kind === "personal");
+  const localProjects = projects.filter((project) => project.environmentId === environmentId);
+  const projectContextById = useMemo(
+    () =>
+      new Map(
+        snapshot?.catalog.projectBindings
+          .filter((binding) => binding.project.environmentId === environmentId)
+          .map((binding) => [binding.project.projectId, binding.contextId]) ?? [],
+      ),
+    [environmentId, snapshot],
+  );
   const providerOwnerByKey = useMemo(
     () =>
       new Map(
@@ -369,6 +383,61 @@ export function AxisSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection
+        id="axis-project-contexts"
+        title="Project contexts"
+        description="Assign each Project to Personal or one Company before scheduled agents can work in it."
+      >
+        {localProjects.length === 0 ? (
+          <SettingsRow
+            title="No Projects found"
+            description="Add a Project to this environment before assigning its Axis context."
+          />
+        ) : (
+          localProjects.map((project) => {
+            const contextId = projectContextById.get(project.id);
+            return (
+              <SettingsRow
+                key={project.id}
+                title={project.title}
+                description={project.workspaceRoot}
+                status={contextId ? (contextNames.get(contextId) ?? contextId) : "Unassigned"}
+                control={
+                  <Select
+                    value={contextId ?? "unassigned"}
+                    disabled={saving}
+                    onValueChange={(value) => {
+                      if (value === null) return;
+                      void save(
+                        snapshot,
+                        setAxisProjectContext(
+                          snapshot.catalog,
+                          { environmentId, projectId: project.id },
+                          value === "unassigned" ? null : AxisContextId.make(value),
+                        ),
+                        "Project context updated",
+                      );
+                    }}
+                  >
+                    <SelectTrigger className="w-44" aria-label={`Context of ${project.title}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      <SelectItem value="unassigned">Unassigned</SelectItem>
+                      {snapshot.catalog.contexts.map((context) => (
+                        <SelectItem key={context.id} value={context.id}>
+                          {context.name}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                }
+              />
+            );
+          })
+        )}
+      </SettingsSection>
+
+      <SettingsSection
         id="axis-provider-ownership"
         title="Provider ownership"
         description="Assign every configured provider account to Personal or exactly one Company."
@@ -575,6 +644,8 @@ export function AxisSettingsPanel() {
           </div>
         </SettingsRow>
       </SettingsSection>
+
+      <AxisLearningSettings environmentId={environmentId} contexts={snapshot.catalog.contexts} />
     </SettingsPageContainer>
   );
 }

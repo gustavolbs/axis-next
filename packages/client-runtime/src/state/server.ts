@@ -1003,14 +1003,6 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceId]),
       },
     }),
-    replaceAxisWorkHubCache: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:axis:work-hub-replace-cache",
-      tag: WS_METHODS.axisWorkHubReplaceCache,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.snapshot.sourceId]),
-      },
-    }),
     axisScheduledActivities: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:axis:scheduled-activities",
       tag: WS_METHODS.axisScheduledActivitiesList,
@@ -1044,6 +1036,39 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:axis:scheduled-activity-runs",
       tag: WS_METHODS.axisScheduledActivitiesListRuns,
       staleTimeMs: 5_000,
+    }),
+    axisLearningSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:learning-snapshot",
+      tag: WS_METHODS.axisLearningGetSnapshot,
+      staleTimeMs: 5_000,
+    }),
+    recordAxisLearningEvidence: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-record-evidence",
+      tag: WS_METHODS.axisLearningRecordEvidence,
+    }),
+    createAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-create-proposal",
+      tag: WS_METHODS.axisLearningCreateProposal,
+    }),
+    submitAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-submit-proposal",
+      tag: WS_METHODS.axisLearningSubmitProposal,
+    }),
+    approveAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-approve-proposal",
+      tag: WS_METHODS.axisLearningApproveProposal,
+    }),
+    rejectAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-reject-proposal",
+      tag: WS_METHODS.axisLearningRejectProposal,
+    }),
+    activateAxisLearningVersion: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-activate-version",
+      tag: WS_METHODS.axisLearningActivateVersion,
+    }),
+    rollbackAxisLearningVersion: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-rollback-version",
+      tag: WS_METHODS.axisLearningRollbackVersion,
     }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",

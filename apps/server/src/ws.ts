@@ -3,7 +3,6 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -13,7 +12,9 @@ import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
-  AxisWorkHubSyncError,
+  AxisLearningLifecycleEventId,
+  AxisLearningPersistenceError,
+  AxisLearningVersionId,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
@@ -149,10 +150,9 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
 import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActivityRunner.ts";
-import {
-  AxisWorkHubCacheStore,
-  mergeAxisWorkHubCacheSnapshot,
-} from "./axis/workHub/AxisWorkHubCacheStore.ts";
+import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
+import { AxisWorkHubSourceSync } from "./axis/workHub/AxisWorkHubSourceSync.ts";
+import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -531,7 +531,9 @@ const makeWsRpcLayer = (
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const axisContextCatalog = yield* AxisContextCatalogStore;
       const axisWorkHubCache = yield* AxisWorkHubCacheStore;
+      const axisWorkHubSourceSync = yield* AxisWorkHubSourceSync;
       const axisScheduledActivities = yield* AxisScheduledActivityRunner;
+      const axisLearning = yield* AxisLearningStore;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -679,6 +681,23 @@ const makeWsRpcLayer = (
       const serverEventId = randomUUID.pipe(Effect.map(EventId.make));
       const serverCommandId = (tag: string) =>
         randomUUID.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
+      const learningRandomUUID = crypto.randomUUIDv4.pipe(
+        Effect.mapError(
+          () => new AxisLearningPersistenceError({ operation: "generate learning identifier" }),
+        ),
+      );
+      const learningReviewInput = (note?: string) =>
+        Effect.all({
+          eventId: learningRandomUUID.pipe(Effect.map(AxisLearningLifecycleEventId.make)),
+          createdAt: nowIso,
+        }).pipe(
+          Effect.map(({ eventId, createdAt }) => ({
+            eventId,
+            actor: `session:${currentSessionId}`,
+            ...(note !== undefined ? { note } : {}),
+            createdAt,
+          })),
+        );
 
       const loadAuthAccessSnapshot = () =>
         Effect.all({
@@ -2019,55 +2038,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.axisWorkHubGetCache, axisWorkHubCache.list, {
             "rpc.aggregate": "axis",
           }),
-        [WS_METHODS.providerWorkHubCollect]: (input) =>
+        [WS_METHODS.providerWorkHubCollect]: ({ sourceId }) =>
           observeRpcEffect(
             WS_METHODS.providerWorkHubCollect,
-            Effect.gen(function* () {
-              const instance = yield* providerInstances.getInstance(input.provider.instanceId);
-              if (!instance?.collectWorkHubSource) {
-                return yield* new AxisWorkHubSyncError({
-                  sourceId: input.sourceId,
-                  instanceId: input.provider.instanceId,
-                  message: instance
-                    ? `Provider '${instance.driverKind}' does not support Work Hub sync.`
-                    : `Provider instance '${input.provider.instanceId}' was not found.`,
-                });
-              }
-              // Detach the sync and persist server-side: a provider sync takes minutes,
-              // and the requesting client navigating away or disconnecting must not
-              // abort it mid-flight. The join is interruptible; the work is not.
-              const fiber = yield* instance.collectWorkHubSource(input).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new AxisWorkHubSyncError({
-                      sourceId: input.sourceId,
-                      instanceId: input.provider.instanceId,
-                      message: cause.detail || "The provider could not sync this MCP.",
-                    }),
-                ),
-                Effect.flatMap((snapshot) =>
-                  Effect.gen(function* () {
-                    const previous = yield* axisWorkHubCache.get(snapshot.sourceId);
-                    const merged = mergeAxisWorkHubCacheSnapshot(previous, snapshot);
-                    yield* axisWorkHubCache.replace(merged);
-                    return merged;
-                  }),
-                ),
-                Effect.forkDetach,
-              );
-              return yield* Fiber.join(fiber);
-            }),
-            { "rpc.aggregate": "axis" },
-          ),
-        [WS_METHODS.axisWorkHubReplaceCache]: ({ snapshot }) =>
-          observeRpcEffect(
-            WS_METHODS.axisWorkHubReplaceCache,
-            Effect.gen(function* () {
-              const previous = yield* axisWorkHubCache.get(snapshot.sourceId);
-              const merged = mergeAxisWorkHubCacheSnapshot(previous, snapshot);
-              yield* axisWorkHubCache.replace(merged);
-              return merged;
-            }),
+            axisWorkHubSourceSync
+              .sync(sourceId, "manual")
+              .pipe(Effect.map((outcome) => outcome.snapshot)),
             { "rpc.aggregate": "axis" },
           ),
         [WS_METHODS.axisScheduledActivitiesList]: (_input) =>
@@ -2102,6 +2078,69 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.axisScheduledActivitiesListRuns,
             axisScheduledActivities.listRuns(activityId, limit),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningGetSnapshot]: ({ contextId }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningGetSnapshot,
+            axisLearning.getSnapshot(contextId),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningRecordEvidence]: ({ evidence }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningRecordEvidence,
+            nowIso.pipe(
+              Effect.flatMap((createdAt) =>
+                axisLearning.recordEvidence({ ...evidence, createdAt }),
+              ),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningCreateProposal]: ({ proposal }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningCreateProposal,
+            nowIso.pipe(
+              Effect.flatMap((createdAt) => axisLearning.createProposal(proposal, createdAt)),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningSubmitProposal]: ({ id }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningSubmitProposal,
+            learningReviewInput().pipe(
+              Effect.flatMap((input) => axisLearning.submitForReview(id, input)),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningApproveProposal]: ({ id, note }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningApproveProposal,
+            Effect.all({
+              input: learningReviewInput(note),
+              versionId: learningRandomUUID.pipe(Effect.map(AxisLearningVersionId.make)),
+            }).pipe(
+              Effect.flatMap(({ input, versionId }) => axisLearning.approve(id, versionId, input)),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningRejectProposal]: ({ id, note }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningRejectProposal,
+            learningReviewInput(note).pipe(
+              Effect.flatMap((input) => axisLearning.reject(id, input)),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningActivateVersion]: ({ id }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningActivateVersion,
+            learningReviewInput().pipe(Effect.flatMap((input) => axisLearning.activate(id, input))),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningRollbackVersion]: ({ id }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningRollbackVersion,
+            learningReviewInput().pipe(Effect.flatMap((input) => axisLearning.rollback(id, input))),
             { "rpc.aggregate": "axis" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>

@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { AxisContextCatalog, AxisContextId, AxisProviderAccessGrantId } from "@t3tools/contracts";
+import {
+  AxisContextCatalog,
+  AxisContextId,
+  AxisProjectLocator,
+  AxisProviderAccessGrantId,
+  EnvironmentId,
+  ProjectId,
+} from "@t3tools/contracts";
 import {
   removeAxisCompany,
   removeAxisProviderAccessGrant,
+  setAxisProjectContext,
   setAxisProviderOwner,
 } from "./AxisSettings.logic";
 
@@ -22,6 +30,10 @@ describe("removeAxisCompany", () => {
       providerOwnerships: [
         { contextId: "company_a", provider: { environmentId: "env", instanceId: "claude" } },
         { contextId: "company_b", provider: { environmentId: "env", instanceId: "codex" } },
+      ],
+      projectBindings: [
+        { contextId: "company_a", project: { environmentId: "env", projectId: "project_a" } },
+        { contextId: "company_b", project: { environmentId: "env", projectId: "project_b" } },
       ],
       capabilities: [
         {
@@ -49,7 +61,33 @@ describe("removeAxisCompany", () => {
     expect(result.providerOwnerships.map((ownership) => ownership.contextId)).toEqual([
       "company_b",
     ]);
+    expect(result.projectBindings.map((binding) => binding.project.projectId)).toEqual([
+      "project_b",
+    ]);
     expect(result.capabilities.map((capability) => capability.id)).toEqual(["b_mcp"]);
+  });
+});
+
+describe("Axis Project context", () => {
+  it("assigns, reassigns, and removes one Project binding without duplicates", () => {
+    const catalog = decodeCatalog({
+      contexts: [
+        { id: "personal", kind: "personal", name: "Personal", createdAt: now, updatedAt: now },
+        { id: "company_a", kind: "company", name: "Company A", createdAt: now, updatedAt: now },
+      ],
+    });
+    const project = AxisProjectLocator.make({
+      environmentId: EnvironmentId.make("env"),
+      projectId: ProjectId.make("project_a"),
+    });
+
+    const personal = setAxisProjectContext(catalog, project, AxisContextId.make("personal"));
+    const company = setAxisProjectContext(personal, project, AxisContextId.make("company_a"));
+    const removed = setAxisProjectContext(company, project, null);
+
+    expect(personal.projectBindings).toEqual([{ contextId: "personal", project }]);
+    expect(company.projectBindings).toEqual([{ contextId: "company_a", project }]);
+    expect(removed.projectBindings).toEqual([]);
   });
 });
 

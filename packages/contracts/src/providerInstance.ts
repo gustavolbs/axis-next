@@ -125,6 +125,12 @@ export const ProviderInstanceConfig = Schema.Struct({
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Identifies the credential and billing boundary selected when the instance
+   * was created. Optional so existing settings and fork-defined instances
+   * continue to round-trip unchanged.
+   */
+  credentialSource: Schema.optionalKey(Schema.Literals(["cli", "api-key"])),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),

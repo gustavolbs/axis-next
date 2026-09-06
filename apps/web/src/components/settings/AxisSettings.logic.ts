@@ -2,6 +2,7 @@ import {
   axisProviderInstanceLocatorKey,
   type AxisContextCatalog,
   type AxisContextId,
+  type AxisProjectLocator,
   type AxisProviderAccessGrantId,
   type AxisProviderInstanceLocator,
 } from "@t3tools/contracts";
@@ -18,6 +19,7 @@ export function removeAxisCompany(
   );
   return {
     contexts: catalog.contexts.filter((context) => context.id !== contextId),
+    projectBindings: catalog.projectBindings.filter((binding) => binding.contextId !== contextId),
     providerOwnerships: catalog.providerOwnerships.filter(
       (ownership) => ownership.contextId !== contextId,
     ),
@@ -35,6 +37,25 @@ export function removeAxisCompany(
         source.contextId !== contextId &&
         !removedProviderKeys.has(axisProviderInstanceLocatorKey(source.provider)),
     ),
+  };
+}
+
+/** Assigns a T3 Project to exactly one Axis context, or removes its binding. */
+export function setAxisProjectContext(
+  catalog: AxisContextCatalog,
+  project: AxisProjectLocator,
+  contextId: AxisContextId | null,
+): AxisContextCatalog {
+  const matchesProject = (candidate: AxisProjectLocator) =>
+    candidate.environmentId === project.environmentId && candidate.projectId === project.projectId;
+  const current = catalog.projectBindings.find((binding) => matchesProject(binding.project));
+  if (current?.contextId === contextId || (!current && contextId === null)) return catalog;
+  return {
+    ...catalog,
+    projectBindings: [
+      ...catalog.projectBindings.filter((binding) => !matchesProject(binding.project)),
+      ...(contextId === null ? [] : [{ contextId, project }]),
+    ],
   };
 }
 

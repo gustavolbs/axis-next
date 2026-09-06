@@ -58,6 +58,7 @@ export function buildApiKeyProviderInstance(input: {
   return {
     driver: input.driver,
     enabled: true,
+    credentialSource: "api-key",
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     environment: [

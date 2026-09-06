@@ -20,6 +20,7 @@ import {
 
 import { cn } from "~/lib/utils";
 import { environmentCatalog } from "~/connection/catalog";
+import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { usePrimaryEnvironment } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -32,6 +33,11 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
   buildWorkHubSourceReadiness,
   buildWorkHubWeekDays,
+  isWorkHubOverviewItem,
+  layoutWorkHubCalendarEvents,
+  resolveWorkHubCalendarMeetingLink,
+  resolveWorkHubBoardColumn,
+  WORK_HUB_BOARD_COLUMNS,
   workHubCurrentTimePercentage,
 } from "./WorkHub.logic";
 import { WorkHubSourceManager } from "./WorkHubSourceManager";
@@ -50,8 +56,6 @@ const VIEWS: ReadonlyArray<{
   { id: "board", label: "Work Board", icon: Columns3Icon },
   { id: "scheduled", label: "Scheduled", icon: CalendarClockIcon },
 ];
-
-const BOARD_COLUMNS = ["To do", "Working", "Blocked", "Code review", "QA", "Done"] as const;
 
 const CALENDAR_HOUR_HEIGHT_PX = 64;
 const CALENDAR_DAY_HEIGHT_PX = 24 * CALENDAR_HOUR_HEIGHT_PX;
@@ -132,13 +136,7 @@ function OverviewView({
   readonly items: ReadonlyArray<AxisWorkHubCachedItem>;
 }) {
   const sources = buildWorkHubSourceReadiness(catalog);
-  const today = new Date().toDateString();
-  const todayItems = items
-    .filter((item) => {
-      const timestamp = item.startsAt ?? item.occurredAt;
-      return item.view !== "board" && timestamp && new Date(timestamp).toDateString() === today;
-    })
-    .slice(0, 8);
+  const todayItems = items.filter((item) => isWorkHubOverviewItem(item, new Date())).slice(0, 8);
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.55fr)]">
       <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5">
@@ -160,7 +158,11 @@ function OverviewView({
             {todayItems.map((item) => (
               <div key={item.id} className="flex items-start gap-3 px-3 py-2.5">
                 <Badge variant="outline" className="mt-0.5 shrink-0">
-                  {item.view === "calendar" ? "Event" : "Message"}
+                  {item.view === "calendar"
+                    ? "Event"
+                    : item.view === "board"
+                      ? "Work item"
+                      : "Message"}
                 </Badge>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{item.title}</p>
@@ -209,27 +211,6 @@ function OverviewView({
   );
 }
 
-function calendarMeetingLink(item: AxisWorkHubCachedItem): string | null {
-  if (item.meetingLink) return item.meetingLink;
-  if (!item.location) return null;
-  try {
-    const url = new URL(item.location);
-    const hostname = url.hostname.toLocaleLowerCase();
-    const meetingHost = [
-      "meet.google.com",
-      "teams.microsoft.com",
-      "teams.live.com",
-      "zoom.us",
-      "whereby.com",
-      "webex.com",
-      "meet.alex.com",
-    ].some((host) => hostname === host || hostname.endsWith(`.${host}`));
-    return meetingHost ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
 function CalendarEvent({
   item,
   contextLabel,
@@ -241,7 +222,7 @@ function CalendarEvent({
 }) {
   const startsAt = item.startsAt ? new Date(item.startsAt) : null;
   const endsAt = item.endsAt ? new Date(item.endsAt) : null;
-  const meetingLink = calendarMeetingLink(item);
+  const meetingLink = resolveWorkHubCalendarMeetingLink(item);
   const timeLabel = startsAt
     ? `${startsAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}${
         endsAt
@@ -412,9 +393,33 @@ function CalendarView({
           </div>
           {days.map((day) => {
             const isToday = day.toDateString() === now.toDateString();
-            const dayItems = items.filter(
-              (item) =>
-                item.startsAt && new Date(item.startsAt).toDateString() === day.toDateString(),
+            const dayItems = layoutWorkHubCalendarEvents(
+              items.flatMap((item) => {
+                if (!item.startsAt) return [];
+                const start = new Date(item.startsAt);
+                if (Number.isNaN(start.getTime()) || start.toDateString() !== day.toDateString()) {
+                  return [];
+                }
+                const end = item.endsAt ? new Date(item.endsAt) : null;
+                const startMinute = start.getHours() * 60 + start.getMinutes();
+                const durationMinutes =
+                  end && !Number.isNaN(end.getTime())
+                    ? Math.max(30, (end.getTime() - start.getTime()) / 60_000)
+                    : 60;
+                const height = Math.max(44, (durationMinutes / 60) * CALENDAR_HOUR_HEIGHT_PX);
+                const visibleHeight = Math.min(
+                  height,
+                  CALENDAR_DAY_HEIGHT_PX - (startMinute / 60) * CALENDAR_HOUR_HEIGHT_PX,
+                );
+                return [
+                  {
+                    value: { item, startMinute, height: visibleHeight },
+                    startMinute,
+                    endMinute: startMinute + (visibleHeight / CALENDAR_HOUR_HEIGHT_PX) * 60,
+                    sortKey: item.id,
+                  },
+                ];
+              }),
             );
             return (
               <div
@@ -451,23 +456,21 @@ function CalendarView({
                       <span className="h-px flex-1 bg-destructive" />
                     </div>
                   ) : null}
-                  {dayItems.map((item) => {
-                    const start = new Date(item.startsAt!);
-                    const end = item.endsAt ? new Date(item.endsAt) : null;
-                    const minute = start.getHours() * 60 + start.getMinutes();
-                    const durationMinutes = end
-                      ? Math.max(30, (end.getTime() - start.getTime()) / 60_000)
-                      : 60;
-                    const top = (minute / 60) * CALENDAR_HOUR_HEIGHT_PX;
-                    const height = Math.max(44, (durationMinutes / 60) * CALENDAR_HOUR_HEIGHT_PX);
+                  {dayItems.map(({ value, column, columnCount }) => {
+                    const { item, startMinute, height } = value;
+                    const top = (startMinute / 60) * CALENDAR_HOUR_HEIGHT_PX;
                     const contextIndex = contextIndexes.get(item.contextId) ?? 0;
                     return (
                       <div
                         key={item.id}
-                        className="absolute right-1 left-1"
+                        className="absolute"
                         style={{
                           top,
-                          height: Math.min(height, CALENDAR_DAY_HEIGHT_PX - top),
+                          height,
+                          left: `${(column / columnCount) * 100}%`,
+                          width: `${100 / columnCount}%`,
+                          paddingLeft: column === 0 ? 4 : 2,
+                          paddingRight: column === columnCount - 1 ? 4 : 2,
                         }}
                       >
                         <CalendarEvent
@@ -571,21 +574,6 @@ function MessagesView({
   );
 }
 
-function boardColumn(status: string | null): (typeof BOARD_COLUMNS)[number] {
-  const normalized = status?.trim().toLocaleLowerCase().replaceAll("_", " ") ?? "";
-  if (normalized.includes("block")) return "Blocked";
-  if (normalized.includes("review")) return "Code review";
-  if (normalized === "qa" || normalized.includes("quality")) return "QA";
-  if (normalized.includes("done") || normalized.includes("closed")) return "Done";
-  if (
-    normalized.includes("progress") ||
-    normalized.includes("working") ||
-    normalized.includes("doing")
-  )
-    return "Working";
-  return "To do";
-}
-
 function BoardView({
   contexts,
   items,
@@ -593,15 +581,26 @@ function BoardView({
   readonly contexts: ReadonlyArray<AxisContext>;
   readonly items: ReadonlyArray<AxisWorkHubCachedItem>;
 }) {
+  const hasUnmappedItems = items.some(
+    (item) => resolveWorkHubBoardColumn(item.status) === "Unmapped",
+  );
+  const columns = hasUnmappedItems
+    ? ([...WORK_HUB_BOARD_COLUMNS, "Unmapped"] as const)
+    : WORK_HUB_BOARD_COLUMNS;
   return (
     <div>
       <div className="mb-3 flex justify-end">
         <ContextLegend contexts={contexts} />
       </div>
       <div className="overflow-x-auto pb-2">
-        <div className="grid min-w-[90rem] grid-cols-5 gap-3">
-          {BOARD_COLUMNS.filter((column) => column !== "Done").map((column) => {
-            const columnItems = items.filter((item) => boardColumn(item.status) === column);
+        <div
+          className="grid min-w-[108rem] gap-3"
+          style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(14rem, 1fr))` }}
+        >
+          {columns.map((column) => {
+            const columnItems = items.filter(
+              (item) => resolveWorkHubBoardColumn(item.status) === column,
+            );
             return (
               <section key={column} className="rounded-xl border border-border/70 bg-card/35 p-3">
                 <div className="mb-3 flex items-center justify-between gap-2">
@@ -674,6 +673,16 @@ export function WorkHubPage() {
     environmentId === null || !axisSupported
       ? null
       : serverEnvironment.axisWorkHubCache({ environmentId, input: {} }),
+  );
+  useLiveRefresh(
+    () => {
+      query.refresh();
+      cacheQuery.refresh();
+    },
+    {
+      enabled: environmentId !== null && axisSupported,
+      key: `work-hub:${environmentId ?? "disconnected"}`,
+    },
   );
   const cachedItems = useMemo(() => {
     const selectedSourceIds = new Set(

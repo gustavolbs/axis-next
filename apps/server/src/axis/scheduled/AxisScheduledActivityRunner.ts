@@ -12,7 +12,10 @@ import {
   AxisScheduledActivityRunId,
   type AxisScheduledActivitySchedule,
   AxisScheduledActivityValidationError,
-  AxisWorkHubSyncError,
+  CommandId,
+  MessageId,
+  resolveAxisContextProviderInstances,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Cron from "effect/Cron";
@@ -22,14 +25,14 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
+import * as Option from "effect/Option";
 
 import { AxisContextCatalogStore } from "../contexts/AxisContextCatalogStore.ts";
-import {
-  AxisWorkHubCacheStore,
-  mergeAxisWorkHubCacheSnapshot,
-} from "../workHub/AxisWorkHubCacheStore.ts";
+import { AxisWorkHubSourceSync } from "../workHub/AxisWorkHubSourceSync.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { AxisScheduledActivityStore } from "./AxisScheduledActivityStore.ts";
 
 const POLL_INTERVAL = "1 minute";
@@ -67,17 +70,44 @@ function validateDraft(
   if (!catalog.contexts.some((context) => context.id === draft.contextId)) {
     return "The selected Axis context does not exist.";
   }
-  if (new Set(draft.action.sourceIds).size !== draft.action.sourceIds.length) {
-    return "A scheduled activity cannot contain the same Work Hub source more than once.";
-  }
-  for (const sourceId of draft.action.sourceIds) {
-    const source = catalog.workHubSources.find((candidate) => candidate.id === sourceId);
-    if (!source) return `Work Hub source '${sourceId}' does not exist.`;
-    if (source.contextId !== draft.contextId) {
-      return `Work Hub source '${sourceId}' belongs to another Axis context.`;
+  const action = draft.action;
+  if (action.kind === "workHubSync") {
+    if (new Set(action.sourceIds).size !== action.sourceIds.length) {
+      return "A scheduled activity cannot contain the same Work Hub source more than once.";
     }
-    if (source.provider.environmentId !== localEnvironmentId) {
-      return `Work Hub source '${sourceId}' belongs to another environment. Create its schedule on that environment.`;
+    for (const sourceId of action.sourceIds) {
+      const source = catalog.workHubSources.find((candidate) => candidate.id === sourceId);
+      if (!source) return `Work Hub source '${sourceId}' does not exist.`;
+      if (source.contextId !== draft.contextId) {
+        return `Work Hub source '${sourceId}' belongs to another Axis context.`;
+      }
+      if (source.provider.environmentId !== localEnvironmentId) {
+        return `Work Hub source '${sourceId}' belongs to another environment. Create its schedule on that environment.`;
+      }
+    }
+  } else {
+    if (
+      action.project.environmentId !== localEnvironmentId ||
+      action.provider.environmentId !== localEnvironmentId
+    ) {
+      return "Scheduled agent work must use a Project and provider from this environment.";
+    }
+    const projectBoundToContext = catalog.projectBindings.some(
+      (binding) =>
+        binding.contextId === draft.contextId &&
+        binding.project.environmentId === action.project.environmentId &&
+        binding.project.projectId === action.project.projectId,
+    );
+    if (!projectBoundToContext) {
+      return "The selected Project is not bound to this Axis context.";
+    }
+    const providerAccessible = resolveAxisContextProviderInstances(catalog, draft.contextId).some(
+      (provider) =>
+        provider.environmentId === action.provider.environmentId &&
+        provider.instanceId === action.provider.instanceId,
+    );
+    if (!providerAccessible) {
+      return "The selected provider is not available to this Axis context.";
     }
   }
   if (draft.schedule.kind === "weekly") {
@@ -107,15 +137,18 @@ export class AxisScheduledActivityRunner extends Context.Service<
     ) => Effect.Effect<AxisScheduledActivityRun, AxisScheduledActivityError>;
     /** Public so tests and maintenance code can drive scheduling without sleeping. */
     readonly tick: Effect.Effect<void, never>;
+    readonly recoverInterruptedRuns: Effect.Effect<number, AxisScheduledActivityPersistenceError>;
   }
 >()("t3/axis/scheduled/AxisScheduledActivityRunner") {}
 
 export const make = Effect.gen(function* () {
   const store = yield* AxisScheduledActivityStore;
   const catalogStore = yield* AxisContextCatalogStore;
-  const cacheStore = yield* AxisWorkHubCacheStore;
+  const workHubSourceSync = yield* AxisWorkHubSourceSync;
   const providers = yield* ProviderInstanceRegistry;
   const serverEnvironment = yield* ServerEnvironment;
+  const orchestration = yield* OrchestrationEngineService;
+  const projections = yield* ProjectionSnapshotQuery;
   const localEnvironmentId = yield* serverEnvironment.getEnvironmentId;
   const activeIds = yield* Ref.make(new Set<string>());
 
@@ -131,6 +164,24 @@ export const make = Effect.gen(function* () {
     )).catalog;
     const issue = validateDraft(draft, catalog, localEnvironmentId);
     if (issue) return yield* new AxisScheduledActivityValidationError({ message: issue });
+    if (draft.action.kind === "agentTurn") {
+      const project = yield* projections
+        .getProjectShellById(draft.action.project.projectId)
+        .pipe(Effect.mapError(scheduledPersistenceError("read scheduled activity Project")));
+      if (Option.isNone(project)) {
+        return yield* new AxisScheduledActivityValidationError({
+          message: "The selected Project does not exist in this environment.",
+        });
+      }
+      const provider = yield* providers.getInstance(draft.action.provider.instanceId);
+      if (!provider?.enabled) {
+        return yield* new AxisScheduledActivityValidationError({
+          message: provider
+            ? "The selected provider is disabled."
+            : "The selected provider does not exist in this environment.",
+        });
+      }
+    }
     const nextRunAt = yield* Effect.try({
       try: () => nextAxisScheduledActivityRunAt(draft.schedule, nowMs),
       catch: () =>
@@ -202,6 +253,96 @@ export const make = Effect.gen(function* () {
     return yield* store.remove(id).pipe(Effect.ensuring(releaseActivity(id)));
   });
 
+  const launchAgentTurn = Effect.fn("AxisScheduledActivityRunner.launchAgentTurn")(function* (
+    activity: AxisScheduledActivity & { readonly action: { readonly kind: "agentTurn" } },
+  ) {
+    // Revalidate mutable Axis grants and T3 targets immediately before
+    // dispatch. A valid schedule must not outlive a revoked provider grant or
+    // a removed context-to-Project binding.
+    const catalog = (yield* catalogStore.get.pipe(
+      Effect.mapError(scheduledPersistenceError("read context catalog for agent run")),
+    )).catalog;
+    const issue = validateDraft(activity, catalog, localEnvironmentId);
+    if (issue) return yield* new AxisScheduledActivityValidationError({ message: issue });
+    const project = yield* projections
+      .getProjectShellById(activity.action.project.projectId)
+      .pipe(Effect.mapError(scheduledPersistenceError("read scheduled activity Project for run")));
+    if (Option.isNone(project)) {
+      return yield* new AxisScheduledActivityValidationError({
+        message: "The selected Project no longer exists in this environment.",
+      });
+    }
+    const provider = yield* providers.getInstance(activity.action.provider.instanceId);
+    if (!provider?.enabled) {
+      return yield* new AxisScheduledActivityValidationError({
+        message: provider
+          ? "The selected provider is disabled."
+          : "The selected provider no longer exists in this environment.",
+      });
+    }
+
+    const threadId = ThreadId.make(NodeCrypto.randomUUID());
+    const modelSelection = {
+      instanceId: activity.action.provider.instanceId,
+      model: activity.action.model,
+    } as const;
+    const createdAt = yield* isoNow;
+    let created = false;
+    return yield* Effect.gen(function* () {
+      yield* orchestration.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(NodeCrypto.randomUUID()),
+        threadId,
+        projectId: activity.action.project.projectId,
+        title: activity.action.title,
+        modelSelection,
+        runtimeMode: activity.action.runtimeMode,
+        interactionMode: activity.action.interactionMode,
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      created = true;
+      yield* orchestration.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(NodeCrypto.randomUUID()),
+        threadId,
+        message: {
+          messageId: MessageId.make(NodeCrypto.randomUUID()),
+          role: "user",
+          text: activity.action.prompt,
+          attachments: [],
+        },
+        modelSelection,
+        runtimeMode: activity.action.runtimeMode,
+        interactionMode: activity.action.interactionMode,
+        createdAt,
+      });
+      return threadId;
+    }).pipe(
+      Effect.catch((error) =>
+        created
+          ? orchestration
+              .dispatch({
+                type: "thread.delete",
+                commandId: CommandId.make(NodeCrypto.randomUUID()),
+                threadId,
+              })
+              .pipe(
+                Effect.catchCause((cleanupCause) =>
+                  Effect.logWarning("Failed to clean up scheduled activity Thread", {
+                    activityId: activity.id,
+                    threadId,
+                    cleanupCause,
+                  }),
+                ),
+                Effect.andThen(Effect.fail(error)),
+              )
+          : Effect.fail(error),
+      ),
+    );
+  });
+
   const runActivity = Effect.fn("AxisScheduledActivityRunner.runActivity")(function* (
     id: AxisScheduledActivityId,
     trigger: "manual" | "scheduled",
@@ -231,132 +372,95 @@ export const make = Effect.gen(function* () {
         finishedAt: null,
         message: null,
         sourceResults: [],
+        threadId: null,
       };
       yield* store.saveRun(running);
-      const sourceResults = yield* Effect.gen(function* () {
-        const catalog = (yield* catalogStore.get.pipe(
-          Effect.mapError(scheduledPersistenceError("read context catalog for run")),
-        )).catalog;
-        return yield* Effect.forEach(
-          activity.action.sourceIds,
-          (sourceId): Effect.Effect<AxisScheduledActivitySourceRun> => {
-            const source = catalog.workHubSources.find((candidate) => candidate.id === sourceId);
-            if (!source || source.contextId !== activity.contextId || !source.enabled) {
-              return Effect.succeed({
-                sourceId,
-                status: "skipped" as const,
-                itemCount: 0,
-                message: source
-                  ? "The Work Hub source is disabled."
-                  : "The Work Hub source no longer exists.",
-              });
-            }
-            if (source.provider.environmentId !== localEnvironmentId) {
-              return Effect.succeed({
-                sourceId,
-                status: "skipped" as const,
-                itemCount: 0,
-                message: "This Work Hub source belongs to another environment.",
-              });
-            }
-            const capability = catalog.capabilities.find(
-              (candidate) => candidate.id === source.capabilityId,
-            );
-            const capabilityMatchesSource =
-              capability?.kind === "mcp" &&
-              capability.provider.environmentId === source.provider.environmentId &&
-              capability.provider.instanceId === source.provider.instanceId;
-            if (!capability || !capability.enabled || !capabilityMatchesSource) {
-              return Effect.succeed({
-                sourceId,
-                status: "skipped" as const,
-                itemCount: 0,
-                message: !capability
-                  ? "The MCP capability no longer exists."
-                  : !capability.enabled
-                    ? "The MCP capability is disabled."
-                    : "The MCP capability no longer matches this Work Hub source.",
-              });
-            }
-            return Effect.gen(function* () {
-              const instance = yield* providers.getInstance(source.provider.instanceId);
-              if (!instance?.collectWorkHubSource) {
-                return yield* new AxisWorkHubSyncError({
-                  sourceId,
-                  instanceId: source.provider.instanceId,
-                  message: instance
-                    ? `Provider '${instance.driverKind}' does not support Work Hub sync.`
-                    : `Provider instance '${source.provider.instanceId}' was not found.`,
-                });
-              }
-              const previous = yield* cacheStore.get(source.id);
-              const snapshot = yield* instance.collectWorkHubSource({
-                sourceId: source.id,
-                contextId: source.contextId,
-                provider: source.provider,
-                capabilityId: source.capabilityId,
-                mcpName: capability.name,
-                cacheTtlSeconds: source.cacheTtlSeconds,
-                collectionPolicy: source.collectionPolicy,
-                previousCursor: previous?.cursor ?? null,
-                previousRefreshedAt:
-                  previous?.items.some((item) => item.view === "messages") === true
-                    ? previous.refreshedAt
-                    : null,
-              });
-              const merged = mergeAxisWorkHubCacheSnapshot(previous, snapshot);
-              yield* cacheStore.replace(merged);
-              return merged;
-            }).pipe(
-              Effect.match({
-                onFailure: (error) => ({
-                  sourceId,
-                  status: "failed" as const,
-                  itemCount: 0,
-                  message:
-                    typeof error === "object" && error !== null && "message" in error
-                      ? String(error.message)
-                      : "The Work Hub source could not be synced.",
-                }),
-                onSuccess: (snapshot) => ({
-                  sourceId,
-                  status: "succeeded" as const,
-                  itemCount: snapshot.items.length,
-                  message: null,
-                }),
-              }),
-            );
-          },
-          { concurrency: 2 },
-        );
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.succeed(
-            activity.action.sourceIds.map((sourceId) => ({
-              sourceId,
+      if (activity.action.kind === "agentTurn") {
+        const outcome = yield* launchAgentTurn(
+          activity as AxisScheduledActivity & { readonly action: { readonly kind: "agentTurn" } },
+        ).pipe(
+          Effect.match({
+            onFailure: (error) => ({
               status: "failed" as const,
-              itemCount: 0,
+              threadId: null,
               message:
                 typeof error === "object" && error !== null && "message" in error
                   ? String(error.message)
-                  : "The scheduled activity could not read its Axis context.",
-            })),
+                  : "The scheduled agent work could not be started.",
+            }),
+            onSuccess: (threadId) => ({
+              status: "succeeded" as const,
+              threadId,
+              message: `Started Thread '${threadId}'.`,
+            }),
+          }),
+        );
+        const finishedAt = yield* isoNow;
+        const completed: AxisScheduledActivityRun = {
+          ...running,
+          ...outcome,
+          finishedAt,
+        };
+        yield* store.saveRun(completed);
+        const finishedMs = Date.parse(finishedAt);
+        const nextRunAt =
+          trigger === "manual" && Date.parse(activity.nextRunAt) > finishedMs
+            ? activity.nextRunAt
+            : nextAxisScheduledActivityRunAt(activity.schedule, finishedMs);
+        yield* store.update({
+          ...activity,
+          nextRunAt,
+          lastRunAt: finishedAt,
+          lastRunStatus: outcome.status,
+          lastRunMessage: outcome.message,
+          updatedAt: finishedAt,
+        });
+        return completed;
+      }
+      const sourceIds = activity.action.sourceIds;
+      const sourceResults = yield* Effect.forEach(
+        sourceIds,
+        (sourceId): Effect.Effect<AxisScheduledActivitySourceRun> =>
+          workHubSourceSync.sync(sourceId, trigger).pipe(
+            Effect.match({
+              onFailure: (error) => ({
+                sourceId,
+                status: "failed" as const,
+                itemCount: 0,
+                message:
+                  typeof error === "object" && error !== null && "message" in error
+                    ? String(error.message)
+                    : "The Work Hub source could not be synced.",
+              }),
+              onSuccess: (outcome) => ({
+                sourceId,
+                status:
+                  outcome.status === "skipped" ? ("skipped" as const) : ("succeeded" as const),
+                itemCount: outcome.snapshot.items.length,
+                message:
+                  outcome.status === "skipped"
+                    ? "Cached data is still fresh; Run now forces a sync."
+                    : null,
+              }),
+            }),
           ),
-        ),
+        { concurrency: 2 },
       );
 
       const succeeded = sourceResults.filter((result) => result.status === "succeeded").length;
-      const failed = sourceResults.length - succeeded;
+      const failed = sourceResults.filter((result) => result.status === "failed").length;
+      const skipped = sourceResults.length - succeeded - failed;
       const status =
-        succeeded === sourceResults.length ? "succeeded" : succeeded === 0 ? "failed" : "partial";
+        failed === 0 ? "succeeded" : failed === sourceResults.length ? "failed" : "partial";
       const finishedAt = yield* isoNow;
-      const message = `${succeeded} source${succeeded === 1 ? "" : "s"} synced; ${failed} failed or skipped.`;
+      const message = `${succeeded} source${succeeded === 1 ? "" : "s"} synced; ${skipped} skipped; ${failed} failed.`;
       const completed: AxisScheduledActivityRun = {
         ...running,
         status,
         finishedAt,
         message,
         sourceResults,
+        threadId: null,
       };
       yield* store.saveRun(completed);
       const finishedMs = Date.parse(finishedAt);
@@ -413,6 +517,7 @@ export const make = Effect.gen(function* () {
     listRuns: store.listRuns,
     runNow,
     tick,
+    recoverInterruptedRuns: isoNow.pipe(Effect.flatMap(store.recoverInterruptedRuns)),
   } satisfies AxisScheduledActivityRunner["Service"];
 });
 
@@ -421,6 +526,16 @@ export const layer = Layer.effect(AxisScheduledActivityRunner, make);
 export const schedulerLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const runner = yield* AxisScheduledActivityRunner;
+    yield* runner.recoverInterruptedRuns.pipe(
+      Effect.tap((count) =>
+        count > 0
+          ? Effect.logWarning("Recovered interrupted Axis scheduled activity runs", { count })
+          : Effect.void,
+      ),
+      Effect.catch((error) =>
+        Effect.logError("Failed to recover interrupted Axis scheduled activity runs", { error }),
+      ),
+    );
     yield* runner.tick.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL)), Effect.forkScoped);
   }),
 );
