@@ -143,6 +143,18 @@ export class BackendReadinessTimeoutError extends Schema.TaggedErrorClass<Backen
   }
 }
 
+export class BackendRestartTimeoutError extends Schema.TaggedErrorClass<BackendRestartTimeoutError>()(
+  "BackendRestartTimeoutError",
+  {
+    instanceId: Schema.String,
+    readyTimeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Timed out after ${this.readyTimeoutMs}ms waiting for desktop backend hot restart on instance "${this.instanceId}".`;
+  }
+}
+
 export class BackendProcessBootstrapEncodeError extends Schema.TaggedErrorClass<BackendProcessBootstrapEncodeError>()(
   "BackendProcessBootstrapEncodeError",
   {
@@ -273,6 +285,18 @@ export interface DesktopBackendInstance {
   // ready, false on timeout. Used by the WSL backend swap to drive its
   // rollback path.
   readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
+  // Stops the running child process and re-starts it against whatever
+  // configResolve now returns. This is the in-process equivalent of
+  // rebinding the desktop server (e.g. when the user toggles between
+  // 127.0.0.1 and 0.0.0.0 from the Connections panel) — the renderer
+  // window stays open, the backend's bind host reflects the latest
+  // exposure settings on the next start cycle. When the instance never
+  // reports ready within `readyTimeout`, the effect fails with
+  // BackendRestartTimeoutError so callers can revert the toggle.
+  readonly restart: (options?: {
+    readonly stopTimeout?: Duration.Duration;
+    readonly readyTimeout?: Duration.Duration;
+  }) => Effect.Effect<void, BackendRestartTimeoutError>;
 }
 
 // Spec describing one backend instance to spawn. The configResolve
@@ -1154,6 +1178,48 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
       Effect.map(Option.getOrElse(() => false)),
     );
 
+  // Hot-restart: stop the active child process, force-clear any stale
+  // run slot left behind by a stop-timeout, then start again so the new
+  // child binds against whatever configResolve yields this cycle.
+  // Used by the Connections panel to rebind the server between
+  // loopback and LAN without restarting Electron.
+  const restart = Effect.fn("desktop.backendInstance.restart")(function* (options?: {
+    readonly stopTimeout?: Duration.Duration;
+    readonly readyTimeout?: Duration.Duration;
+  }) {
+    const stopTimeout = options?.stopTimeout ?? Duration.seconds(5);
+    const readyTimeout = options?.readyTimeout ?? Duration.seconds(15);
+
+    yield* stop({ timeout: stopTimeout });
+
+    // If `stop` hit its timeout, the run slot can still hold the
+    // previous ActiveBackendRun, which makes the next `start` no-op at
+    // the `Option.isSome(current.active)` guard. Force-clear here so a
+    // late stop never strands the restart.
+    yield* mutex.withPermits(1)(
+      Ref.update(state, (latest) =>
+        Option.isSome(latest.active)
+          ? {
+              ...latest,
+              active: Option.none<ActiveBackendRun>(),
+              ready: false,
+              restartFiber: Option.none<Fiber.Fiber<void, never>>(),
+            }
+          : latest,
+      ),
+    );
+
+    yield* start;
+
+    const ready = yield* waitForReady(readyTimeout);
+    if (!ready) {
+      return yield* new BackendRestartTimeoutError({
+        instanceId: spec.id,
+        readyTimeoutMs: Duration.toMillis(readyTimeout),
+      });
+    }
+  });
+
   yield* Effect.addFinalizer(() => stop());
 
   return {
@@ -1164,5 +1230,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     currentConfig,
     snapshot,
     waitForReady,
+    restart,
   } satisfies DesktopBackendInstance;
 });

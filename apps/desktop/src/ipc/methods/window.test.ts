@@ -53,6 +53,7 @@ const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
     restartScheduled: false,
   }),
   waitForReady: () => Effect.succeed(true),
+  restart: () => Effect.void,
 };
 
 describe("getLocalEnvironmentBootstraps", () => {

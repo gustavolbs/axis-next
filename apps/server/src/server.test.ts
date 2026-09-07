@@ -105,6 +105,7 @@ import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore
 import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActivityRunner.ts";
 import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
+import { AxisScratchChatRunner } from "./axis/scratch/AxisScratchChatRunner.ts";
 import { AxisWorkHubSourceSync } from "./axis/workHub/AxisWorkHubSourceSync.ts";
 import * as ServerConfig from "./config.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
@@ -552,6 +553,7 @@ const buildAppUnderTest = (options?: {
     axisWorkHubCache?: Partial<AxisWorkHubCacheStore["Service"]>;
     axisScheduledActivities?: Partial<AxisScheduledActivityRunner["Service"]>;
     axisLearning?: Partial<AxisLearningStore["Service"]>;
+    axisScratchChats?: Partial<AxisScratchChatRunner["Service"]>;
     axisWorkHubSourceSync?: Partial<AxisWorkHubSourceSync["Service"]>;
   };
 }) =>
@@ -837,6 +839,17 @@ const buildAppUnderTest = (options?: {
           }),
           Layer.mock(AxisLearningStore)({
             ...options?.layers?.axisLearning,
+          }),
+          Layer.mock(AxisScratchChatRunner)({
+            list: () => Effect.succeed([] as ReadonlyArray<never>),
+            create: () => Effect.die("Scratch chat create is not stubbed in this test"),
+            patch: () => Effect.die("Scratch chat patch is not stubbed in this test"),
+            archive: () => Effect.die("Scratch chat archive is not stubbed in this test"),
+            remove: () => Effect.die("Scratch chat remove is not stubbed in this test"),
+            get: () => Effect.die("Scratch chat get is not stubbed in this test"),
+            sendMessage: () => Effect.die("Scratch chat sendMessage is not stubbed in this test"),
+            subscribe: () => Effect.die("Scratch chat subscribe is not stubbed in this test"),
+            ...options?.layers?.axisScratchChats,
           }),
           Layer.mock(AxisWorkHubSourceSync)({
             sync: () => Effect.die("Work Hub source sync is not stubbed in this test"),

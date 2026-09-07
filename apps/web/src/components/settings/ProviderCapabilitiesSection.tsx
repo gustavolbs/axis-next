@@ -24,6 +24,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import {
   removeAxisProviderCapability,
@@ -136,13 +137,15 @@ export function ProviderCapabilitiesSection({
 
   const publishMcpToWorkHub = async (name: string, enabled: boolean) => {
     const snapshot = axisQuery.data;
-    if (
-      !snapshot ||
-      axisEnvironmentId === null ||
-      publishingMcp !== null ||
-      savingCapabilityId !== null
-    )
+    if (!snapshot || axisEnvironmentId === null) {
+      toastManager.add({
+        type: "error",
+        title: `Could not add ${name}`,
+        description: "Axis is not ready yet. Refresh the page and try again.",
+      });
       return;
+    }
+    if (publishingMcp !== null || savingCapabilityId !== null) return;
     const now = new Date().toISOString();
     setPublishingMcp(name);
     const result = await replaceCatalog({
@@ -172,7 +175,8 @@ export function ProviderCapabilitiesSection({
       axisQuery.refresh();
       toastManager.add({
         type: "success",
-        title: `${name} is available in Work Hub source settings`,
+        title: `${name} added to Axis`,
+        description: "Open the Work Hub source settings to enable collection for a context.",
       });
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -376,7 +380,7 @@ export function ProviderCapabilitiesSection({
           />
         ) : (
           <div className="divide-y divide-border/50">
-            <div className="hidden grid-cols-[minmax(12rem,1fr)_8rem_9rem_11rem_auto] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid">
+            <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,6rem)_minmax(0,8rem)_minmax(0,9rem)_minmax(0,8rem)] gap-3 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid">
               <span>Connector</span>
               <span>Type</span>
               <span>Scope</span>
@@ -388,7 +392,7 @@ export function ProviderCapabilitiesSection({
               return (
                 <div
                   key={`${server.scope ?? "provider"}:${server.name}`}
-                  className="grid items-center gap-2 px-3 py-3 lg:grid-cols-[minmax(12rem,1fr)_8rem_9rem_11rem_auto] lg:gap-3 lg:px-4"
+                  className="grid items-center gap-2 px-3 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,6rem)_minmax(0,8rem)_minmax(0,9rem)_minmax(0,8rem)] lg:gap-3 lg:px-4"
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">{server.name}</span>
@@ -413,27 +417,35 @@ export function ProviderCapabilitiesSection({
                   {capability ? (
                     capabilityControls(capability)
                   ) : (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      disabled={
-                        !axisSupported ||
-                        !providerIsAssigned ||
-                        publishingMcp !== null ||
-                        savingCapabilityId !== null
-                      }
-                      title={
-                        !axisSupported
-                          ? "Update the primary environment to enable Axis."
-                          : providerIsAssigned
-                            ? undefined
-                            : "Assign this provider in Axis first."
-                      }
-                      onClick={() => void publishMcpToWorkHub(server.name, server.enabled)}
-                    >
-                      {publishingMcp === server.name ? "Adding…" : "Add"}
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            disabled={
+                              !axisSupported ||
+                              !providerIsAssigned ||
+                              publishingMcp !== null ||
+                              savingCapabilityId !== null
+                            }
+                            onClick={() => void publishMcpToWorkHub(server.name, server.enabled)}
+                          >
+                            {publishingMcp === server.name ? "Adding…" : "Add"}
+                          </Button>
+                        }
+                      />
+                      <TooltipPopup side="left">
+                        {!axisSupported
+                          ? "Axis is not enabled on the primary environment. Open Axis settings to enable it."
+                          : !providerIsAssigned
+                            ? "Assign this provider to an Axis context first."
+                            : publishingMcp !== null || savingCapabilityId !== null
+                              ? "Wait for the current save to finish."
+                              : "Add this MCP to Axis as a capability."}
+                      </TooltipPopup>
+                    </Tooltip>
                   )}
                 </div>
               );

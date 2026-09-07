@@ -190,7 +190,7 @@ describe("DesktopServerExposure", () => {
         yield* serverExposure.configureFromSettings({ port: 4173 });
 
         const change = yield* serverExposure.setMode("network-accessible");
-        assert.equal(change.requiresRelaunch, true);
+        assert.equal(change.requiresBackendRestart, true);
         assert.deepEqual(change.state, {
           mode: "network-accessible",
           endpointUrl: "http://192.168.1.20:4173",
@@ -202,6 +202,48 @@ describe("DesktopServerExposure", () => {
         const backendConfig = yield* serverExposure.backendConfig;
         assert.equal(backendConfig.bindHost, "0.0.0.0");
         assert.equal(backendConfig.httpBaseUrl.href, "http://127.0.0.1:4173/");
+
+        const persisted = yield* settings.get;
+        assert.equal(persisted.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
+  it.effect("flipping mode flips requiresBackendRestart exactly when bind changes", () =>
+    withHarness(
+      lanNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        // First flip from default local-only → network-accessible requires a restart
+        // and immediately exposes the new bindHost on the config surface.
+        const firstFlip = yield* serverExposure.setMode("network-accessible");
+        assert.equal(firstFlip.requiresBackendRestart, true);
+        assert.equal(firstFlip.state.mode, "network-accessible");
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "0.0.0.0");
+
+        // Re-applying the same mode is a no-op; bindHost does not need to be re-read
+        // by the backend because it is unchanged.
+        const noOp = yield* serverExposure.setMode("network-accessible");
+        assert.equal(noOp.requiresBackendRestart, false);
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "0.0.0.0");
+
+        // Flipping back to local-only changes bindHost again, so the IPC layer must
+        // restart the backend. bindHost on the in-memory config flips immediately,
+        // before any restart has actually completed.
+        const flipBack = yield* serverExposure.setMode("local-only");
+        assert.equal(flipBack.requiresBackendRestart, true);
+        assert.equal(flipBack.state.mode, "local-only");
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "127.0.0.1");
+
+        // Final flip back on: bind changes again, restart required.
+        const flipOn = yield* serverExposure.setMode("network-accessible");
+        assert.equal(flipOn.requiresBackendRestart, true);
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "0.0.0.0");
 
         const persisted = yield* settings.get;
         assert.equal(persisted.serverExposureMode, "network-accessible");
@@ -223,7 +265,7 @@ describe("DesktopServerExposure", () => {
           enabled: true,
           port: 8443,
         });
-        assert.equal(changed.requiresRelaunch, true);
+        assert.equal(changed.requiresBackendRestart, true);
         assert.equal(changed.state.tailscaleServeEnabled, true);
         assert.equal(changed.state.tailscaleServePort, 8443);
 
@@ -231,7 +273,7 @@ describe("DesktopServerExposure", () => {
           enabled: true,
           port: 8443,
         });
-        assert.equal(unchanged.requiresRelaunch, false);
+        assert.equal(unchanged.requiresBackendRestart, false);
 
         const persisted = yield* settings.get;
         assert.equal(persisted.tailscaleServeEnabled, true);

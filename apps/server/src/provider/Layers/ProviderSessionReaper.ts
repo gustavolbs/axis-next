@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -16,6 +17,7 @@ import { ProviderService } from "../Services/ProviderService.ts";
 
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
 const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+const hasActiveProviderTurn = Schema.is(Schema.Struct({ activeTurnId: Schema.String }));
 
 export interface ProviderSessionReaperLiveOptions {
   readonly inactivityThresholdMs?: number;
@@ -62,10 +64,13 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
         const thread = yield* projectionSnapshotQuery
           .getThreadShellById(binding.threadId)
           .pipe(Effect.map(Option.getOrUndefined));
-        if (thread?.session?.activeTurnId != null) {
+        if (
+          thread?.session?.activeTurnId != null ||
+          (thread === undefined && hasActiveProviderTurn(binding.runtimePayload))
+        ) {
           yield* Effect.logDebug("provider.session.reaper.skipped-active-turn", {
             threadId: binding.threadId,
-            activeTurnId: thread.session.activeTurnId,
+            activeTurnId: thread?.session?.activeTurnId,
             idleDurationMs,
           });
           continue;

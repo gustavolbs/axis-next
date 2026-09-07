@@ -264,7 +264,13 @@ export interface DesktopServerExposureBackendConfig {
 
 export interface DesktopServerExposureChange {
   readonly state: DesktopServerExposureState;
-  readonly requiresRelaunch: boolean;
+  // True when the persisted exposure settings (or any other value the
+  // backend needs to pick up) changed in a way that requires the
+  // backend's child process to be (hot-)restarted. The IPC handler is
+  // responsible for performing that restart; the field name reflects
+  // the desktop-bound semantics, not an Electron-process relaunch
+  // (the renderer window must survive).
+  readonly requiresBackendRestart: boolean;
 }
 
 export class DesktopServerExposure extends Context.Service<
@@ -399,7 +405,7 @@ function resolveRuntimeState(input: {
   };
 }
 
-const requiresBackendRelaunch = (previous: RuntimeState, next: RuntimeState): boolean =>
+const requiresBackendRestart = (previous: RuntimeState, next: RuntimeState): boolean =>
   previous.port !== next.port ||
   previous.bindHost !== next.bindHost ||
   previous.localHttpUrl !== next.localHttpUrl;
@@ -482,7 +488,7 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(stateRef, resolved.state);
     return {
       state: toContractState(resolved.state),
-      requiresRelaunch: change.changed || requiresBackendRelaunch(previous, resolved.state),
+      requiresBackendRestart: change.changed || requiresBackendRestart(previous, resolved.state),
     };
   });
 
@@ -516,7 +522,7 @@ export const make = Effect.gen(function* () {
 
       return {
         state: toContractState(nextState),
-        requiresRelaunch: result.changed,
+        requiresBackendRestart: result.changed,
       };
     },
   );

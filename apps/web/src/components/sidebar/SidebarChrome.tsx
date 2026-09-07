@@ -3,6 +3,7 @@ import {
   BriefcaseBusinessIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
+  MessageSquareIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -148,7 +149,9 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               ? "work-hub"
               : location.pathname === "/pull-requests"
                 ? "pull-requests"
-                : null,
+                : /^\/scratch(?:\/|$)/.test(location.pathname)
+                  ? "scratch"
+                  : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
@@ -185,6 +188,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/work-hub" });
   }, [closeMobileSidebar, navigate]);
 
+  const handleScratchClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/scratch" });
+  }, [closeMobileSidebar, navigate]);
+
   const handleBackClick = useCallback(() => {
     closeMobileSidebar();
     if (canGoBack) {
@@ -209,6 +217,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<BriefcaseBusinessIcon />}
             label="Work Hub"
             onClick={handleWorkHubClick}
+          />
+          <SidebarUtilityItem
+            icon={<MessageSquareIcon />}
+            label="Chats"
+            onClick={handleScratchClick}
           />
           <SidebarUtilityItem
             icon={<SettingsIcon />}

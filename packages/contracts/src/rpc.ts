@@ -41,6 +41,22 @@ import {
   AxisLearningVersionActionInput,
 } from "./axisLearning.ts";
 import {
+  AxisScratchChat,
+  AxisScratchChatArchiveInput,
+  AxisScratchChatCreateInput,
+  AxisScratchChatError,
+  AxisScratchChatGetInput,
+  AxisScratchChatListInput,
+  AxisScratchChatMessage,
+  AxisScratchChatPersistenceError,
+  AxisScratchChatRemoveInput,
+  AxisScratchChatSendMessageInput,
+  AxisScratchChatSnapshot,
+  AxisScratchChatStreamEvent,
+  AxisScratchChatSubscribeInput,
+  AxisScratchChatPatchInput,
+} from "./axisScratchChat.ts";
+import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
   ProviderAuthState,
@@ -386,6 +402,17 @@ export const WS_METHODS = {
   axisLearningActivateVersion: "axis.learning.activateVersion",
   axisLearningRollbackVersion: "axis.learning.rollbackVersion",
 
+  // Axis scratch chats (project-less conversations)
+  axisScratchChatsList: "axis.scratchChats.list",
+  axisScratchChatsGet: "axis.scratchChats.get",
+  axisScratchChatsCreate: "axis.scratchChats.create",
+  axisScratchChatsPatch: "axis.scratchChats.patch",
+  axisScratchChatsArchive: "axis.scratchChats.archive",
+  axisScratchChatsRemove: "axis.scratchChats.remove",
+  axisScratchChatsSendMessage: "axis.scratchChats.sendMessage",
+  axisScratchChatsInterrupt: "axis.scratchChats.interrupt",
+  axisScratchChatsSubscribe: "axis.scratchChats.subscribe",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -704,6 +731,60 @@ export const WsAxisLearningRollbackVersionRpc = Rpc.make(WS_METHODS.axisLearning
   payload: AxisLearningVersionActionInput,
   success: AxisLearningActiveVersion,
   error: AxisLearningRpcError,
+});
+
+const AxisScratchChatRpcError = Schema.Union([
+  AxisScratchChatError,
+  AxisScratchChatPersistenceError,
+  OrchestrationDispatchCommandError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsAxisScratchChatsListRpc = Rpc.make(WS_METHODS.axisScratchChatsList, {
+  payload: AxisScratchChatListInput,
+  success: Schema.Array(AxisScratchChat),
+  error: AxisScratchChatRpcError,
+});
+export const WsAxisScratchChatsGetRpc = Rpc.make(WS_METHODS.axisScratchChatsGet, {
+  payload: AxisScratchChatGetInput,
+  success: AxisScratchChatSnapshot,
+  error: AxisScratchChatRpcError,
+});
+export const WsAxisScratchChatsCreateRpc = Rpc.make(WS_METHODS.axisScratchChatsCreate, {
+  payload: AxisScratchChatCreateInput,
+  success: AxisScratchChat,
+  error: AxisScratchChatRpcError,
+});
+export const WsAxisScratchChatsPatchRpc = Rpc.make(WS_METHODS.axisScratchChatsPatch, {
+  payload: AxisScratchChatPatchInput,
+  success: AxisScratchChat,
+  error: AxisScratchChatRpcError,
+});
+export const WsAxisScratchChatsArchiveRpc = Rpc.make(WS_METHODS.axisScratchChatsArchive, {
+  payload: AxisScratchChatArchiveInput,
+  success: AxisScratchChat,
+  error: AxisScratchChatRpcError,
+});
+export const WsAxisScratchChatsRemoveRpc = Rpc.make(WS_METHODS.axisScratchChatsRemove, {
+  payload: AxisScratchChatRemoveInput,
+  success: Schema.Void,
+  error: AxisScratchChatRpcError,
+});
+export const WsAxisScratchChatsSendMessageRpc = Rpc.make(WS_METHODS.axisScratchChatsSendMessage, {
+  payload: AxisScratchChatSendMessageInput,
+  success: AxisScratchChatMessage,
+  error: AxisScratchChatRpcError,
+});
+export const WsAxisScratchChatsSubscribeRpc = Rpc.make(WS_METHODS.axisScratchChatsSubscribe, {
+  payload: AxisScratchChatSubscribeInput,
+  success: AxisScratchChatStreamEvent,
+  error: AxisScratchChatRpcError,
+  stream: true,
+});
+export const WsAxisScratchChatsInterruptRpc = Rpc.make(WS_METHODS.axisScratchChatsInterrupt, {
+  payload: AxisScratchChatRemoveInput,
+  success: Schema.Void,
+  error: AxisScratchChatRpcError,
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1409,6 +1490,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsAxisLearningRejectProposalRpc,
   WsAxisLearningActivateVersionRpc,
   WsAxisLearningRollbackVersionRpc,
+  WsAxisScratchChatsListRpc,
+  WsAxisScratchChatsGetRpc,
+  WsAxisScratchChatsCreateRpc,
+  WsAxisScratchChatsPatchRpc,
+  WsAxisScratchChatsArchiveRpc,
+  WsAxisScratchChatsRemoveRpc,
+  WsAxisScratchChatsSendMessageRpc,
+  WsAxisScratchChatsInterruptRpc,
+  WsAxisScratchChatsSubscribeRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

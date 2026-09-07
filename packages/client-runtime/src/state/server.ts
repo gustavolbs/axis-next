@@ -48,6 +48,7 @@ import {
   type ServerConfigProjection,
   withoutEnvironmentThemes,
 } from "./serverConfigProjection.ts";
+import { applyScratchChatEvent } from "./axisScratchChat.ts";
 
 // Exported server state includes this type in its inferred public return type.
 export type { ServerConfigProjection } from "./serverConfigProjection.ts";
@@ -1036,6 +1037,46 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:axis:scheduled-activity-runs",
       tag: WS_METHODS.axisScheduledActivitiesListRuns,
       staleTimeMs: 5_000,
+    }),
+    axisScratchChats: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:scratch-chats",
+      tag: WS_METHODS.axisScratchChatsList,
+      staleTimeMs: 5_000,
+    }),
+    createAxisScratchChat: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:create-scratch-chat",
+      tag: WS_METHODS.axisScratchChatsCreate,
+    }),
+    patchAxisScratchChat: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:patch-scratch-chat",
+      tag: WS_METHODS.axisScratchChatsPatch,
+    }),
+    archiveAxisScratchChat: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:archive-scratch-chat",
+      tag: WS_METHODS.axisScratchChatsArchive,
+    }),
+    removeAxisScratchChat: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:remove-scratch-chat",
+      tag: WS_METHODS.axisScratchChatsRemove,
+    }),
+    sendAxisScratchChatMessage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:send-scratch-chat-message",
+      tag: WS_METHODS.axisScratchChatsSendMessage,
+    }),
+    interruptAxisScratchChat: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:interrupt-scratch-chat",
+      tag: WS_METHODS.axisScratchChatsInterrupt,
+    }),
+    axisScratchChatSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:scratch-chat-snapshot",
+      tag: WS_METHODS.axisScratchChatsGet,
+      staleTimeMs: 5_000,
+    }),
+    axisScratchChatStream: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:axis:scratch-chat-stream",
+      tag: WS_METHODS.axisScratchChatsSubscribe,
+      idleTtlMs: 0,
+      transform: (stream) => stream.pipe(Stream.scan(null, applyScratchChatEvent)),
     }),
     axisLearningSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:axis:learning-snapshot",

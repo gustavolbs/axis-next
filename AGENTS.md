@@ -112,6 +112,32 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 
 ## Pull requests
 
+### Mandatory Axis release metadata
+
+Every change intended for `main` must include one new stable SemVer version in the root
+`package.json` and a matching top entry in `CHANGELOG.md`, dated `YYYY-MM-DD`:
+`## [0.0.39] - 2026-09-07`. This includes code, UI, CI, docs, tests, dependencies, and maintenance.
+Use PATCH for fixes and maintenance, MINOR for new capabilities, and MAJOR for intentional breaking
+changes. Normally use one bump per logical branch/PR. If main consumes that version first, update
+the branch and choose the next available version. Never reuse a published version or edit released
+changelog sections unless the user explicitly requests a factual correction.
+
+After editing the root version, run `node scripts/update-release-package-versions.ts <version>`
+to align server, desktop, web, and contracts. Mobile store versions have their own release flow.
+Write concise product/operational notes under Added, Changed, Fixed, Removed, or Security.
+Before finishing, run `vp run release:validate` plus the focused checks required by Verifying above.
+PR CI requires a version greater than the base branch version.
+
+On main, `.github/workflows/release-axis-macos.yml` validates metadata, rejects existing tags/releases,
+waits for CI, builds and signs Intel and Apple Silicon artifacts, verifies certificate-pinned
+signatures, and publishes `v<version>` with changelog notes, DMG/ZIP, updater metadata, and checksums.
+Do not manually create tags/releases or modify published artifacts except for explicitly requested
+recovery work. Never regenerate, rotate, rename, or replace the stable `Axis Code Signing`
+certificate during ordinary work; it is part of the installed app's update trust chain.
+See [Axis releases](docs/axis/RELEASE.md) for signing setup and recovery.
+
+### PR conventions
+
 - Never make a PR unless the developer explicitly asks you to do so.
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.

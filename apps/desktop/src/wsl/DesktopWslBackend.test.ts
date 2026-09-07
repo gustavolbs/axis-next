@@ -31,6 +31,10 @@ function makeStubInstance(input: {
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
     snapshot: Effect.succeed(input.snapshot),
     waitForReady: (_timeout: Duration.Duration) => Effect.succeed(false),
+    restart: (_options?: {
+      readonly stopTimeout?: Duration.Duration;
+      readonly readyTimeout?: Duration.Duration;
+    }) => Effect.void,
   };
 }
 
@@ -110,6 +114,7 @@ describe("DesktopWslBackend", () => {
           return wsl;
         }),
       unregister: () => Effect.die("unexpected unregister"),
+      restart: () => Effect.void,
     } satisfies DesktopBackendPool.DesktopBackendPool["Service"]);
 
     return Effect.gen(function* () {

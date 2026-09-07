@@ -38,6 +38,10 @@ function makeStubInstance(
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
     snapshot: Effect.succeed(snapshot),
     waitForReady: (_timeout: Duration.Duration) => Effect.succeed(false),
+    restart: (_options?: {
+      readonly stopTimeout?: Duration.Duration;
+      readonly readyTimeout?: Duration.Duration;
+    }) => Effect.void,
   };
 }
 
@@ -154,5 +158,43 @@ describe("DesktopBackendPool", () => {
         assert.equal(yield* primary.label, "WSL (Ubuntu)");
       }),
     ),
+  );
+
+  it.effect("pool.restart delegates to the active instance's restart method", () =>
+    Effect.gen(function* () {
+      let restartCalls = 0;
+      let receivedStopTimeout: Duration.Duration | undefined;
+      let receivedReadyTimeout: Duration.Duration | undefined;
+      const pool = DesktopBackendPool.DesktopBackendPool.of({
+        get: () => Effect.succeed(Option.none()),
+        list: Effect.succeed([]),
+        primary: Effect.die("unexpected primary access"),
+        register: () => Effect.die("unexpected pool.register"),
+        unregister: () => Effect.die("unexpected pool.unregister"),
+        restart: (id, options) =>
+          Effect.sync(() => {
+            restartCalls += 1;
+            assert.equal(id, DesktopBackendPool.PRIMARY_INSTANCE_ID);
+            receivedStopTimeout = options?.stopTimeout;
+            receivedReadyTimeout = options?.readyTimeout;
+          }),
+      });
+
+      yield* Effect.provideService(
+        Effect.gen(function* () {
+          const resolvedPool = yield* DesktopBackendPool.DesktopBackendPool;
+          yield* resolvedPool.restart(DesktopBackendPool.PRIMARY_INSTANCE_ID, {
+            stopTimeout: Duration.seconds(5),
+            readyTimeout: Duration.seconds(15),
+          });
+        }),
+        DesktopBackendPool.DesktopBackendPool,
+        pool,
+      );
+
+      assert.equal(restartCalls, 1);
+      assert.equal(Duration.toMillis(receivedStopTimeout!), 5_000);
+      assert.equal(Duration.toMillis(receivedReadyTimeout!), 15_000);
+    }),
   );
 });

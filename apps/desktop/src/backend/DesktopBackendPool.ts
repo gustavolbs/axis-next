@@ -81,6 +81,7 @@
 
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -168,6 +169,21 @@ export class DesktopBackendPool extends Context.Service<
     readonly unregister: (
       id: BackendInstanceId,
     ) => Effect.Effect<void, DesktopBackendPoolCannotUnregisterPrimaryError>;
+    // Hot-restart the named instance without killing the Electron main
+    // process. The instance's child backend process is stopped, its
+    // configResolve is re-evaluated, and a new child is spawned against
+    // the resulting config. Used by the Connections panel to rebind
+    // the server between loopback and LAN in response to the user's
+    // exposure toggle, without dropping the renderer window. Fails
+    // with BackendRestartTimeoutError when the new child never reports
+    // ready within `readyTimeout`.
+    readonly restart: (
+      id: BackendInstanceId,
+      options?: {
+        readonly stopTimeout?: Duration.Duration;
+        readonly readyTimeout?: Duration.Duration;
+      },
+    ) => Effect.Effect<void, DesktopBackendManager.BackendRestartTimeoutError>;
   }
 >()("@t3tools/desktop/backend/DesktopBackendPool") {}
 
@@ -439,6 +455,16 @@ export const layer = Layer.effect(
       primary: Effect.succeed(primary),
       register,
       unregister,
+      restart: (id, options) =>
+        SynchronizedRef.get(instancesRef).pipe(
+          Effect.flatMap((instances) => {
+            const entry = instances.get(id);
+            if (entry?._tag !== "Active") {
+              return Effect.die(`Cannot hot-restart unknown backend instance "${id}".`);
+            }
+            return entry.instance.restart(options);
+          }),
+        ),
     });
   }),
 );
@@ -469,6 +495,15 @@ export const layerTest = (
         primary: Effect.succeed(primary),
         register: () => Effect.die("DesktopBackendPool.layerTest does not support register"),
         unregister: () => Effect.die("DesktopBackendPool.layerTest does not support unregister"),
+        restart: (id, options) => {
+          const instance = byId.get(id);
+          if (instance === undefined) {
+            return Effect.die(
+              `DesktopBackendPool.layerTest cannot restart unknown backend instance "${id}".`,
+            );
+          }
+          return instance.restart(options);
+        },
       });
     }),
   );

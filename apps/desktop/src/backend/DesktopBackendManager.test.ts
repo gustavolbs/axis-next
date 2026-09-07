@@ -1054,6 +1054,95 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
+  it.effect(
+    "restart stops the child, re-resolves config, and starts against the new bindHost",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const starts = yield* Queue.unbounded<number>();
+          const startCounter = yield* Ref.make(0);
+          const teardownStarted = yield* Deferred.make<void>();
+          const finishTeardown = yield* Deferred.make<void>();
+          const bindHosts = yield* Ref.make<Array<string>>([]);
+          let startCount = 0;
+
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) =>
+              Effect.gen(function* () {
+                const scope = yield* Scope.Scope;
+                const closed = yield* Deferred.make<void>();
+                startCount += 1;
+                yield* Queue.offer(starts, startCount);
+                if (startCount === 1) {
+                  yield* Scope.addFinalizer(
+                    scope,
+                    Deferred.succeed(teardownStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(finishTeardown)),
+                      Effect.andThen(Deferred.succeed(closed, undefined)),
+                      Effect.asVoid,
+                    ),
+                  );
+                } else {
+                  yield* Scope.addFinalizer(
+                    scope,
+                    Deferred.succeed(closed, undefined).pipe(Effect.asVoid),
+                  );
+                }
+                if (command._tag === "StandardCommand") {
+                  const fd3 = command.options.additionalFds?.fd3;
+                  if (fd3?.type === "input" && fd3.stream) {
+                    const json = yield* fd3.stream.pipe(Stream.decodeText(), Stream.mkString);
+                    const parsed = yield* decodeBootstrap(json).pipe(
+                      Effect.orElseSucceed(() => null),
+                    );
+                    if (parsed) {
+                      yield* Ref.update(bindHosts, (current) => [...current, parsed.host]);
+                    }
+                  }
+                }
+                return makeProcess({
+                  exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+                });
+              }),
+            ),
+          );
+
+          const configResolve = Ref.getAndUpdate(startCounter, (n) => n + 1).pipe(
+            Effect.flatMap((attempt) =>
+              attempt >= 1
+                ? Effect.succeed({
+                    ...baseConfig,
+                    bootstrap: { ...baseConfig.bootstrap, host: "0.0.0.0" },
+                  })
+                : Effect.succeed(baseConfig),
+            ),
+          );
+
+          const instance = yield* makeTestInstance({
+            spawnerLayer,
+            configResolve,
+            httpClientLayer: httpClientLayer(() => Effect.never),
+          });
+
+          // First start uses loopback bind (host: "127.0.0.1").
+          yield* instance.start;
+          assert.equal(yield* Queue.take(starts), 1);
+          yield* TestClock.adjust(Duration.millis(50));
+
+          // Hot-restart: stop in progress, finish teardown, second start uses
+          // the new bind from the updated exposure.
+          yield* instance.restart().pipe(Effect.forkChild);
+          yield* Deferred.await(teardownStarted).pipe(Effect.timeout("1 second"));
+          yield* Deferred.succeed(finishTeardown, undefined);
+          yield* TestClock.adjust(Duration.millis(50));
+
+          assert.equal(yield* Queue.take(starts).pipe(Effect.timeout("1 second")), 2);
+          assert.deepEqual(yield* Ref.get(bindHosts), ["127.0.0.1", "0.0.0.0"]);
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
+  );
+
   it.effect("keeps a timed-out run active until its process exits", () =>
     Effect.scoped(
       Effect.gen(function* () {

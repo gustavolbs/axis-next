@@ -153,6 +153,7 @@ import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActiv
 import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
 import { AxisWorkHubSourceSync } from "./axis/workHub/AxisWorkHubSourceSync.ts";
 import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
+import { AxisScratchChatRunner } from "./axis/scratch/AxisScratchChatRunner.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -529,11 +530,14 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const serverEnv = yield* ServerEnvironment.ServerEnvironment;
       const axisContextCatalog = yield* AxisContextCatalogStore;
       const axisWorkHubCache = yield* AxisWorkHubCacheStore;
       const axisWorkHubSourceSync = yield* AxisWorkHubSourceSync;
       const axisScheduledActivities = yield* AxisScheduledActivityRunner;
       const axisLearning = yield* AxisLearningStore;
+      const axisScratchChats = yield* AxisScratchChatRunner;
+      const serverEnvironmentId = serverEnv.getEnvironmentId;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2141,6 +2145,60 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.axisLearningRollbackVersion,
             learningReviewInput().pipe(Effect.flatMap((input) => axisLearning.rollback(id, input))),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisScratchChatsList]: ({ includeArchived }) =>
+          observeRpcEffect(
+            WS_METHODS.axisScratchChatsList,
+            serverEnvironmentId.pipe(
+              Effect.flatMap((environmentId) =>
+                axisScratchChats.list({ environmentId, includeArchived }),
+              ),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisScratchChatsGet]: (input) =>
+          observeRpcEffect(WS_METHODS.axisScratchChatsGet, axisScratchChats.get(input), {
+            "rpc.aggregate": "axis",
+          }),
+        [WS_METHODS.axisScratchChatsCreate]: ({ draft }) =>
+          observeRpcEffect(
+            WS_METHODS.axisScratchChatsCreate,
+            serverEnvironmentId.pipe(
+              Effect.flatMap((environmentId) => axisScratchChats.create({ draft, environmentId })),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisScratchChatsPatch]: (input) =>
+          observeRpcEffect(WS_METHODS.axisScratchChatsPatch, axisScratchChats.patch(input), {
+            "rpc.aggregate": "axis",
+          }),
+        [WS_METHODS.axisScratchChatsArchive]: (input) =>
+          observeRpcEffect(WS_METHODS.axisScratchChatsArchive, axisScratchChats.archive(input), {
+            "rpc.aggregate": "axis",
+          }),
+        [WS_METHODS.axisScratchChatsRemove]: (input) =>
+          observeRpcEffect(WS_METHODS.axisScratchChatsRemove, axisScratchChats.remove(input), {
+            "rpc.aggregate": "axis",
+          }),
+        [WS_METHODS.axisScratchChatsSendMessage]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisScratchChatsSendMessage,
+            axisScratchChats.sendMessage(input),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisScratchChatsInterrupt]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisScratchChatsInterrupt,
+            axisScratchChats.interrupt(input),
+            {
+              "rpc.aggregate": "axis",
+            },
+          ),
+        [WS_METHODS.axisScratchChatsSubscribe]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.axisScratchChatsSubscribe,
+            axisScratchChats.subscribe(input),
             { "rpc.aggregate": "axis" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
