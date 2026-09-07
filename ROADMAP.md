@@ -64,6 +64,29 @@ place. “Partial” means useful infrastructure exists, but the user outcome is
 - [ ] Extend the API-key preset UX to additional compatible provider drivers when their adapters
       define a supported environment variable and isolation strategy.
 
+### Priority P0 — RouteMux fallback provider
+
+RouteMux is the next provider to implement because it will be the user's emergency capacity
+fallback when a subscription provider reaches its quota or rate limit. It must remain an ordinary
+provider instance from Axis's perspective, while participating in the same explicit billing and
+context-isolation rules as API-key providers.
+
+- [ ] Add a RouteMux provider adapter/preset with isolated credentials, home, model selection, and
+      provider-instance metadata.
+- [ ] Support adding a RouteMux API key through the environment secret store; never expose the key
+      to clients, logs, Threads, or Work Hub records.
+- [ ] Surface RouteMux as an explicitly **API billed** provider and require confirmation before it
+      can be selected as an automatic fallback.
+- [ ] Add RouteMux to the primary → fallback graph, with one-attempt quota-only failover,
+      idempotency, cancellation, and protection against duplicate tool/file/source-system writes.
+- [ ] Preserve the original context, Project, Thread, MCP/skill grants, and audit trail when a Turn
+      is routed through RouteMux; do not leak Personal or Company data across contexts.
+- [ ] Normalize RouteMux quota, rate-limit, authentication, model, and upstream errors into the
+      provider error taxonomy and expose actionable UI state.
+- [ ] Add manual “Use RouteMux now” selection independently of automatic fallback.
+- [ ] Add focused adapter, contract, fallback, secret-redaction, and remote/relay tests before
+      enabling RouteMux in the default provider picker.
+
 ## Provider-owned MCPs, skills, instructions, and preferences
 
 - [x] Model capabilities as provider-owned rather than Company-owned.
