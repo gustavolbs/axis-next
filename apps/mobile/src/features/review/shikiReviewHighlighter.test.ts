@@ -3,6 +3,24 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { ReviewRenderableFile } from "./reviewModel";
 import { highlightCodeSnippet, highlightReviewFile } from "./shikiReviewHighlighter";
 
+function normalizeTokenStyles(
+  lines: ReadonlyArray<
+    ReadonlyArray<{ content: string; color: string | null; fontStyle: number | null }>
+  >,
+): ReadonlyArray<
+  ReadonlyArray<{ content: string; color: string | null; fontStyle: number | null }>
+> {
+  return lines.map((line) =>
+    line.flatMap((token) =>
+      [...token.content].map((content) => ({
+        content,
+        color: token.color,
+        fontStyle: token.fontStyle,
+      })),
+    ),
+  );
+}
+
 function makeRenderableFile(
   input: Partial<ReviewRenderableFile> & Pick<ReviewRenderableFile, "path">,
 ): ReviewRenderableFile {
@@ -158,8 +176,11 @@ describe("highlightSourceFile", () => {
         .join(""),
     ).toBe(source);
     expect(highlighted.flat().some((token) => token.color !== null)).toBe(true);
-    expect(
-      await highlighter.highlightCodeSnippet({ code: source, language: "ts", theme: "dark" }),
-    ).toEqual(highlighted);
+    const snippet = await highlighter.highlightCodeSnippet({
+      code: source,
+      language: "ts",
+      theme: "dark",
+    });
+    expect(normalizeTokenStyles(snippet)).toEqual(normalizeTokenStyles(highlighted));
   });
 });

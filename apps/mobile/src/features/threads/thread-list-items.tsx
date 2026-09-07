@@ -94,8 +94,9 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   /** Project a quick new thread should target; null hides the button. */
   readonly newThreadTarget?: EnvironmentProject | null;
   readonly onNewThread?: (project: EnvironmentProject) => void;
+  readonly onNewStandaloneThread?: () => void;
 }) {
-  const { groupKey, onGroupAction, onNewThread } = props;
+  const { groupKey, onGroupAction, onNewThread, onNewStandaloneThread } = props;
   const newThreadTarget = props.newThreadTarget ?? null;
   const compact = props.variant === "compact";
   const handleToggle = useCallback(
@@ -105,9 +106,13 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   const handleNewThread = useCallback(() => {
     if (newThreadTarget) {
       onNewThread?.(newThreadTarget);
+    } else {
+      onNewStandaloneThread?.();
     }
-  }, [newThreadTarget, onNewThread]);
-  const showNewThreadButton = onNewThread !== undefined && newThreadTarget !== null;
+  }, [newThreadTarget, onNewStandaloneThread, onNewThread]);
+  const showNewThreadButton =
+    (onNewThread !== undefined && newThreadTarget !== null) ||
+    (props.groupKey === "standalone-chats" && onNewStandaloneThread !== undefined);
 
   // The new-thread button is a SIBLING of the collapse toggle, not a child:
   // nested touchables are unreachable to VoiceOver/TalkBack (the parent
@@ -171,7 +176,11 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       </Pressable>
       {showNewThreadButton ? (
         <Pressable
-          accessibilityLabel={`Create new thread in ${props.title}`}
+          accessibilityLabel={
+            props.groupKey === "standalone-chats"
+              ? "Create new chat"
+              : `Create new thread in ${props.title}`
+          }
           accessibilityRole="button"
           hitSlop={{ ...verticalHitSlop, left: 10, right: 14 }}
           onPress={handleNewThread}

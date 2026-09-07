@@ -22,6 +22,7 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { getProjectScopeSelectionTarget } from "./new-task-project-selection";
+import { useNewStandaloneThread } from "./use-new-standalone-thread";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
@@ -91,6 +92,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const { layout } = useAdaptiveWorkspaceLayout();
   const insets = useSafeAreaInsets();
   const { getShare, releaseShareReservation } = useIncomingShare();
+  const createStandaloneThread = useNewStandaloneThread();
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
     : route.params?.incomingShareId;
@@ -141,6 +143,17 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         projectId: project.id,
         title: project.title,
         incomingShareId: incomingShare?.id,
+      }),
+    );
+  }
+
+  async function selectStandaloneChat(): Promise<void> {
+    const thread = await createStandaloneThread(selectedEnvironmentId);
+    if (!thread) return;
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: String(thread.environmentId),
+        threadId: String(thread.threadId),
       }),
     );
   }
@@ -237,6 +250,36 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           paddingTop: 8,
         }}
       >
+        {!incomingShare ? (
+          <Pressable
+            accessibilityHint="Creates a conversation without a project workspace"
+            accessibilityLabel="Create new chat"
+            accessibilityRole="button"
+            className="flex-row items-center gap-3 rounded-[24px] bg-card px-4 py-3.5 active:opacity-70"
+            onPress={() => void selectStandaloneChat()}
+          >
+            <View className="h-7 w-7 items-center justify-center">
+              <SymbolView
+                name="text.bubble"
+                size={20}
+                tintColorClassName="accent-icon-muted"
+                type="monochrome"
+              />
+            </View>
+            <View className="min-w-0 flex-1">
+              <Text className="text-base font-t3-bold text-foreground">New chat</Text>
+              <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+                Start without a project workspace
+              </Text>
+            </View>
+            <SymbolView
+              name="chevron.right"
+              size={14}
+              tintColorClassName="accent-icon-subtle"
+              type="monochrome"
+            />
+          </Pressable>
+        ) : null}
         {projectScopes.length === 0 ? (
           <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
             {projectEmptyState.loading ? (

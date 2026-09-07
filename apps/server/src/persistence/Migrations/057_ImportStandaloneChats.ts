@@ -48,7 +48,8 @@ export default Effect.gen(function* () {
     if (existing.length > 0) {
       // Detach the historical creation event too, so projection rebuilds agree.
       yield* sql`UPDATE orchestration_events SET payload_json = json_set(payload_json, '$.projectId', NULL)
-        WHERE stream_id = ${chat.backingThreadId} AND event_type = 'thread.created'`;
+        WHERE aggregate_kind = 'thread' AND stream_id = ${chat.backingThreadId}
+        AND event_type = 'thread.created'`;
       yield* sql`UPDATE projection_threads SET project_id = NULL WHERE thread_id = ${chat.backingThreadId}`;
     } else {
       const payload = ThreadCreatedPayload.make({
@@ -75,8 +76,9 @@ export default Effect.gen(function* () {
     for (const line of contents.split("\n").filter((line) => line.trim().length > 0)) {
       const message = yield* decodeMessage(line);
       const duplicate =
-        yield* sql`SELECT 1 FROM orchestration_events WHERE stream_id = ${chat.backingThreadId}
-        AND event_type = 'thread.message-sent' AND json_extract(payload_json, '$.messageId') = ${message.id}`;
+        yield* sql`SELECT 1 FROM orchestration_events WHERE aggregate_kind = 'thread'
+        AND stream_id = ${chat.backingThreadId} AND event_type = 'thread.message-sent'
+        AND json_extract(payload_json, '$.messageId') = ${message.id}`;
       if (duplicate.length > 0) continue;
       const payload = ThreadMessageSentPayload.make({
         threadId: chat.backingThreadId,

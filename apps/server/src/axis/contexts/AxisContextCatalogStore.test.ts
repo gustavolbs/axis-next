@@ -308,6 +308,37 @@ layer("AxisContextCatalogStore", (it) => {
     );
   }
 
+  it.effect("purges stale cache and status when a source moves to another context", () =>
+    Effect.gen(function* () {
+      const store = yield* AxisContextCatalogStore;
+      const sql = yield* SqlClient.SqlClient;
+      const seeded = yield* seedWorkHubCache;
+      yield* seedDependentSchedule;
+      const catalog = decodeCatalog({
+        ...seeded.catalog,
+        workHubSources: seeded.catalog.workHubSources.map((source) => ({
+          ...source,
+          contextId: "personal",
+        })),
+      });
+
+      yield* store.replace({ expectedRevision: seeded.revision, catalog });
+
+      const cacheRows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM axis_work_hub_cache
+      `;
+      const statusRows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM axis_work_hub_source_status
+      `;
+      const schedules = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM axis_scheduled_activities
+      `;
+      assert.equal(cacheRows[0]?.count, 0);
+      assert.equal(statusRows[0]?.count, 0);
+      assert.equal(schedules[0]?.count, 0);
+    }),
+  );
+
   it.effect("purges every learning record when its context is removed", () =>
     Effect.gen(function* () {
       const store = yield* AxisContextCatalogStore;

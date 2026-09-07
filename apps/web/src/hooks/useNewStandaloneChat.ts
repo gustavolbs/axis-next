@@ -7,6 +7,7 @@ import { useServerConfigs } from "../state/entities";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { toastManager } from "../components/ui/toast";
+import { isUsableStandaloneChatProvider } from "./useNewStandaloneChat.logic";
 
 export function useNewStandaloneChat() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -15,16 +16,18 @@ export function useNewStandaloneChat() {
   const navigate = useNavigate();
   const pending = useRef(false);
   const [creating, setCreating] = useState(false);
+  const provider =
+    primaryEnvironmentId === null
+      ? undefined
+      : configs.get(primaryEnvironmentId)?.providers.find(isUsableStandaloneChatProvider);
   const start = useCallback(
     async (targetEnvironmentId?: EnvironmentId) => {
       const environmentId = targetEnvironmentId ?? primaryEnvironmentId;
       if (environmentId === null || pending.current) return;
-      const provider = configs
+      const targetProvider = configs
         .get(environmentId)
-        ?.providers.find(
-          (entry) => entry.enabled && entry.installed && entry.availability !== "unavailable",
-        );
-      if (!provider) {
+        ?.providers.find(isUsableStandaloneChatProvider);
+      if (!targetProvider) {
         toastManager.add({ type: "error", title: "No provider available" });
         return;
       }
@@ -39,10 +42,10 @@ export function useNewStandaloneChat() {
             projectId: null,
             title: "New thread",
             modelSelection: {
-              instanceId: provider.instanceId,
+              instanceId: targetProvider.instanceId,
               model:
-                provider.models.find((model) => model.isDefault)?.slug ??
-                provider.models[0]?.slug ??
+                targetProvider.models.find((model) => model.isDefault)?.slug ??
+                targetProvider.models[0]?.slug ??
                 "auto",
             },
             runtimeMode: "full-access",
@@ -59,7 +62,7 @@ export function useNewStandaloneChat() {
         setCreating(false);
       }
     },
-    [configs, create, navigate, primaryEnvironmentId],
+    [configs, primaryEnvironmentId],
   );
-  return { start, creating, available: primaryEnvironmentId !== null };
+  return { start, creating, available: primaryEnvironmentId !== null && provider !== undefined };
 }

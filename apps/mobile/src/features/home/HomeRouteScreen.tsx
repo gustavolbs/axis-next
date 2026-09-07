@@ -21,6 +21,7 @@ import { useHomeThreadSelection } from "./home-thread-navigation";
 import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
+import { useNewStandaloneThread } from "../threads/use-new-standalone-thread";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
@@ -35,6 +36,7 @@ export function HomeRouteScreen() {
   const navigation = useNavigation();
   const [searchQuery, setSearchQuery] = useState("");
   const handleSelectThread = useHomeThreadSelection();
+  const createStandaloneThread = useNewStandaloneThread();
 
   useEffect(() => {
     void checkForAppUpdateOnLaunch();
@@ -222,6 +224,12 @@ export function HomeRouteScreen() {
                 projectId: String(project.id),
                 title: project.title,
               },
+            });
+          }}
+          onNewStandaloneThread={() => {
+            void createStandaloneThread(selectedEnvironmentId).then((thread) => {
+              if (thread)
+                handleSelectThread({ environmentId: thread.environmentId, id: thread.threadId });
             });
           }}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}

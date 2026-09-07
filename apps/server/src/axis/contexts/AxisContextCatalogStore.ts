@@ -112,12 +112,40 @@ export const make = Effect.gen(function* () {
               yield* sql`DELETE FROM axis_work_hub_source_status`;
             } else {
               yield* sql`
-                DELETE FROM axis_work_hub_cache
-                WHERE source_id NOT IN ${sql.in(sourceIds)}
-              `;
-              yield* sql`
                 DELETE FROM axis_work_hub_source_status
                 WHERE source_id NOT IN ${sql.in(sourceIds)}
+                   OR EXISTS (
+                     SELECT 1
+                     FROM axis_work_hub_cache AS cache
+                     WHERE cache.source_id = axis_work_hub_source_status.source_id
+                       AND NOT EXISTS (
+                         SELECT 1
+                         FROM json_each(${catalogJson}, '$.workHubSources') AS source
+                         WHERE json_extract(source.value, '$.id') = cache.source_id
+                           AND json_extract(source.value, '$.contextId') = cache.context_id
+                           AND json_extract(source.value, '$.provider.environmentId') =
+                               json_extract(cache.snapshot_json, '$.provider.environmentId')
+                           AND json_extract(source.value, '$.provider.instanceId') =
+                               json_extract(cache.snapshot_json, '$.provider.instanceId')
+                           AND json_extract(source.value, '$.capabilityId') =
+                               json_extract(cache.snapshot_json, '$.capabilityId')
+                       )
+                   )
+              `;
+              yield* sql`
+                DELETE FROM axis_work_hub_cache
+                WHERE NOT EXISTS (
+                  SELECT 1
+                  FROM json_each(${catalogJson}, '$.workHubSources') AS source
+                  WHERE json_extract(source.value, '$.id') = source_id
+                    AND json_extract(source.value, '$.contextId') = context_id
+                    AND json_extract(source.value, '$.provider.environmentId') =
+                        json_extract(snapshot_json, '$.provider.environmentId')
+                    AND json_extract(source.value, '$.provider.instanceId') =
+                        json_extract(snapshot_json, '$.provider.instanceId')
+                    AND json_extract(source.value, '$.capabilityId') =
+                        json_extract(snapshot_json, '$.capabilityId')
+                )
               `;
             }
 
