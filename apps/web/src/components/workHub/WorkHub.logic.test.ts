@@ -6,6 +6,7 @@ import {
   buildWorkHubSourceGroups,
   buildWorkHubSourceReadiness,
   buildWorkHubWeekDays,
+  buildWorkHubCalendarDaySegment,
   isWorkHubOverviewItem,
   layoutWorkHubCalendarEvents,
   resolveWorkHubCalendarMeetingLink,
@@ -138,6 +139,94 @@ describe("Work Hub calendar", () => {
 
   it("positions the current-time indicator within the day", () => {
     expect(workHubCurrentTimePercentage(new Date(2026, 8, 5, 12))).toBe(50);
+  });
+
+  it("clips multi-day timed events to each local day and renders all-day ranges", () => {
+    const eventStart = new Date(2026, 8, 5, 23, 30);
+    const eventEnd = new Date(2026, 8, 7, 1, 30);
+    const event = decodeItem({
+      id: "multi-day",
+      sourceId: "calendar",
+      contextId: "personal",
+      kind: "calendar-event",
+      view: "calendar",
+      nativeId: "multi-day",
+      title: "Offsite",
+      startsAt: eventStart.toISOString(),
+      endsAt: eventEnd.toISOString(),
+      updatedAt: now,
+    });
+    expect(buildWorkHubCalendarDaySegment(event, new Date("2026-09-05T12:00:00.000Z"))).toEqual({
+      startMinute: 1410,
+      endMinute: 1440,
+      allDay: false,
+    });
+    expect(buildWorkHubCalendarDaySegment(event, new Date("2026-09-06T12:00:00.000Z"))).toEqual({
+      startMinute: 0,
+      endMinute: 1440,
+      allDay: false,
+    });
+    expect(buildWorkHubCalendarDaySegment(event, new Date("2026-09-07T12:00:00.000Z"))).toEqual({
+      startMinute: 0,
+      endMinute: 90,
+      allDay: false,
+    });
+
+    const allDay = decodeItem({
+      ...event,
+      id: "all-day",
+      nativeId: "all-day",
+      title: "Holiday",
+      allDay: true,
+      startsAt: null,
+      endsAt: null,
+      startDate: "2026-09-04",
+      endDate: "2026-09-07",
+    });
+    expect(buildWorkHubCalendarDaySegment(allDay, new Date("2026-09-06T12:00:00.000Z"))).toEqual({
+      startMinute: 0,
+      endMinute: 1440,
+      allDay: true,
+    });
+    expect(buildWorkHubCalendarDaySegment(allDay, new Date("2026-09-07T12:00:00.000Z"))).toBeNull();
+
+    const invertedAllDay = decodeItem({
+      ...allDay,
+      id: "inverted-all-day",
+      startDate: "2026-09-07",
+      endDate: "2026-09-07",
+    });
+    expect(
+      buildWorkHubCalendarDaySegment(invertedAllDay, new Date("2026-09-07T12:00:00.000Z")),
+    ).toBeNull();
+  });
+
+  it("uses local wall-clock minutes across a daylight-saving transition", () => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    try {
+      const event = decodeItem({
+        id: "dst-event",
+        sourceId: "calendar",
+        contextId: "personal",
+        kind: "calendar-event",
+        view: "calendar",
+        nativeId: "dst-event",
+        title: "DST event",
+        startsAt: new Date(2026, 2, 8, 1, 30).toISOString(),
+        endsAt: new Date(2026, 2, 8, 3, 30).toISOString(),
+        updatedAt: now,
+      });
+
+      expect(buildWorkHubCalendarDaySegment(event, new Date(2026, 2, 8, 12))).toEqual({
+        startMinute: 90,
+        endMinute: 210,
+        allDay: false,
+      });
+    } finally {
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+    }
   });
 
   it("lays overlapping events into deterministic side-by-side columns", () => {

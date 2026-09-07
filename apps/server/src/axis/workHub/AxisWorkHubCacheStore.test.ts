@@ -138,6 +138,42 @@ layer("AxisWorkHubCacheStore", (it) => {
     }),
   );
 
+  it.effect("keeps a source snapshot while recording a later collection failure", () =>
+    Effect.gen(function* () {
+      const store = yield* AxisWorkHubCacheStore;
+      yield* addCatalogSource;
+      const snapshot = decodeSnapshot({
+        sourceId: "jira_company_a",
+        contextId: "personal",
+        provider: { environmentId: "env", instanceId: "codex" },
+        capabilityId: "jira",
+        items: [],
+        refreshedAt: "2099-09-05T00:00:00.000Z",
+        expiresAt: "2099-09-05T08:00:00.000Z",
+      });
+
+      yield* store.replace(snapshot);
+      yield* store.recordFailure(snapshot.sourceId, {
+        occurredAt: "2099-09-05T01:00:00.000Z",
+        kind: "transient",
+        message: "connector timed out",
+      });
+
+      const [status] = yield* store.listStatuses;
+      assert.deepEqual(status, {
+        sourceId: snapshot.sourceId,
+        status: "error",
+        lastConfirmedSuccessAt: snapshot.refreshedAt,
+        lastErrorAt: "2099-09-05T01:00:00.000Z",
+        lastErrorKind: "transient",
+        lastErrorMessage: "connector timed out",
+        snapshot,
+      });
+      assert.deepEqual(yield* store.get(snapshot.sourceId), snapshot);
+      yield* store.remove(snapshot.sourceId);
+    }),
+  );
+
   it.effect("hides cache snapshots that are not backed by the current catalog", () =>
     Effect.gen(function* () {
       const store = yield* AxisWorkHubCacheStore;
@@ -165,7 +201,10 @@ layer("AxisWorkHubCacheStore", (it) => {
       `;
 
       assert.equal(yield* store.get(orphan.sourceId), null);
-      assert.deepEqual(yield* store.list, []);
+      assert.equal(
+        (yield* store.listStatuses).some((status) => status.sourceId === orphan.sourceId),
+        false,
+      );
       yield* store.remove(orphan.sourceId);
     }),
   );

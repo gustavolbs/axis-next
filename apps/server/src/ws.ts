@@ -2042,6 +2042,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.axisWorkHubGetCache, axisWorkHubCache.list, {
             "rpc.aggregate": "axis",
           }),
+        [WS_METHODS.axisWorkHubGetSourceStatuses]: (_input) =>
+          observeRpcEffect(WS_METHODS.axisWorkHubGetSourceStatuses, axisWorkHubCache.listStatuses, {
+            "rpc.aggregate": "axis",
+          }),
         [WS_METHODS.providerWorkHubCollect]: ({ sourceId }) =>
           observeRpcEffect(
             WS_METHODS.providerWorkHubCollect,

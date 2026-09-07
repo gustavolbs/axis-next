@@ -1,6 +1,11 @@
 # Changelog
 
-## [0.0.39] - 2026-09-07
+## [0.1.0] - 2026-09-07
+
+### Added
+
+- Show Work Hub source freshness, authorization failures, sync errors, and the last confirmed successful refresh without discarding the last good cache.
+- Render all-day and multi-day calendar events using source-provided civil dates and expose assignment, priority, due date, labels, project, and update details on Work Board cards.
 
 ### Changed
 

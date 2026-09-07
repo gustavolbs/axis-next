@@ -4,7 +4,7 @@ import {
   buildMobilePairingDeepLink,
   isMobilePairingDeepLink,
   unwrapMobilePairingDeepLink,
-} from "./pairingDeepLink";
+} from "./pairingDeepLink.js";
 
 describe("buildMobilePairingDeepLink", () => {
   it("wraps a web pairing url in the default t3code scheme", () => {

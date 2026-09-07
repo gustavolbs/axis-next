@@ -108,9 +108,14 @@ export const make = Effect.gen(function* () {
             const sourceIds = input.catalog.workHubSources.map((source) => source.id);
             if (sourceIds.length === 0) {
               yield* sql`DELETE FROM axis_work_hub_cache`;
+              yield* sql`DELETE FROM axis_work_hub_source_status`;
             } else {
               yield* sql`
                 DELETE FROM axis_work_hub_cache
+                WHERE source_id NOT IN ${sql.in(sourceIds)}
+              `;
+              yield* sql`
+                DELETE FROM axis_work_hub_source_status
                 WHERE source_id NOT IN ${sql.in(sourceIds)}
               `;
             }

@@ -130,7 +130,7 @@ context-isolation rules as API-key providers.
       snapshots transactionally after context/source/capability removal.
 - [ ] Aggregate sources across multiple environments; preserve cached data and report partial
       offline status when one environment is unavailable.
-- [ ] Show per-source fresh/stale/error/authorization status and last confirmed success.
+- [x] Show per-source fresh/stale/error/authorization status and last confirmed success.
 - [ ] Add retention limits and cleanup for old cache items, cursors, and sync diagnostics.
 
 ## Connector acquisition and relevance
@@ -166,7 +166,7 @@ context-isolation rules as API-key providers.
 - [x] Color events by Personal/Company context and show a context legend.
 - [x] Provide meeting **Join** actions and event-detail tooltips.
 - [x] Lay out overlapping events in deterministic side-by-side columns.
-- [ ] Model and render all-day and multi-day events.
+- [x] Model and render all-day and multi-day events.
 - [ ] Preserve source timezone and clearly convert it to the viewer timezone.
 - [ ] Add participants, calendar identity, organizer, response status, recurrence, and cancellation to
       the normalized contract.
@@ -180,7 +180,7 @@ context-isolation rules as API-key providers.
 - [x] Keep unknown statuses visible in an Unmapped lane instead of silently treating them as To do.
 - [x] Preserve context color, source status, summary, and deep link.
 - [ ] Add explicit per-connector status mappings with a mapping-management UI.
-- [ ] Extend normalized cards with assignee, priority, due date, labels, project, and update time.
+- [x] Extend normalized cards with assignee, priority, due date, labels, project, and update time.
 - [ ] Move cards through source-confirmed Jira/work-management mutations with approval and
       idempotency.
 - [ ] Add board filtering, ordering, search, pagination/virtualization, and mobile presentation.

@@ -996,6 +996,11 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.axisWorkHubGetCache,
       staleTimeMs: 30_000,
     }),
+    axisWorkHubSourceStatuses: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:work-hub-source-statuses",
+      tag: WS_METHODS.axisWorkHubGetSourceStatuses,
+      staleTimeMs: 30_000,
+    }),
     collectProviderWorkHubSource: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:work-hub-collect",
       tag: WS_METHODS.providerWorkHubCollect,

@@ -13,6 +13,8 @@ import {
   type AxisProviderInstanceLocator,
   type AxisWorkHubCollectionPolicy,
   type AxisWorkHubSource,
+  type AxisWorkHubSourceStatus,
+  isAxisWorkHubCacheFresh,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -60,6 +62,7 @@ function useSyncingSourceIds(): ReadonlySet<string> {
 export function WorkHubSourceManager() {
   const environmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
+  const [fallbackObservedAt] = useState(Date.now);
   const query = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -75,6 +78,11 @@ export function WorkHubSourceManager() {
     environmentId === null
       ? null
       : serverEnvironment.axisWorkHubCache({ environmentId, input: {} }),
+  );
+  const sourceStatusesQuery = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.axisWorkHubSourceStatuses({ environmentId, input: {} }),
   );
   const [saving, setSaving] = useState(false);
   const [settingsSource, setSettingsSource] = useState<{
@@ -114,6 +122,7 @@ export function WorkHubSourceManager() {
     setSaving(false);
     if (result._tag === "Success") {
       query.refresh();
+      sourceStatusesQuery.refresh();
       return true;
     }
     if (!isAtomCommandInterrupted(result)) {
@@ -276,6 +285,7 @@ export function WorkHubSourceManager() {
     // The server persists the merged snapshot before responding; the sync also
     // finishes and caches server-side even if this client navigates away mid-flight.
     cacheQuery.refresh();
+    sourceStatusesQuery.refresh();
     toastManager.add({
       type: "success",
       title: `${mcpName} synced`,
@@ -286,6 +296,23 @@ export function WorkHubSourceManager() {
   if (!query.data) return null;
   const catalog = query.data.catalog;
   const groups = buildWorkHubSourceGroups(catalog);
+  const sourceStatuses = new Map<string, AxisWorkHubSourceStatus>(
+    (
+      sourceStatusesQuery.data ??
+      cacheQuery.data?.map((snapshot) => ({
+        sourceId: snapshot.sourceId,
+        status: isAxisWorkHubCacheFresh(snapshot, fallbackObservedAt)
+          ? ("fresh" as const)
+          : "stale",
+        lastConfirmedSuccessAt: snapshot.refreshedAt,
+        lastErrorAt: null,
+        lastErrorKind: null,
+        lastErrorMessage: null,
+        snapshot,
+      })) ??
+      []
+    ).map((status) => [status.sourceId, status] as const),
+  );
   return (
     <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5 xl:col-span-2">
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -352,9 +379,7 @@ export function WorkHubSourceManager() {
                                 candidate.contextId === group.context.id &&
                                 candidate.capabilityId === mcp.id,
                             );
-                            const cached = source
-                              ? cacheQuery.data?.find((snapshot) => snapshot.sourceId === source.id)
-                              : undefined;
+                            const sourceStatus = source ? sourceStatuses.get(source.id) : undefined;
                             return (
                               <div
                                 key={mcp.id}
@@ -370,9 +395,21 @@ export function WorkHubSourceManager() {
                                 />
                                 <span className="min-w-0 flex-1">
                                   <span className="block truncate">{mcp.name}</span>
-                                  {cached ? (
+                                  {sourceStatus ? (
                                     <span className="block text-[11px] text-muted-foreground/80">
-                                      Last synced {new Date(cached.refreshedAt).toLocaleString()}
+                                      {sourceStatus.status === "authorization-required"
+                                        ? "Authorization required"
+                                        : sourceStatus.status === "error"
+                                          ? "Sync error"
+                                          : sourceStatus.status === "fresh"
+                                            ? "Fresh"
+                                            : "Stale"}
+                                      {sourceStatus.lastConfirmedSuccessAt
+                                        ? ` · Last confirmed ${new Date(sourceStatus.lastConfirmedSuccessAt).toLocaleString()}`
+                                        : " · No confirmed sync yet"}
+                                      {sourceStatus.lastErrorMessage
+                                        ? ` · ${sourceStatus.lastErrorMessage}`
+                                        : ""}
                                     </span>
                                   ) : null}
                                 </span>

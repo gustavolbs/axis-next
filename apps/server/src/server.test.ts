@@ -11,6 +11,7 @@ import {
   AxisWorkHubSourceValidationError,
   AxisWorkHubSyncError,
   AxisWorkHubCacheSnapshot,
+  AxisWorkHubSourceStatus,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -98,6 +99,7 @@ const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
 );
 const decodeAxisContextCatalogSnapshot = Schema.decodeUnknownEffect(AxisContextCatalogSnapshot);
 const decodeAxisWorkHubCacheSnapshot = Schema.decodeUnknownEffect(AxisWorkHubCacheSnapshot);
+const decodeAxisWorkHubSourceStatus = Schema.decodeUnknownEffect(AxisWorkHubSourceStatus);
 const decodeAxisLearningSnapshot = Schema.decodeUnknownEffect(AxisLearningSnapshot);
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -823,7 +825,9 @@ const buildAppUnderTest = (options?: {
           Layer.mock(AxisWorkHubCacheStore)({
             get: () => Effect.succeed(null),
             list: Effect.succeed([]),
+            listStatuses: Effect.succeed([]),
             replace: () => Effect.void,
+            recordFailure: () => Effect.void,
             remove: () => Effect.void,
             ...options?.layers?.axisWorkHubCache,
           }),
@@ -5417,6 +5421,39 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.deepEqual(response, [snapshot]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes Work Hub source statuses separately from cached data", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* decodeAxisWorkHubCacheSnapshot({
+        sourceId: "personal_calendar",
+        contextId: "personal",
+        provider: { environmentId: "env", instanceId: "codex" },
+        capabilityId: "calendar",
+        items: [],
+        refreshedAt: "2026-09-05T00:00:00.000Z",
+        expiresAt: "2026-09-05T08:00:00.000Z",
+      });
+      const status = yield* decodeAxisWorkHubSourceStatus({
+        sourceId: snapshot.sourceId,
+        status: "fresh",
+        lastConfirmedSuccessAt: snapshot.refreshedAt,
+        lastErrorAt: null,
+        lastErrorKind: null,
+        lastErrorMessage: null,
+        snapshot,
+      });
+      yield* buildAppUnderTest({
+        layers: { axisWorkHubCache: { listStatuses: Effect.succeed([status]) } },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.axisWorkHubGetSourceStatuses]({})),
+      );
+
+      assert.deepEqual(response, [status]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

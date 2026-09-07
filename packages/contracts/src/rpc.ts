@@ -11,6 +11,7 @@ import {
 import {
   AxisWorkHubCachePersistenceError,
   AxisWorkHubCacheSnapshot,
+  AxisWorkHubSourceStatus,
   AxisWorkHubSourceSyncInput,
   AxisWorkHubSourceValidationError,
   AxisWorkHubSyncError,
@@ -386,6 +387,7 @@ export const WS_METHODS = {
   axisContextsGetCatalog: "axis.contexts.getCatalog",
   axisContextsReplaceCatalog: "axis.contexts.replaceCatalog",
   axisWorkHubGetCache: "axis.workHub.getCache",
+  axisWorkHubGetSourceStatuses: "axis.workHub.getSourceStatuses",
   providerWorkHubCollect: "provider.workHub.collect",
   axisScheduledActivitiesList: "axis.scheduledActivities.list",
   axisScheduledActivitiesCreate: "axis.scheduledActivities.create",
@@ -624,6 +626,12 @@ export const WsAxisContextsReplaceCatalogRpc = Rpc.make(WS_METHODS.axisContextsR
 export const WsAxisWorkHubGetCacheRpc = Rpc.make(WS_METHODS.axisWorkHubGetCache, {
   payload: Schema.Struct({}),
   success: Schema.Array(AxisWorkHubCacheSnapshot),
+  error: Schema.Union([AxisWorkHubCachePersistenceError, EnvironmentAuthorizationError]),
+});
+
+export const WsAxisWorkHubGetSourceStatusesRpc = Rpc.make(WS_METHODS.axisWorkHubGetSourceStatuses, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(AxisWorkHubSourceStatus),
   error: Schema.Union([AxisWorkHubCachePersistenceError, EnvironmentAuthorizationError]),
 });
 
@@ -1475,6 +1483,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAxisContextsGetCatalogRpc,
   WsAxisContextsReplaceCatalogRpc,
   WsAxisWorkHubGetCacheRpc,
+  WsAxisWorkHubGetSourceStatusesRpc,
   WsProviderWorkHubCollectRpc,
   WsAxisScheduledActivitiesListRpc,
   WsAxisScheduledActivitiesCreateRpc,
