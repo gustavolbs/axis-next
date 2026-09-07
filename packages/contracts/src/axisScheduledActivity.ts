@@ -74,6 +74,7 @@ export type AxisScheduledActivityAction = typeof AxisScheduledActivityAction.Typ
 
 export const AxisScheduledActivityLastRunStatus = Schema.Literals([
   "running",
+  "needs-attention",
   "succeeded",
   "partial",
   "failed",

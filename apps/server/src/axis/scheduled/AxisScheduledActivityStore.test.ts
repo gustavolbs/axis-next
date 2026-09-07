@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { AxisScheduledActivity, AxisScheduledActivityRun } from "@t3tools/contracts";
+import { AxisScheduledActivity, AxisScheduledActivityRun, ThreadId } from "@t3tools/contracts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { AxisScheduledActivityStore, layer as storeLayer } from "./AxisScheduledActivityStore.ts";
 
@@ -43,6 +43,11 @@ const interruptedRun = Schema.decodeUnknownSync(AxisScheduledActivityRun)({
   finishedAt: null,
   message: null,
 });
+const openAgentRun = Schema.decodeUnknownSync(AxisScheduledActivityRun)({
+  ...interruptedRun,
+  id: "run_agent",
+  threadId: ThreadId.make("scheduled-thread"),
+});
 
 layer("AxisScheduledActivityStore", (it) => {
   it.effect("persists activities, due queries, and run history", () =>
@@ -56,6 +61,11 @@ layer("AxisScheduledActivityStore", (it) => {
       assert.equal((yield* store.listRuns(activity.id, 20))[0]?.status, "succeeded");
 
       yield* store.saveRun(interruptedRun);
+      yield* store.saveRun(openAgentRun);
+      assert.deepEqual(
+        (yield* store.listOpenAgentRuns).map((run) => run.id),
+        [openAgentRun.id],
+      );
       assert.equal(yield* store.recoverInterruptedRuns("2026-09-05T09:00:00.000Z"), 1);
       const recovered = (yield* store.listRuns(activity.id, 20)).find(
         (run) => run.id === interruptedRun.id,
@@ -63,6 +73,7 @@ layer("AxisScheduledActivityStore", (it) => {
       assert.equal(recovered?.status, "failed");
       assert.equal(recovered?.finishedAt, "2026-09-05T09:00:00.000Z");
       assert.match(recovered?.message ?? "", /server stopped/);
+      assert.equal((yield* store.listOpenAgentRuns)[0]?.status, "running");
 
       yield* store.update({ ...activity, enabled: false });
       assert.equal((yield* store.get(activity.id)).enabled, false);

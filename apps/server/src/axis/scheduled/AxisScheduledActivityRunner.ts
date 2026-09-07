@@ -137,6 +137,8 @@ export class AxisScheduledActivityRunner extends Context.Service<
     ) => Effect.Effect<AxisScheduledActivityRun, AxisScheduledActivityError>;
     /** Public so tests and maintenance code can drive scheduling without sleeping. */
     readonly tick: Effect.Effect<void, never>;
+    /** Reconciles dispatched agent runs with their canonical T3 Turn state. */
+    readonly reconcileAgentRuns: Effect.Effect<number, AxisScheduledActivityError>;
     readonly recoverInterruptedRuns: Effect.Effect<number, AxisScheduledActivityPersistenceError>;
   }
 >()("t3/axis/scheduled/AxisScheduledActivityRunner") {}
@@ -361,6 +363,14 @@ export const make = Effect.gen(function* () {
           });
         }
       }
+      if (
+        activity.action.kind === "agentTurn" &&
+        (yield* store.listOpenAgentRuns).some((run) => run.activityId === activity.id)
+      ) {
+        return yield* new AxisScheduledActivityValidationError({
+          message: "The previous scheduled agent Turn is still active.",
+        });
+      }
       const startedAt = yield* isoNow;
       const runId = AxisScheduledActivityRunId.make(NodeCrypto.randomUUID());
       const running: AxisScheduledActivityRun = {
@@ -389,31 +399,31 @@ export const make = Effect.gen(function* () {
                   : "The scheduled agent work could not be started.",
             }),
             onSuccess: (threadId) => ({
-              status: "succeeded" as const,
+              status: "running" as const,
               threadId,
               message: `Started Thread '${threadId}'.`,
             }),
           }),
         );
-        const finishedAt = yield* isoNow;
+        const observedAt = yield* isoNow;
         const completed: AxisScheduledActivityRun = {
           ...running,
           ...outcome,
-          finishedAt,
+          finishedAt: outcome.status === "failed" ? observedAt : null,
         };
         yield* store.saveRun(completed);
-        const finishedMs = Date.parse(finishedAt);
+        const observedMs = Date.parse(observedAt);
         const nextRunAt =
-          trigger === "manual" && Date.parse(activity.nextRunAt) > finishedMs
+          trigger === "manual" && Date.parse(activity.nextRunAt) > observedMs
             ? activity.nextRunAt
-            : nextAxisScheduledActivityRunAt(activity.schedule, finishedMs);
+            : nextAxisScheduledActivityRunAt(activity.schedule, observedMs);
         yield* store.update({
           ...activity,
           nextRunAt,
-          lastRunAt: finishedAt,
+          lastRunAt: outcome.status === "failed" ? observedAt : startedAt,
           lastRunStatus: outcome.status,
           lastRunMessage: outcome.message,
-          updatedAt: finishedAt,
+          updatedAt: observedAt,
         });
         return completed;
       }
@@ -486,7 +496,90 @@ export const make = Effect.gen(function* () {
     return yield* runActivity(id, "manual");
   });
 
+  const reconcileAgentRuns: AxisScheduledActivityRunner["Service"]["reconcileAgentRuns"] =
+    Effect.gen(function* () {
+      const openRuns = yield* store.listOpenAgentRuns;
+      const now = yield* isoNow;
+      let updated = 0;
+      yield* Effect.forEach(
+        openRuns,
+        (run) =>
+          Effect.gen(function* () {
+            if (run.threadId === null) return;
+            const shell = yield* projections
+              .getThreadShellById(run.threadId)
+              .pipe(Effect.mapError(scheduledPersistenceError("read scheduled agent Thread")));
+            const state = Option.match(shell, {
+              onNone: () => ({
+                status: "failed" as const,
+                finishedAt: now,
+                message: "The scheduled agent Thread no longer exists.",
+              }),
+              onSome: (thread) => {
+                if (thread.hasPendingApprovals || thread.hasPendingUserInput) {
+                  return {
+                    status: "needs-attention" as const,
+                    finishedAt: null,
+                    message: thread.hasPendingApprovals
+                      ? "The scheduled agent is waiting for approval."
+                      : "The scheduled agent is waiting for user input.",
+                  };
+                }
+                switch (thread.latestTurn?.state) {
+                  case "completed":
+                    return {
+                      status: "succeeded" as const,
+                      finishedAt: thread.latestTurn.completedAt ?? now,
+                      message: "The scheduled agent Turn completed.",
+                    };
+                  case "error":
+                    return {
+                      status: "failed" as const,
+                      finishedAt: thread.latestTurn.completedAt ?? now,
+                      message: thread.session?.lastError ?? "The scheduled agent Turn failed.",
+                    };
+                  case "interrupted":
+                    return {
+                      status: "failed" as const,
+                      finishedAt: thread.latestTurn.completedAt ?? now,
+                      message: "The scheduled agent Turn was interrupted.",
+                    };
+                  default:
+                    return {
+                      status: "running" as const,
+                      finishedAt: null,
+                      message: `Thread '${run.threadId}' is still running.`,
+                    };
+                }
+              },
+            });
+            if (
+              state.status === run.status &&
+              state.finishedAt === run.finishedAt &&
+              state.message === run.message
+            ) {
+              return;
+            }
+            yield* store.saveRun({ ...run, ...state });
+            const activity = yield* store.get(run.activityId);
+            if (activity.lastRunAt === run.startedAt) {
+              yield* store.update({
+                ...activity,
+                lastRunAt: state.finishedAt ?? run.startedAt,
+                lastRunStatus: state.status,
+                lastRunMessage: state.message,
+                updatedAt: now,
+              });
+            }
+            updated += 1;
+          }),
+        { concurrency: 4, discard: true },
+      );
+      return updated;
+    });
+
   const tick: AxisScheduledActivityRunner["Service"]["tick"] = Effect.gen(function* () {
+    yield* reconcileAgentRuns;
     const now = yield* isoNow;
     const due = yield* store.listDue(now);
     yield* Effect.forEach(
@@ -517,6 +610,7 @@ export const make = Effect.gen(function* () {
     listRuns: store.listRuns,
     runNow,
     tick,
+    reconcileAgentRuns,
     recoverInterruptedRuns: isoNow.pipe(Effect.flatMap(store.recoverInterruptedRuns)),
   } satisfies AxisScheduledActivityRunner["Service"];
 });

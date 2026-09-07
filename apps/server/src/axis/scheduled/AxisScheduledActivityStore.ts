@@ -61,7 +61,11 @@ export class AxisScheduledActivityStore extends Context.Service<
       ReadonlyArray<AxisScheduledActivityRunType>,
       AxisScheduledActivityPersistenceError
     >;
-    /** Marks run records left in-flight by a prior server process as failed. */
+    readonly listOpenAgentRuns: Effect.Effect<
+      ReadonlyArray<AxisScheduledActivityRunType>,
+      AxisScheduledActivityPersistenceError
+    >;
+    /** Marks non-agent runs left in-flight by a prior server process as failed. */
     readonly recoverInterruptedRuns: (
       finishedAt: string,
     ) => Effect.Effect<number, AxisScheduledActivityPersistenceError>;
@@ -203,6 +207,21 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const listOpenAgentRuns: AxisScheduledActivityStore["Service"]["listOpenAgentRuns"] = sql<RunRow>`
+      SELECT run_json AS "runJson"
+      FROM axis_scheduled_activity_runs
+      WHERE json_extract(run_json, '$.threadId') IS NOT NULL
+        AND json_extract(run_json, '$.status') IN ('running', 'needs-attention')
+      ORDER BY started_at, id
+    `.pipe(
+    Effect.mapError(persistenceError("list open scheduled agent runs")),
+    Effect.flatMap((rows) =>
+      Effect.forEach(rows, (row) => decodeRun(row.runJson), { concurrency: 8 }).pipe(
+        Effect.mapError(persistenceError("decode open scheduled agent runs")),
+      ),
+    ),
+  );
+
   const recoverInterruptedRuns: AxisScheduledActivityStore["Service"]["recoverInterruptedRuns"] = (
     finishedAt,
   ) =>
@@ -210,6 +229,7 @@ export const make = Effect.gen(function* () {
         SELECT run_json AS "runJson"
         FROM axis_scheduled_activity_runs
         WHERE json_extract(run_json, '$.status') = 'running'
+          AND json_extract(run_json, '$.threadId') IS NULL
       `.pipe(
       Effect.mapError(persistenceError("list interrupted scheduled activity runs")),
       Effect.flatMap((rows) =>
@@ -241,6 +261,7 @@ export const make = Effect.gen(function* () {
     remove,
     saveRun,
     listRuns,
+    listOpenAgentRuns,
     recoverInterruptedRuns,
   } satisfies AxisScheduledActivityStore["Service"];
 });

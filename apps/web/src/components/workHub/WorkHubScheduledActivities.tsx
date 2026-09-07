@@ -98,6 +98,8 @@ function activityDraft(activity: AxisScheduledActivity): AxisScheduledActivityDr
 
 function statusVariant(status: AxisScheduledActivity["lastRunStatus"]) {
   if (status === "failed") return "destructive" as const;
+  if (status === "needs-attention") return "warning" as const;
+  if (status === "running") return "info" as const;
   if (status === "succeeded") return "secondary" as const;
   return "outline" as const;
 }

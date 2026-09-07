@@ -164,10 +164,13 @@ place. “Partial” means useful infrastructure exists, but the user outcome is
 - [x] Skip still-fresh cache during automatic runs while making **Run now** force a collection.
 - [x] Recover persisted `running` executions as failed after a server restart so they can be retried.
 - [x] Create scheduled agent work as a real T3 Thread and first Turn in approval-required mode.
+- [x] Schedule arbitrary agent prompts on interval or timezone-aware weekly/daily patterns, allowing
+      provider tools and MCPs to perform recurring research, briefing, and Project artifact work.
 - [x] Restrict scheduled agent work to a context-bound local Project and an owned/granted local
       provider.
 - [x] Link successful scheduled agent runs to their created Thread.
-- [ ] Track the eventual Turn outcome separately from the successful dispatch/start outcome.
+- [x] Track the eventual Turn outcome separately from dispatch, including running, completed,
+      failed, interrupted, missing-Thread, and needs-approval/user-input states.
 - [ ] Add notification/delivery destinations and quiet-hours policy.
 - [ ] Support distributed scheduling for provider sources and Projects owned by another connected
       environment without duplicating execution.

@@ -14,6 +14,7 @@ import {
   AxisWorkHubItemId,
   EnvironmentId,
   type OrchestrationCommand,
+  ThreadId,
 } from "@t3tools/contracts";
 import { AxisContextCatalogStore } from "../contexts/AxisContextCatalogStore.ts";
 import { AxisWorkHubCacheStore } from "../workHub/AxisWorkHubCacheStore.ts";
@@ -175,6 +176,7 @@ const persistence = SqlitePersistenceMemory;
 const activityStore = storeLayer.pipe(Layer.provide(persistence));
 const dispatchedCommands: OrchestrationCommand[] = [];
 let rejectTurnStart = false;
+let scheduledThreadShell: unknown = null;
 const dependencies = Layer.mergeAll(
   Layer.mock(AxisContextCatalogStore)({ get: Effect.succeed(catalog) }),
   Layer.mock(AxisWorkHubCacheStore)({
@@ -218,6 +220,10 @@ const dependencies = Layer.mergeAll(
         projectId === "personal_project"
           ? Option.some({ id: projectId, workspaceRoot: "/workspace" } as never)
           : Option.none(),
+      ),
+    getThreadShellById: () =>
+      Effect.succeed(
+        scheduledThreadShell === null ? Option.none() : Option.some(scheduledThreadShell as never),
       ),
   }),
   activityStore,
@@ -328,6 +334,7 @@ layer("AxisScheduledActivityRunner", (it) => {
     Effect.gen(function* () {
       dispatchedCommands.length = 0;
       rejectTurnStart = false;
+      scheduledThreadShell = null;
       yield* TestClock.setTime(Date.parse("2026-09-05T07:00:00.000Z"));
       const service = yield* AxisScheduledActivityRunner;
       const created = yield* service.create(
@@ -354,7 +361,7 @@ layer("AxisScheduledActivityRunner", (it) => {
       );
 
       const run = yield* service.runNow(created.id);
-      assert.equal(run.status, "succeeded");
+      assert.equal(run.status, "running");
       assert.isNotNull(run.threadId);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
@@ -376,6 +383,75 @@ layer("AxisScheduledActivityRunner", (it) => {
       );
       assert.equal(start?.type === "thread.turn.start" && start.threadId, run.threadId);
       assert.deepEqual(run.sourceResults, []);
+
+      scheduledThreadShell = {
+        latestTurn: {
+          state: "completed",
+          completedAt: "2026-09-05T07:05:00.000Z",
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        session: null,
+      };
+      assert.equal(yield* service.reconcileAgentRuns, 1);
+      const completed = (yield* service.listRuns(created.id, 20))[0];
+      assert.equal(completed?.status, "succeeded");
+      assert.equal(completed?.finishedAt, "2026-09-05T07:05:00.000Z");
+    }),
+  );
+
+  it.effect("surfaces scheduled agent approvals and resumes tracking afterward", () =>
+    Effect.gen(function* () {
+      scheduledThreadShell = null;
+      const service = yield* AxisScheduledActivityRunner;
+      const created = yield* service.create(
+        decodeDraft({
+          id: "agent_needs_attention",
+          name: "Agent needs attention",
+          contextId: "personal",
+          action: {
+            kind: "agentTurn",
+            project: { environmentId: "env", projectId: "personal_project" },
+            provider: { environmentId: "env", instanceId: "codex" },
+            model: "gpt-5.6-sol",
+            title: "Daily brief",
+            prompt: "Prepare the brief and ask before publishing.",
+          },
+          schedule: {
+            kind: "interval",
+            everyMinutes: 480,
+            anchorAt: "2026-09-05T08:00:00.000Z",
+          },
+        }),
+      );
+      const run = yield* service.runNow(created.id);
+      assert.equal(run.status, "running");
+      assert.isNotNull(run.threadId);
+      scheduledThreadShell = {
+        id: ThreadId.make(run.threadId!),
+        latestTurn: { state: "running", completedAt: null },
+        hasPendingApprovals: true,
+        hasPendingUserInput: false,
+        session: null,
+      };
+
+      assert.equal(yield* service.reconcileAgentRuns, 1);
+      const waiting = (yield* service.listRuns(created.id, 20))[0];
+      assert.equal(waiting?.status, "needs-attention");
+      assert.match(waiting?.message ?? "", /waiting for approval/);
+
+      scheduledThreadShell = {
+        id: ThreadId.make(run.threadId!),
+        latestTurn: {
+          state: "completed",
+          completedAt: "2026-09-05T07:10:00.000Z",
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        session: null,
+      };
+      assert.equal(yield* service.reconcileAgentRuns, 1);
+      assert.equal((yield* service.listRuns(created.id, 20))[0]?.status, "succeeded");
     }),
   );
 

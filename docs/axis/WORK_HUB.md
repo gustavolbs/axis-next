@@ -167,5 +167,10 @@ item's source context and only the provider/MCP bindings allowed there.
 
 The UI, persisted source selection, per-source cache policy, cache store, server-authoritative
 manual Codex/Claude MCP sync, scheduled source refresh, and scheduled agent Threads are implemented.
+An agent activity accepts an arbitrary prompt and can therefore run recurring research or briefing
+work with the selected provider's available tools. Axis follows the canonical T3 Turn after dispatch
+and records completion, failure, interruption, missing Threads, and approval/user-input attention in
+the run history. Generated artifacts are currently ordinary files in the bound Project; standalone
+artifact publishing and delivery destinations remain future work.
 Provider adapters beyond Codex and Claude, richer connector-specific mappings, source-system writes,
 and a native mobile presentation remain later implementation slices.
