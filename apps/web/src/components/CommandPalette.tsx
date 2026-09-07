@@ -574,6 +574,7 @@ function OpenCommandPaletteDialog(props: {
   readonly openOverlayMode: (mode: SearchOverlayMode) => void;
   readonly clearOpenIntent: () => void;
 }) {
+  const { start: startStandaloneChat } = useNewStandaloneChat();
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
@@ -1191,10 +1192,18 @@ function OpenCommandPaletteDialog(props: {
           return (
             <ThreadCommandSubtitle
               environmentId={thread.environmentId}
-              projectCwd={projectCwdById.get(thread.projectId) ?? null}
-              projectFaviconPath={projectFaviconPathById.get(thread.projectId) ?? null}
+              projectCwd={
+                thread.projectId === null ? null : (projectCwdById.get(thread.projectId) ?? null)
+              }
+              projectFaviconPath={
+                thread.projectId === null
+                  ? null
+                  : (projectFaviconPathById.get(thread.projectId) ?? null)
+              }
               projectIcon={
-                projectIconByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                thread.projectId === null
+                  ? null
+                  : (projectIconByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null)
               }
               projectTitle={projectTitle ?? null}
               branch={thread.branch}
@@ -1735,10 +1744,10 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:scratch",
     searchTerms: ["scratch", "chat", "scratch chat", "no project"],
-    title: "Open chats",
+    title: "New chat",
     icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
-      await navigate({ to: "/scratch" });
+      await startStandaloneChat();
     },
   });
 
@@ -2679,3 +2688,4 @@ function OpenCommandPaletteDialog(props: {
     </CommandPaletteContent>
   );
 }
+import { useNewStandaloneChat } from "../hooks/useNewStandaloneChat";

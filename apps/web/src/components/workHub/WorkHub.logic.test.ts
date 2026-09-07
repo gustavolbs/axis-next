@@ -7,6 +7,7 @@ import {
   buildWorkHubSourceReadiness,
   buildWorkHubWeekDays,
   buildWorkHubCalendarDaySegment,
+  buildWorkHubCalendarTimeLabels,
   isWorkHubOverviewItem,
   layoutWorkHubCalendarEvents,
   resolveWorkHubCalendarMeetingLink,
@@ -127,6 +128,60 @@ describe("buildWorkHubSourceReadiness", () => {
 });
 
 describe("Work Hub calendar", () => {
+  it("converts timed events to the viewer zone while preserving the source-zone time", () => {
+    const event = decodeItem({
+      id: "zoned-event",
+      sourceId: "calendar",
+      contextId: "personal",
+      kind: "calendar-event",
+      view: "calendar",
+      nativeId: "zoned-event",
+      title: "Planning",
+      startsAt: "2026-09-05T15:00:00.000Z",
+      endsAt: "2026-09-05T16:00:00.000Z",
+      sourceTimeZone: "America/Los_Angeles",
+      updatedAt: now,
+    });
+
+    expect(buildWorkHubCalendarTimeLabels(event, "America/Sao_Paulo", "en-US")).toEqual({
+      viewer: "12:00 PM–01:00 PM",
+      source: "08:00 AM–09:00 AM",
+    });
+    expect(buildWorkHubCalendarTimeLabels(event, "America/Los_Angeles", "en-US")).toEqual({
+      viewer: "08:00 AM–09:00 AM",
+      source: null,
+    });
+    expect(
+      buildWorkHubCalendarTimeLabels(
+        { ...event, sourceTimeZone: "Not/A_Timezone" },
+        "UTC",
+        "en-US",
+      ),
+    ).toEqual({ viewer: "03:00 PM–04:00 PM", source: null });
+  });
+
+  it("keeps civil all-day dates independent of source and viewer time zones", () => {
+    const event = decodeItem({
+      id: "zoned-all-day",
+      sourceId: "calendar",
+      contextId: "personal",
+      kind: "calendar-event",
+      view: "calendar",
+      nativeId: "zoned-all-day",
+      title: "Holiday",
+      allDay: true,
+      startDate: "2026-09-05",
+      endDate: "2026-09-06",
+      sourceTimeZone: "Pacific/Auckland",
+      updatedAt: now,
+    });
+
+    expect(buildWorkHubCalendarTimeLabels(event, "America/Los_Angeles", "en-US")).toEqual({
+      viewer: null,
+      source: null,
+    });
+  });
+
   it("navigates complete Sunday-to-Saturday weeks", () => {
     const anchor = new Date(2026, 8, 5, 12);
     expect(buildWorkHubWeekDays(anchor, -1).map((day) => day.getDate())).toEqual([

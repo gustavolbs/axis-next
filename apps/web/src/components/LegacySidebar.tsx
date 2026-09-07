@@ -1283,6 +1283,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       project.memberProjects.map((member) => [member.physicalProjectKey, 0] as const),
     );
     for (const thread of projectThreads) {
+      if (thread.projectId === null) continue;
       const member = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -2178,7 +2179,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (!api) return;
       const threadKey = scopedThreadKey(threadRef);
       const thread = sidebarThreadByKeyRef.current.get(threadKey) ?? null;
-      if (!thread) return;
+      if (!thread || thread.projectId === null) return;
       const threadProject = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -2209,10 +2210,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       if (clicked === "new-thread-on-branch") {
+        const projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
         // Explicit branch carry-over: reuse the thread's worktree when it
         // has one, otherwise its branch on the local checkout.
         const result = await settlePromise(() =>
-          handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId), {
+          handleNewThread(projectRef, {
             branch: thread.branch,
             worktreePath: thread.worktreePath,
             envMode: thread.worktreePath ? "worktree" : "local",
@@ -2951,6 +2953,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         </SidebarGroup>
       }
     >
+      <StandaloneChats />
       {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
         <SidebarGroup className="px-2 pt-2 pb-0">
           <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
@@ -3229,7 +3232,7 @@ export default function LegacySidebar() {
       return null;
     }
     const activeThread = sidebarThreadByKey.get(routeThreadKey);
-    if (!activeThread) return null;
+    if (!activeThread || activeThread.projectId === null) return null;
     const physicalKey =
       projectPhysicalKeyByScopedRef.get(
         scopedProjectKey(scopeProjectRef(activeThread.environmentId, activeThread.projectId)),
@@ -3242,6 +3245,7 @@ export default function LegacySidebar() {
   const threadsByProjectKey = useMemo(() => {
     const next = new Map<string, SidebarThreadSummary[]>();
     for (const thread of sidebarThreads) {
+      if (thread.projectId === null) continue;
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -3373,6 +3377,7 @@ export default function LegacySidebar() {
       id: project.projectKey,
     }));
     const sortableThreads = visibleThreads.map((thread) => {
+      if (thread.projectId === null) return thread;
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -3767,3 +3772,4 @@ export default function LegacySidebar() {
     </>
   );
 }
+import { StandaloneChats } from "./sidebar/StandaloneChats";

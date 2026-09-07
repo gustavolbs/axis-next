@@ -51,6 +51,52 @@ export const AxisWorkHubCalendarDate = Schema.String.pipe(
 );
 export type AxisWorkHubCalendarDate = typeof AxisWorkHubCalendarDate.Type;
 
+export const AxisWorkHubCalendarResponseStatus = Schema.Literals([
+  "none",
+  "needs-action",
+  "accepted",
+  "declined",
+  "tentative",
+  "organizer",
+]);
+export type AxisWorkHubCalendarResponseStatus = typeof AxisWorkHubCalendarResponseStatus.Type;
+
+export const AxisWorkHubCalendarPerson = Schema.Struct({
+  name: Schema.NullOr(Schema.String),
+  email: Schema.NullOr(Schema.String),
+});
+export type AxisWorkHubCalendarPerson = typeof AxisWorkHubCalendarPerson.Type;
+
+export const AxisWorkHubCalendarParticipant = Schema.Struct({
+  name: Schema.NullOr(Schema.String),
+  email: Schema.NullOr(Schema.String),
+  responseStatus: Schema.NullOr(AxisWorkHubCalendarResponseStatus),
+});
+export type AxisWorkHubCalendarParticipant = typeof AxisWorkHubCalendarParticipant.Type;
+
+export const AxisWorkHubCalendarIdentity = Schema.Struct({
+  nativeId: Schema.NullOr(Schema.String),
+  name: Schema.NullOr(Schema.String),
+});
+export type AxisWorkHubCalendarIdentity = typeof AxisWorkHubCalendarIdentity.Type;
+
+export const AxisWorkHubCalendarRecurrence = Schema.Struct({
+  seriesId: Schema.NullOr(Schema.String),
+  rule: Schema.NullOr(Schema.String),
+});
+export type AxisWorkHubCalendarRecurrence = typeof AxisWorkHubCalendarRecurrence.Type;
+
+const CalendarMetadataFields = {
+  /** IANA time zone supplied by the source, independent of the viewer's zone. */
+  sourceTimeZone: Schema.NullOr(Schema.String),
+  calendar: Schema.NullOr(AxisWorkHubCalendarIdentity),
+  organizer: Schema.NullOr(AxisWorkHubCalendarPerson),
+  participants: Schema.Array(AxisWorkHubCalendarParticipant),
+  responseStatus: Schema.NullOr(AxisWorkHubCalendarResponseStatus),
+  recurrence: Schema.NullOr(AxisWorkHubCalendarRecurrence),
+  cancelled: Schema.Boolean,
+};
+
 /** Provider-produced item before Axis attaches source identity and cache metadata. */
 export const AxisWorkHubCollectedItem = Schema.Struct({
   kind: AxisWorkHubItemKind,
@@ -68,6 +114,25 @@ export const AxisWorkHubCollectedItem = Schema.Struct({
   ),
   endDate: Schema.NullOr(AxisWorkHubCalendarDate).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  sourceTimeZone: CalendarMetadataFields.sourceTimeZone.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  calendar: CalendarMetadataFields.calendar.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  organizer: CalendarMetadataFields.organizer.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  participants: CalendarMetadataFields.participants.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  responseStatus: CalendarMetadataFields.responseStatus.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  recurrence: CalendarMetadataFields.recurrence.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  cancelled: CalendarMetadataFields.cancelled.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   status: Schema.NullOr(Schema.String),
   assignee: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -107,6 +172,25 @@ export const AxisWorkHubCachedItem = Schema.Struct({
   ),
   endDate: Schema.NullOr(AxisWorkHubCalendarDate).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  sourceTimeZone: CalendarMetadataFields.sourceTimeZone.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  calendar: CalendarMetadataFields.calendar.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  organizer: CalendarMetadataFields.organizer.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  participants: CalendarMetadataFields.participants.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  responseStatus: CalendarMetadataFields.responseStatus.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  recurrence: CalendarMetadataFields.recurrence.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  cancelled: CalendarMetadataFields.cancelled.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   status: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   assignee: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),

@@ -449,14 +449,8 @@ const AxisScratchChatMessageLogLayerLive = AxisScratchChatMessageLog.layer.pipe(
   Layer.provide(ServerEnvironmentLayerLive),
 );
 const AxisScratchChatRunnerLayerLive = AxisScratchChatRunner.layer.pipe(
-  Layer.provide(ProviderSessionRuntime.layer),
   Layer.provide(AxisScratchChatStoreLayerLive),
   Layer.provide(AxisScratchChatMessageLogLayerLive),
-  Layer.provide(ProviderInstanceRegistryHydrationLive),
-  Layer.provide(ServerEnvironmentLayerLive),
-  Layer.provide(OrchestrationLayerLive),
-  Layer.provide(ProviderLayerLive),
-  Layer.provide(PlatformServicesLive),
 );
 
 const AuthLayerLive = EnvironmentAuth.layer.pipe(

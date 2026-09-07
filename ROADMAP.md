@@ -167,10 +167,10 @@ context-isolation rules as API-key providers.
 - [x] Provide meeting **Join** actions and event-detail tooltips.
 - [x] Lay out overlapping events in deterministic side-by-side columns.
 - [x] Model and render all-day and multi-day events.
-- [ ] Preserve source timezone and clearly convert it to the viewer timezone.
-- [ ] Add participants, calendar identity, organizer, response status, recurrence, and cancellation to
+- [x] Preserve source timezone and clearly convert it to the viewer timezone.
+- [x] Add participants, calendar identity, organizer, response status, recurrence, and cancellation to
       the normalized contract.
-- [ ] Add integrated component tests for event positioning, overlaps, week boundaries, DST, join
+- [x] Add integrated component tests for event positioning, overlaps, week boundaries, DST, join
       links, tooltips, and context colors.
 - [ ] Add source-confirmed accept/decline/tentative actions.
 
@@ -337,7 +337,7 @@ and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
 - [x] Complete source-level single-flight/monotonic cache writes and test races without sleeps.
 - [x] Ship the desktop app as Axis (name, bundle identity, icons) at packaging time only, and publish
       signed macOS releases that the in-app updater can consume.
-- [ ] Make catalog updates and dependent cache/schedule cleanup transactional or reconciled.
+- [x] Make catalog updates and dependent cache/schedule cleanup transactional or reconciled.
 - [ ] Add scheduler retention for old run history and bounded diagnostics.
 - [ ] Add metrics/logging for connector duration, cache hit/skip, failures, scheduled drift, dispatch,
       and learning lifecycle without logging secrets or Company data.

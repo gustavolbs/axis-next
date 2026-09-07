@@ -15,7 +15,8 @@ export type ArchivedThreadSortOrder = "newest" | "oldest";
 
 export interface ArchivedThreadGroup {
   readonly key: string;
-  readonly project: EnvironmentProject;
+  readonly project: EnvironmentProject | null;
+  readonly environmentId: EnvironmentId;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
@@ -44,7 +45,7 @@ export function buildArchivedThreadGroups(input: {
     }
 
     const environmentLabel = input.environmentLabels[entry.environmentId] ?? null;
-    const threadsByProjectId = new Map<string, EnvironmentThreadShell[]>();
+    const threadsByProjectId = new Map<string | null, EnvironmentThreadShell[]>();
     for (const thread of entry.snapshot.threads) {
       if (thread.archivedAt === null) {
         continue;
@@ -54,13 +55,13 @@ export function buildArchivedThreadGroups(input: {
       threadsByProjectId.set(thread.projectId, threads);
     }
 
-    for (const rawProject of entry.snapshot.projects) {
-      const project = scopeProject(entry.environmentId, rawProject);
-      const projectThreads = threadsByProjectId.get(project.id) ?? [];
+    for (const rawProject of [null, ...entry.snapshot.projects]) {
+      const project = rawProject === null ? null : scopeProject(entry.environmentId, rawProject);
+      const projectThreads = threadsByProjectId.get(project?.id ?? null) ?? [];
       const groupMatches =
         query.length === 0 ||
-        matchesQuery(project.title, query) ||
-        matchesQuery(project.workspaceRoot, query) ||
+        matchesQuery(project?.title ?? "Chats", query) ||
+        matchesQuery(project?.workspaceRoot ?? null, query) ||
         matchesQuery(environmentLabel, query);
       const matchingThreads = groupMatches
         ? projectThreads
@@ -74,7 +75,8 @@ export function buildArchivedThreadGroups(input: {
 
       const timestampOrder = input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number;
       groups.push({
-        key: scopedProjectKey(project.environmentId, project.id),
+        key: scopedProjectKey(entry.environmentId, project?.id ?? null),
+        environmentId: entry.environmentId,
         project,
         threads: Arr.sort(
           matchingThreads,
@@ -98,7 +100,7 @@ export function buildArchivedThreadGroups(input: {
       Order.Struct({ timestamp: timestampOrder, title: Order.String, key: Order.String }),
       (group: ArchivedThreadGroup) => ({
         timestamp: group.threads[0] ? archiveTimestamp(group.threads[0]) : 0,
-        title: group.project.title,
+        title: group.project?.title ?? "Chats",
         key: group.key,
       }),
     ),

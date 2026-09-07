@@ -57,7 +57,7 @@ export const make = Effect.gen(function* () {
       candidates,
       (thread) =>
         Effect.gen(function* () {
-          const project = projects.get(thread.projectId);
+          const project = thread.projectId === null ? undefined : projects.get(thread.projectId);
           if (project === undefined || thread.linkedPullRequest != null) return;
           const worktreeExists =
             thread.worktreePath !== null &&

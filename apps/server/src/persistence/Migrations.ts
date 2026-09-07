@@ -10,6 +10,9 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
+import Migration0055 from "./Migrations/055_ProjectlessThreads.ts";
+import Migration0057 from "./Migrations/057_ImportStandaloneChats.ts";
+import Migration0056 from "./Migrations/056_AxisContextCleanup.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -132,6 +135,9 @@ export const migrationEntries = [
   [52, "AxisScratchChats", Migration0052],
   [53, "AxisStandaloneChats", Migration0053],
   [54, "AxisWorkHubSourceStatus", Migration0054],
+  [55, "ProjectlessThreads", Migration0055],
+  [56, "AxisContextCleanup", Migration0056],
+  [57, "ImportStandaloneChats", Migration0057],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

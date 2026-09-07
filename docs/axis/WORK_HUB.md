@@ -33,8 +33,9 @@ Company's content is never inserted into another Company's model context to prod
 
 Calendar presents Personal and Company events in a familiar Teams, Outlook, or Google Calendar-style
 view. Events are normalized for layout and filtering while retaining their native source ID,
-start/end time, status, meeting/deep links, location, and source context. Calendar identity,
-participants, all-day/multi-day semantics, and explicit source time zone remain contract extensions.
+start/end time, status, meeting/deep links, location, and source context. Calendar records also retain
+calendar identity, organizer, participants and responses, recurrence, cancellation,
+all-day/multi-day semantics, and the explicit source time zone.
 
 Overlapping events from different contexts may appear together for the user. Visibility in the
 combined calendar does not grant either Company access to the other event. Sensitive details may be

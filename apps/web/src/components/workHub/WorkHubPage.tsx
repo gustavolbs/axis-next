@@ -33,6 +33,7 @@ import { SidebarInset } from "../ui/sidebar";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
   buildWorkHubCalendarDaySegment,
+  buildWorkHubCalendarTimeLabels,
   buildWorkHubSourceReadiness,
   buildWorkHubWeekDays,
   isWorkHubOverviewItem,
@@ -221,33 +222,35 @@ function CalendarEvent({
   item,
   contextLabel,
   contextIndex,
+  viewerTimeZone,
   allDay = item.allDay,
 }: {
   readonly item: AxisWorkHubCachedItem;
   readonly contextLabel: string;
   readonly contextIndex: number;
+  readonly viewerTimeZone: string;
   readonly allDay?: boolean;
 }) {
   const startsAt = item.startsAt ? new Date(item.startsAt) : null;
-  const endsAt = item.endsAt ? new Date(item.endsAt) : null;
-  const meetingLink = resolveWorkHubCalendarMeetingLink(item);
+  const meetingLink = item.cancelled ? null : resolveWorkHubCalendarMeetingLink(item);
+  const timeLabels = buildWorkHubCalendarTimeLabels(item, viewerTimeZone);
   const calendarDateLabel = item.startDate
     ? `${item.startDate}${item.endDate ? ` – ${item.endDate}` : ""}`
     : null;
-  const timeLabel = allDay
-    ? "All day"
-    : startsAt
-      ? `${startsAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}${
-          endsAt
-            ? `–${endsAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
-            : ""
-        }`
-      : null;
+  const timeLabel = allDay ? "All day" : timeLabels.viewer;
+  const calendarLabel = item.calendar?.name ?? item.calendar?.nativeId;
+  const organizerLabel = item.organizer?.name ?? item.organizer?.email;
+  const responseLabel = item.responseStatus
+    ? item.responseStatus === "needs-action"
+      ? "Needs action"
+      : `${item.responseStatus.charAt(0).toUpperCase()}${item.responseStatus.slice(1)}`
+    : null;
   return (
     <div
       className={cn(
         "group relative h-full overflow-hidden rounded-md border-l-[3px] p-1.5 shadow-xs transition-colors",
         !allDay && "min-h-11",
+        item.cancelled && "opacity-65",
         contextEventTone(contextIndex),
       )}
     >
@@ -263,14 +266,26 @@ function CalendarEvent({
           {timeLabel ? (
             <p className="truncate text-[10px] font-medium opacity-75">{timeLabel}</p>
           ) : null}
-          <p className="truncate text-left text-xs font-semibold">{item.title}</p>
+          <p
+            className={cn(
+              "truncate text-left text-xs font-semibold",
+              item.cancelled && "line-through",
+            )}
+          >
+            {item.title}
+          </p>
         </TooltipTrigger>
         <TooltipPopup side="right" align="start" className="w-72 max-w-[calc(100vw-2rem)] p-1.5">
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <span className={cn("size-2 shrink-0 rounded-full", contextTone(contextIndex))} />
             {contextLabel}
           </div>
-          <p className="mt-1 font-medium text-foreground">{item.title}</p>
+          <div className="mt-1 flex items-start justify-between gap-2">
+            <p className={cn("font-medium text-foreground", item.cancelled && "line-through")}>
+              {item.title}
+            </p>
+            {item.cancelled ? <Badge variant="outline">Cancelled</Badge> : null}
+          </div>
           {startsAt || calendarDateLabel ? (
             <p className="mt-1 text-xs text-muted-foreground">
               {startsAt
@@ -281,6 +296,57 @@ function CalendarEvent({
                   })
                 : calendarDateLabel}
               {timeLabel ? ` · ${timeLabel}` : ""}
+            </p>
+          ) : null}
+          {allDay && item.sourceTimeZone ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Source calendar date · {item.sourceTimeZone}
+            </p>
+          ) : timeLabels.viewer ? (
+            <div className="mt-1 text-xs text-muted-foreground">
+              <p>
+                Viewer ({viewerTimeZone}) · {timeLabels.viewer}
+              </p>
+              {timeLabels.source && item.sourceTimeZone ? (
+                <p>
+                  Source ({item.sourceTimeZone}) · {timeLabels.source}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {calendarLabel ? (
+            <p className="mt-1 break-words text-xs text-muted-foreground">
+              Calendar · {calendarLabel}
+            </p>
+          ) : null}
+          {organizerLabel ? (
+            <p className="mt-1 break-words text-xs text-muted-foreground">
+              Organizer · {organizerLabel}
+            </p>
+          ) : null}
+          {responseLabel ? (
+            <p className="mt-1 text-xs text-muted-foreground">Your response · {responseLabel}</p>
+          ) : null}
+          {item.recurrence ? (
+            <p className="mt-1 break-words text-xs text-muted-foreground">
+              Recurring
+              {item.recurrence.rule ? ` · ${item.recurrence.rule}` : ""}
+              {!item.recurrence.rule && item.recurrence.seriesId
+                ? ` · series ${item.recurrence.seriesId}`
+                : ""}
+            </p>
+          ) : null}
+          {item.participants.length > 0 ? (
+            <p className="mt-1 line-clamp-3 break-words text-xs text-muted-foreground">
+              Participants ·{" "}
+              {item.participants
+                .map((participant) => {
+                  const identity = participant.name ?? participant.email ?? "Unknown";
+                  return participant.responseStatus
+                    ? `${identity} (${participant.responseStatus})`
+                    : identity;
+                })
+                .join(", ")}
             </p>
           ) : null}
           {item.location ? (
@@ -318,7 +384,7 @@ function CalendarEvent({
   );
 }
 
-function CalendarView({
+export function CalendarView({
   contexts,
   items,
 }: {
@@ -327,6 +393,10 @@ function CalendarView({
 }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [now, setNow] = useState(() => new Date());
+  const viewerTimeZone = useMemo(
+    () => new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    [],
+  );
   const calendarScrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
@@ -358,7 +428,7 @@ function CalendarView({
         <div>
           <h2 className="font-medium text-foreground">{weekLabel}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Events remain labeled with their Personal or Company source.
+            Times shown in {viewerTimeZone}. Events retain their source time zone and context.
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
@@ -483,6 +553,7 @@ function CalendarView({
                           allDay
                           contextLabel={contextName(contexts, item.contextId)}
                           contextIndex={contextIndex}
+                          viewerTimeZone={viewerTimeZone}
                         />
                       </div>
                     );
@@ -531,6 +602,7 @@ function CalendarView({
                           item={item}
                           contextLabel={contextName(contexts, item.contextId)}
                           contextIndex={contextIndex}
+                          viewerTimeZone={viewerTimeZone}
                         />
                       </div>
                     );

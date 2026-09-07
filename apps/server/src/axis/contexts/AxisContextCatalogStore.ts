@@ -105,6 +105,7 @@ export const make = Effect.gen(function* () {
               updated_at AS "updatedAt"
           `;
           if (rows[0] !== undefined) {
+            const contextIds = input.catalog.contexts.map((context) => context.id);
             const sourceIds = input.catalog.workHubSources.map((source) => source.id);
             if (sourceIds.length === 0) {
               yield* sql`DELETE FROM axis_work_hub_cache`;
@@ -119,6 +120,77 @@ export const make = Effect.gen(function* () {
                 WHERE source_id NOT IN ${sql.in(sourceIds)}
               `;
             }
+
+            yield* sql`
+              DELETE FROM axis_scheduled_activities
+              WHERE context_id NOT IN ${sql.in(contextIds)}
+                 OR (
+                   json_extract(activity_json, '$.action.kind') = 'workHubSync'
+                   AND EXISTS (
+                     SELECT 1
+                     FROM json_each(activity_json, '$.action.sourceIds') AS scheduled_source
+                     WHERE NOT EXISTS (
+                       SELECT 1
+                       FROM json_each(${catalogJson}, '$.workHubSources') AS source
+                       WHERE json_extract(source.value, '$.id') = scheduled_source.value
+                         AND json_extract(source.value, '$.contextId') = context_id
+                     )
+                   )
+                 )
+                 OR (
+                   json_extract(activity_json, '$.action.kind') = 'agentTurn'
+                   AND (
+                     NOT EXISTS (
+                       SELECT 1
+                       FROM json_each(${catalogJson}, '$.projectBindings') AS binding
+                       WHERE json_extract(binding.value, '$.contextId') = context_id
+                         AND json_extract(binding.value, '$.project.environmentId') =
+                             json_extract(activity_json, '$.action.project.environmentId')
+                         AND json_extract(binding.value, '$.project.projectId') =
+                             json_extract(activity_json, '$.action.project.projectId')
+                     )
+                     OR NOT EXISTS (
+                       SELECT 1
+                       FROM json_each(${catalogJson}, '$.providerOwnerships') AS ownership
+                       WHERE json_extract(ownership.value, '$.contextId') = context_id
+                         AND json_extract(ownership.value, '$.provider.environmentId') =
+                             json_extract(activity_json, '$.action.provider.environmentId')
+                         AND json_extract(ownership.value, '$.provider.instanceId') =
+                             json_extract(activity_json, '$.action.provider.instanceId')
+                       UNION ALL
+                       SELECT 1
+                       FROM json_each(${catalogJson}, '$.providerAccessGrants') AS grant
+                       WHERE json_extract(grant.value, '$.targetContextId') = context_id
+                         AND json_extract(grant.value, '$.status') = 'active'
+                         AND json_extract(grant.value, '$.provider.environmentId') =
+                             json_extract(activity_json, '$.action.provider.environmentId')
+                         AND json_extract(grant.value, '$.provider.instanceId') =
+                             json_extract(activity_json, '$.action.provider.instanceId')
+                     )
+                   )
+                 )
+            `;
+
+            yield* sql`
+              DELETE FROM axis_learning_active_versions
+              WHERE context_id NOT IN ${sql.in(contextIds)}
+            `;
+            yield* sql`
+              DELETE FROM axis_learning_lifecycle_events
+              WHERE context_id NOT IN ${sql.in(contextIds)}
+            `;
+            yield* sql`
+              DELETE FROM axis_learning_versions
+              WHERE context_id NOT IN ${sql.in(contextIds)}
+            `;
+            yield* sql`
+              DELETE FROM axis_learning_proposals
+              WHERE context_id NOT IN ${sql.in(contextIds)}
+            `;
+            yield* sql`
+              DELETE FROM axis_learning_evidence
+              WHERE context_id NOT IN ${sql.in(contextIds)}
+            `;
           }
           return rows;
         }),

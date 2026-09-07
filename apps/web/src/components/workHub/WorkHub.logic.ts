@@ -74,6 +74,51 @@ export interface WorkHubCalendarDaySegment {
   readonly allDay: boolean;
 }
 
+export interface WorkHubCalendarTimeLabels {
+  readonly viewer: string | null;
+  readonly source: string | null;
+}
+
+function formatCalendarTimeRange(
+  startsAt: Date,
+  endsAt: Date | null,
+  timeZone: string,
+  locale?: string,
+): string | null {
+  try {
+    const formatter = new Intl.DateTimeFormat(locale, {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone,
+    });
+    const start = formatter.format(startsAt);
+    return endsAt ? `${start}–${formatter.format(endsAt)}` : start;
+  } catch {
+    return null;
+  }
+}
+
+/** Formats the same instant in the viewer zone and, when different, its source zone. */
+export function buildWorkHubCalendarTimeLabels(
+  item: AxisWorkHubCachedItem,
+  viewerTimeZone: string,
+  locale?: string,
+): WorkHubCalendarTimeLabels {
+  if (item.allDay || item.startsAt === null) return { viewer: null, source: null };
+  const startsAt = new Date(item.startsAt);
+  const endsAt = item.endsAt === null ? null : new Date(item.endsAt);
+  if (Number.isNaN(startsAt.getTime()) || (endsAt !== null && Number.isNaN(endsAt.getTime()))) {
+    return { viewer: null, source: null };
+  }
+  const viewer = formatCalendarTimeRange(startsAt, endsAt, viewerTimeZone, locale);
+  const sourceTimeZone = item.sourceTimeZone;
+  const source =
+    sourceTimeZone !== null && sourceTimeZone !== viewerTimeZone
+      ? formatCalendarTimeRange(startsAt, endsAt, sourceTimeZone, locale)
+      : null;
+  return { viewer, source };
+}
+
 function calendarDateKey(date: Date): string {
   return `${date.getFullYear().toString().padStart(4, "0")}-${(date.getMonth() + 1)
     .toString()

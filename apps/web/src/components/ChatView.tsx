@@ -6334,7 +6334,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
-    if (!activeProject) {
+    if (!activeProject && (!isServerThread || activeThread.projectId !== null)) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
@@ -6594,7 +6594,7 @@ export default function ChatView(props: ChatViewProps) {
     const title = truncate(titleSeed);
     const threadCreateModelSelection = createModelSelection(
       ctxSelectedModelSelection.instanceId,
-      ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
+      ctxSelectedModel || activeProject?.defaultModelSelection?.model || DEFAULT_MODEL,
       ctxSelectedModelSelection.options,
     );
 
@@ -6649,7 +6649,7 @@ export default function ChatView(props: ChatViewProps) {
               ...(isLocalDraftThread
                 ? {
                     createThread: {
-                      projectId: activeProject.id,
+                      projectId: activeProject?.id ?? null,
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
@@ -6660,7 +6660,7 @@ export default function ChatView(props: ChatViewProps) {
                     },
                   }
                 : {}),
-              ...(baseBranchForWorktree
+              ...(baseBranchForWorktree && activeProject
                 ? {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
@@ -6709,7 +6709,7 @@ export default function ChatView(props: ChatViewProps) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
         acknowledgeActiveThreadWoke();
-        if (backgroundThreadRef) {
+        if (backgroundThreadRef && activeProject) {
           markPromotedDraftThreadByRef(backgroundThreadRef);
           try {
             const nextDraft = await handleNewThread(

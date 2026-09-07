@@ -11,6 +11,7 @@ import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useNewStandaloneChat } from "../../hooks/useNewStandaloneChat";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -188,10 +189,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/work-hub" });
   }, [closeMobileSidebar, navigate]);
 
+  const { start: startStandaloneChat } = useNewStandaloneChat();
   const handleScratchClick = useCallback(() => {
     closeMobileSidebar();
-    void navigate({ to: "/scratch" });
-  }, [closeMobileSidebar, navigate]);
+    void startStandaloneChat();
+  }, [closeMobileSidebar, startStandaloneChat]);
 
   const handleBackClick = useCallback(() => {
     closeMobileSidebar();
@@ -220,7 +222,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
           <SidebarUtilityItem
             icon={<MessageSquareIcon />}
-            label="Chats"
+            label="New chat"
             onClick={handleScratchClick}
           />
           <SidebarUtilityItem

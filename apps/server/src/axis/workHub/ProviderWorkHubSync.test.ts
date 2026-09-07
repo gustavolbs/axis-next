@@ -60,6 +60,19 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
           startsAt: "2026-09-06T12:00:00.000Z",
           endsAt: "2026-09-06T13:00:00.000Z",
           meetingLink: "https://meet.example.com/planning",
+          sourceTimeZone: "America/Los_Angeles",
+          calendar: { nativeId: "primary", name: "Work" },
+          organizer: { name: "Grace Hopper", email: "grace@example.com" },
+          participants: [
+            {
+              name: "Ada Lovelace",
+              email: "ada@example.com",
+              responseStatus: "accepted",
+            },
+          ],
+          responseStatus: "tentative",
+          recurrence: { seriesId: "planning-series", rule: "FREQ=WEEKLY" },
+          cancelled: false,
         },
         {
           ...baseItem,
@@ -141,6 +154,17 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
       "new-mention",
     ]);
     expect(snapshot.items[0]?.meetingLink).toBe("https://meet.example.com/planning");
+    expect(snapshot.items[0]).toMatchObject({
+      sourceTimeZone: "America/Los_Angeles",
+      calendar: { nativeId: "primary", name: "Work" },
+      organizer: { name: "Grace Hopper", email: "grace@example.com" },
+      participants: [
+        { name: "Ada Lovelace", email: "ada@example.com", responseStatus: "accepted" },
+      ],
+      responseStatus: "tentative",
+      recurrence: { seriesId: "planning-series", rule: "FREQ=WEEKLY" },
+      cancelled: false,
+    });
     expect(snapshot.items[1]?.deepLink).toBeNull();
     expect(snapshot.items[3]).toMatchObject({
       assignee: "Ada Lovelace",
@@ -267,6 +291,9 @@ describe("buildCollectionPrompt", () => {
     expect(prompt).toContain("after:2026-09-04");
     expect(prompt).toContain("sourceUpdatedAt");
     expect(prompt).toContain("assignee");
+    expect(prompt).toContain("sourceTimeZone");
+    expect(prompt).toContain("every participant");
+    expect(prompt).toContain("cancelled=true");
   });
 });
 

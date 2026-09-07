@@ -9,7 +9,7 @@ it.effect("preserves legacy chat data and allows standalone rows", () =>
     const sql = yield* SqlClient.SqlClient;
     yield* runMigrations({ toMigrationInclusive: 52 });
     yield* sql`INSERT INTO axis_scratch_chats VALUES ('old', 'env', '{"title":"Existing"}', 'project', 'session', NULL, NULL, '2026-09-07')`;
-    yield* runMigrations();
+    yield* runMigrations({ toMigrationInclusive: 53 });
     yield* sql`INSERT INTO axis_scratch_chats VALUES ('new', 'env', '{}', NULL, 'new-session', NULL, NULL, '2026-09-07')`;
     const rows = yield* sql<{
       id: string;

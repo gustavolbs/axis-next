@@ -2607,7 +2607,7 @@ const makeWsRpcLayer = (
                       }),
                   ),
                 );
-              if (Option.isNone(thread)) {
+              if (Option.isNone(thread) || thread.value.projectId === null) {
                 return yield* new AssetWorkspaceContextNotFoundError({
                   resource: input.resource,
                 });

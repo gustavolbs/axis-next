@@ -1,11 +1,8 @@
 /**
  * Axis scratch chat contracts.
  *
- * A scratch chat is a plain-text conversation with an LLM provider that is
- * not tied to any T3 Project, Git diff, checkpoint, or shell. The runner
- * owns a provider session without creating orchestration projects or threads.
- * The store owns the metadata, and the message bodies live in JSONL under
- * `<stateDir>/scratch/<chatId>.jsonl`.
+ * Legacy metadata retained to resolve old scratch URLs after migration.
+ * Standalone conversations now use orchestration threads with projectId null.
  *
  * @module axisScratchChat
  */
@@ -79,7 +76,7 @@ export const AxisScratchChat = Schema.Struct({
   contextId: Schema.NullOr(AxisContextId),
   /** Only populated by legacy chats. New chats have no project. */
   backingProjectId: Schema.NullOr(ProjectId),
-  /** Provider session routing key; does not require an orchestration thread. */
+  /** Canonical orchestration thread id after importing legacy conversations. */
   backingThreadId: ThreadId,
   lastMessagePreview: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(280))),
   messageCount: NonNegativeInt,

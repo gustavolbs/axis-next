@@ -84,7 +84,7 @@ function PullRequestIcon(props: { readonly size: number; readonly color: string 
 
 export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: {
   readonly variant: ThreadListVariant;
-  readonly project: EnvironmentProject;
+  readonly project: EnvironmentProject | null;
   readonly title: string;
   readonly threadCount: number;
   readonly collapsed: boolean;
@@ -139,14 +139,16 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
         hitSlop={{ ...verticalHitSlop, left: compact ? 20 : 12 }}
         onPress={handleToggle}
       >
-        <ProjectFavicon
-          environmentId={props.project.environmentId}
-          faviconPath={props.project.faviconPath}
-          open={!props.collapsed}
-          size={compact ? 22 : 18}
-          projectTitle={props.project.title}
-          workspaceRoot={props.project.workspaceRoot}
-        />
+        {props.project !== null && (
+          <ProjectFavicon
+            environmentId={props.project.environmentId}
+            faviconPath={props.project.faviconPath}
+            open={!props.collapsed}
+            size={compact ? 22 : 18}
+            projectTitle={props.project.title}
+            workspaceRoot={props.project.workspaceRoot}
+          />
+        )}
         <Text
           className={
             compact
