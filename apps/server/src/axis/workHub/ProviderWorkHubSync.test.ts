@@ -134,12 +134,13 @@ describe("buildCollectionPrompt", () => {
     previousRefreshedAt: "2026-09-04T12:00:00.000Z",
   });
 
-  it("asks for a single three-week calendar range instead of one call per week", () => {
+  it("uses the source calendar policy in one contiguous provider query", () => {
     const prompt = buildCollectionPrompt(request, now);
     const bounds = prompt.match(/start: "([^"]+)" end: "([^"]+)"/u);
 
     expect(bounds).not.toBeNull();
-    expect(Date.parse(bounds![2]!) - Date.parse(bounds![1]!)).toBe(21 * 86_400_000);
+    expect(Date.parse(bounds![1]!)).toBe(now - 14 * 86_400_000);
+    expect(Date.parse(bounds![2]!)).toBe(now + 90 * 86_400_000);
     // The old prompt emitted a numbered slice list; one range means one query.
     expect(prompt).not.toMatch(/PER SLICE/u);
     expect(prompt.match(/afterDateTime/gu)).toHaveLength(1);

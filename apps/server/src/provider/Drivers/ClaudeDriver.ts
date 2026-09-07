@@ -12,7 +12,7 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
-import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { ClaudeSettings, getProviderGateway, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
@@ -36,9 +36,11 @@ import {
   probeClaudeCapabilities,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
-import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
+import { resolveClaudeModelCatalog, type ClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
+import { makeGatewayModelSource } from "../providerGatewayModels.ts";
+import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -111,7 +113,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
   },
   configSchema: ClaudeSettings,
   defaultConfig: (): ClaudeSettings => decodeClaudeSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, gateway, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -121,8 +123,62 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
-      const modelCatalog = modelManifest.current.pipe(Effect.map(resolveClaudeModelCatalog));
       const processEnv = mergeProviderInstanceEnvironment(environment);
+      const gatewayModels = yield* makeGatewayModelSource({
+        gateway: getProviderGateway(gateway),
+        environment: processEnv,
+        httpClient,
+      });
+      /**
+       * A gateway instance's models belong to the gateway, not to Anthropic's
+       * manifest — the manifest's slugs are not necessarily callable through
+       * it. Replace rather than merge, and only when the live listing lands;
+       * a failed read keeps the manifest catalog so the instance stays usable.
+       *
+       * Third-party models get an empty runtime profile and no version
+       * compatibility floor: we know nothing about a Gemini or DeepSeek model's
+       * behavior under Claude Code, and claiming a profile we cannot honor
+       * would show effort controls that silently do nothing.
+       */
+      const resolveCatalog = (catalog: ClaudeModelCatalog) =>
+        gatewayModels === undefined
+          ? Effect.succeed({ catalog, gatewayFailure: undefined })
+          : gatewayModels.read.pipe(
+              Effect.map(({ models, reason }) => ({
+                catalog:
+                  models === undefined
+                    ? catalog
+                    : {
+                        ...catalog,
+                        models: models.map((model) => ({ model, runtime: {}, compatibility: {} })),
+                      },
+                gatewayFailure: reason,
+              })),
+            );
+
+      /**
+       * Without this the fallback is invisible: the picker quietly shows
+       * Anthropic's catalog and reads as if the gateway only served Claude.
+       * Surfacing it on the snapshot puts the reason in the provider card,
+       * next to the models it is talking about.
+       */
+      const withGatewayModelNotice = (
+        snapshot: ServerProviderDraft,
+        gatewayFailure: string | undefined,
+      ): ServerProviderDraft =>
+        gatewayFailure === undefined
+          ? snapshot
+          : {
+              ...snapshot,
+              message: snapshot.message
+                ? `${snapshot.message} ${gatewayFailure}`
+                : `Showing Claude's own models: ${gatewayFailure}`,
+            };
+      const modelCatalog = modelManifest.current.pipe(
+        Effect.map(resolveClaudeModelCatalog),
+        Effect.flatMap(resolveCatalog),
+        Effect.map(({ catalog }) => catalog),
+      );
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -138,6 +194,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
+        gateway,
         continuationGroupKey,
       });
 
@@ -175,15 +232,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const checkProvider = modelManifest.refreshInBackground.pipe(
         Effect.andThen(
           modelManifest.current.pipe(
-            Effect.flatMap((manifest) =>
+            Effect.flatMap((manifest) => resolveCatalog(resolveClaudeModelCatalog(manifest))),
+            Effect.flatMap(({ catalog, gatewayFailure }) =>
               checkClaudeProviderStatus(
                 effectiveConfig,
                 () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
                 processEnv,
                 cwd,
-                resolveClaudeModelCatalog(manifest),
+                catalog,
                 scopedLimitNames,
-              ),
+              ).pipe(Effect.map((snapshot) => withGatewayModelNotice(snapshot, gatewayFailure))),
             ),
             Effect.map(stampIdentity),
           ),
@@ -201,9 +259,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
           modelManifest.current.pipe(
-            Effect.flatMap((manifest) =>
-              makePendingClaudeProvider(settings.provider, resolveClaudeModelCatalog(manifest)),
-            ),
+            Effect.flatMap((manifest) => resolveCatalog(resolveClaudeModelCatalog(manifest))),
+            Effect.flatMap(({ catalog }) => makePendingClaudeProvider(settings.provider, catalog)),
             Effect.map(stampIdentity),
           ),
         checkProvider,

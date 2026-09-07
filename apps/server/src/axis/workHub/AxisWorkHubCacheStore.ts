@@ -71,9 +71,28 @@ export const make = Effect.gen(function* () {
 
   const get: AxisWorkHubCacheStore["Service"]["get"] = (sourceId) =>
     sql<CacheRow>`
-      SELECT snapshot_json AS "snapshotJson"
-      FROM axis_work_hub_cache
-      WHERE source_id = ${sourceId}
+      SELECT cache.snapshot_json AS "snapshotJson"
+      FROM axis_work_hub_cache AS cache
+      WHERE cache.source_id = ${sourceId}
+        AND EXISTS (
+          SELECT 1
+          FROM axis_context_catalog AS catalog,
+               json_each(catalog.catalog_json, '$.workHubSources') AS source
+          WHERE catalog.singleton = 1
+            AND json_extract(source.value, '$.id') = cache.source_id
+            AND json_extract(source.value, '$.contextId') = cache.context_id
+            AND json_extract(source.value, '$.capabilityId') =
+                json_extract(cache.snapshot_json, '$.capabilityId')
+            AND EXISTS (
+              SELECT 1 FROM json_each(catalog.catalog_json, '$.contexts') AS context
+              WHERE json_extract(context.value, '$.id') = cache.context_id
+            )
+            AND EXISTS (
+              SELECT 1 FROM json_each(catalog.catalog_json, '$.capabilities') AS capability
+              WHERE json_extract(capability.value, '$.id') =
+                    json_extract(source.value, '$.capabilityId')
+            )
+        )
     `.pipe(
       Effect.mapError(persistenceError("read cache snapshot")),
       Effect.flatMap((rows) =>
@@ -86,9 +105,28 @@ export const make = Effect.gen(function* () {
     );
 
   const list: AxisWorkHubCacheStore["Service"]["list"] = sql<CacheRow>`
-    SELECT snapshot_json AS "snapshotJson"
-    FROM axis_work_hub_cache
-    ORDER BY context_id, source_id
+    SELECT cache.snapshot_json AS "snapshotJson"
+    FROM axis_work_hub_cache AS cache
+    WHERE EXISTS (
+      SELECT 1
+      FROM axis_context_catalog AS catalog,
+           json_each(catalog.catalog_json, '$.workHubSources') AS source
+      WHERE catalog.singleton = 1
+        AND json_extract(source.value, '$.id') = cache.source_id
+        AND json_extract(source.value, '$.contextId') = cache.context_id
+        AND json_extract(source.value, '$.capabilityId') =
+            json_extract(cache.snapshot_json, '$.capabilityId')
+        AND EXISTS (
+          SELECT 1 FROM json_each(catalog.catalog_json, '$.contexts') AS context
+          WHERE json_extract(context.value, '$.id') = cache.context_id
+        )
+        AND EXISTS (
+          SELECT 1 FROM json_each(catalog.catalog_json, '$.capabilities') AS capability
+          WHERE json_extract(capability.value, '$.id') =
+                json_extract(source.value, '$.capabilityId')
+        )
+    )
+    ORDER BY cache.context_id, cache.source_id
   `.pipe(Effect.mapError(persistenceError("list cache snapshots")), Effect.flatMap(decodeRows));
 
   const replace: AxisWorkHubCacheStore["Service"]["replace"] = (snapshot) =>
@@ -102,12 +140,29 @@ export const make = Effect.gen(function* () {
           snapshot_json,
           refreshed_at,
           expires_at
-        ) VALUES (
+        ) SELECT
           ${snapshot.sourceId},
           ${snapshot.contextId},
           ${snapshotJson},
           ${snapshot.refreshedAt},
           ${snapshot.expiresAt}
+        WHERE EXISTS (
+          SELECT 1
+          FROM axis_context_catalog AS catalog,
+               json_each(catalog.catalog_json, '$.workHubSources') AS source
+          WHERE catalog.singleton = 1
+            AND json_extract(source.value, '$.id') = ${snapshot.sourceId}
+            AND json_extract(source.value, '$.contextId') = ${snapshot.contextId}
+            AND json_extract(source.value, '$.capabilityId') = ${snapshot.capabilityId}
+            AND EXISTS (
+              SELECT 1 FROM json_each(catalog.catalog_json, '$.contexts') AS context
+              WHERE json_extract(context.value, '$.id') = ${snapshot.contextId}
+            )
+            AND EXISTS (
+              SELECT 1 FROM json_each(catalog.catalog_json, '$.capabilities') AS capability
+              WHERE json_extract(capability.value, '$.id') =
+                    json_extract(source.value, '$.capabilityId')
+            )
         )
         ON CONFLICT (source_id) DO UPDATE SET
           context_id = excluded.context_id,

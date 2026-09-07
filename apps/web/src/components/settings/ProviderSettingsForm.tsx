@@ -171,6 +171,13 @@ interface ProviderSettingsFormProps {
    * and `settings` renders the shared settings row treatment.
    */
   readonly variant: "card" | "dialog" | "settings";
+  /**
+   * Replace a field's placeholder by key. Used where the effective default is
+   * decided outside the schema — a gateway preset, for instance, resolves its
+   * own isolated home, and showing the driver's generic placeholder would
+   * suggest a directory the instance will not use.
+   */
+  readonly placeholders?: Readonly<Record<string, string>> | undefined;
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
 }
 
@@ -414,9 +421,18 @@ export function ProviderSettingsForm({
   value,
   idPrefix,
   variant,
+  placeholders,
   onChange,
 }: ProviderSettingsFormProps) {
-  const fields = useMemo(() => deriveProviderSettingsFields(definition), [definition]);
+  const fields = useMemo(() => {
+    const derived = deriveProviderSettingsFields(definition);
+    if (!placeholders) return derived;
+    return derived.map((field) =>
+      placeholders[field.key] === undefined
+        ? field
+        : { ...field, placeholder: placeholders[field.key] },
+    );
+  }, [definition, placeholders]);
 
   if (fields.length === 0) {
     return null;

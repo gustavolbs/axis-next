@@ -19,6 +19,7 @@ import {
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProviderDriverKind,
+  type ProviderGatewayId,
   ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
@@ -49,6 +50,8 @@ export interface ProviderInstanceEntry {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
+  /** Set when the instance runs through a gateway preset (e.g. RouteMux). */
+  readonly gateway?: ProviderGatewayId | undefined;
   readonly continuationGroupKey?: string | undefined;
   readonly enabled: boolean;
   readonly installed: boolean;
@@ -188,6 +191,7 @@ export function deriveProviderInstanceEntries(
       driverKind,
       displayName,
       accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+      gateway: snapshot.gateway,
       continuationGroupKey: snapshot.continuation?.groupKey,
       enabled: snapshot.enabled,
       installed: snapshot.installed,

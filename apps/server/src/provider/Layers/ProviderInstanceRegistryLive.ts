@@ -179,6 +179,7 @@ const buildEntry = <R>(input: {
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        gateway: entry.gateway,
         environment: entry.environment ?? [],
         enabled: resolveEntryEnabled(entry, typedConfig),
         config: typedConfig,

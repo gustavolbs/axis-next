@@ -1738,6 +1738,45 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("classifies only authoritative terminal Codex usage limits as quota failures", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 2).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      for (const [id, codexErrorInfo, message] of [
+        ["evt-quota-error", "usageLimitExceeded", "You have no weighted tokens left"],
+        ["evt-unknown-error", "other", "An unknown provider failure occurred"],
+      ] as const) {
+        yield* runtime.emit({
+          id: asEventId(id),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          method: "error",
+          turnId: asTurnId("turn-1"),
+          payload: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            error: { message, codexErrorInfo },
+            willRetry: false,
+          },
+        } satisfies ProviderEvent);
+      }
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.equal(events[0]?.type, "runtime.error");
+      NodeAssert.equal(events[1]?.type, "runtime.error");
+      if (events[0]?.type === "runtime.error" && events[1]?.type === "runtime.error") {
+        NodeAssert.equal(events[0].payload.failureKind, "quota-exhausted");
+        NodeAssert.equal(events[1].payload.failureKind, undefined);
+      }
+    }),
+  );
+
   it.effect("maps process stderr notifications to runtime.warning", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

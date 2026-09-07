@@ -83,6 +83,16 @@ export const AxisWorkHubCacheSnapshot = Schema.Struct({
 });
 export type AxisWorkHubCacheSnapshot = typeof AxisWorkHubCacheSnapshot.Type;
 
+/** Public request to synchronize one catalog-owned Work Hub source. */
+export const AxisWorkHubSourceSyncInput = Schema.Struct({
+  sourceId: AxisWorkHubSourceId,
+});
+export type AxisWorkHubSourceSyncInput = typeof AxisWorkHubSourceSyncInput.Type;
+
+/**
+ * Fully resolved provider request. This is assembled server-side from the Axis
+ * catalog and the previous cache snapshot; clients must never author it.
+ */
 export const AxisWorkHubCollectInput = Schema.Struct({
   sourceId: AxisWorkHubSourceId,
   contextId: AxisContextId,
@@ -96,11 +106,6 @@ export const AxisWorkHubCollectInput = Schema.Struct({
 });
 export type AxisWorkHubCollectInput = typeof AxisWorkHubCollectInput.Type;
 
-export const AxisWorkHubReplaceCacheInput = Schema.Struct({
-  snapshot: AxisWorkHubCacheSnapshot,
-});
-export type AxisWorkHubReplaceCacheInput = typeof AxisWorkHubReplaceCacheInput.Type;
-
 export class AxisWorkHubCachePersistenceError extends Schema.TaggedErrorClass<AxisWorkHubCachePersistenceError>()(
   "AxisWorkHubCachePersistenceError",
   { operation: Schema.String },
@@ -111,6 +116,14 @@ export class AxisWorkHubSyncError extends Schema.TaggedErrorClass<AxisWorkHubSyn
   {
     sourceId: AxisWorkHubSourceId,
     instanceId: ProviderInstanceId,
+    message: TrimmedNonEmptyString,
+  },
+) {}
+
+export class AxisWorkHubSourceValidationError extends Schema.TaggedErrorClass<AxisWorkHubSourceValidationError>()(
+  "AxisWorkHubSourceValidationError",
+  {
+    sourceId: AxisWorkHubSourceId,
     message: TrimmedNonEmptyString,
   },
 ) {}

@@ -1,4 +1,4 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, type ProviderGatewayId } from "@t3tools/contracts";
 import {
   AntigravityIcon,
   ClaudeAI,
@@ -7,6 +7,7 @@ import {
   Icon,
   OpenAI,
   OpenCodeIcon,
+  RouteMuxIcon,
 } from "../Icons";
 
 export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
@@ -17,6 +18,23 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("grok")]: GrokIcon,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
 };
+
+/**
+ * A gateway instance shows the gateway's mark, not the driver's: the user
+ * picked RouteMux, and rendering Anthropic's logo would misstate both who
+ * serves the turn and who bills it.
+ */
+export const PROVIDER_ICON_BY_GATEWAY: Partial<Record<ProviderGatewayId, Icon>> = {
+  ["routemux" as ProviderGatewayId]: RouteMuxIcon,
+};
+
+export function resolveProviderIcon(input: {
+  readonly driverKind: ProviderDriverKind;
+  readonly gateway?: ProviderGatewayId | undefined;
+}): Icon | null {
+  const gatewayIcon = input.gateway ? PROVIDER_ICON_BY_GATEWAY[input.gateway] : undefined;
+  return gatewayIcon ?? PROVIDER_ICON_BY_PROVIDER[input.driverKind] ?? null;
+}
 
 export type ModelEsque = {
   slug: string;

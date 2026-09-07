@@ -1003,13 +1003,72 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceId]),
       },
     }),
-    replaceAxisWorkHubCache: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:axis:work-hub-replace-cache",
-      tag: WS_METHODS.axisWorkHubReplaceCache,
+    axisScheduledActivities: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:scheduled-activities",
+      tag: WS_METHODS.axisScheduledActivitiesList,
+      staleTimeMs: 5_000,
+    }),
+    createAxisScheduledActivity: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:create-scheduled-activity",
+      tag: WS_METHODS.axisScheduledActivitiesCreate,
+    }),
+    updateAxisScheduledActivity: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:update-scheduled-activity",
+      tag: WS_METHODS.axisScheduledActivitiesUpdate,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.snapshot.sourceId]),
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.activity.id]),
       },
+    }),
+    deleteAxisScheduledActivity: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:delete-scheduled-activity",
+      tag: WS_METHODS.axisScheduledActivitiesDelete,
+    }),
+    runAxisScheduledActivityNow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:run-scheduled-activity-now",
+      tag: WS_METHODS.axisScheduledActivitiesRunNow,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.id]),
+      },
+    }),
+    axisScheduledActivityRuns: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:scheduled-activity-runs",
+      tag: WS_METHODS.axisScheduledActivitiesListRuns,
+      staleTimeMs: 5_000,
+    }),
+    axisLearningSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:axis:learning-snapshot",
+      tag: WS_METHODS.axisLearningGetSnapshot,
+      staleTimeMs: 5_000,
+    }),
+    recordAxisLearningEvidence: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-record-evidence",
+      tag: WS_METHODS.axisLearningRecordEvidence,
+    }),
+    createAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-create-proposal",
+      tag: WS_METHODS.axisLearningCreateProposal,
+    }),
+    submitAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-submit-proposal",
+      tag: WS_METHODS.axisLearningSubmitProposal,
+    }),
+    approveAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-approve-proposal",
+      tag: WS_METHODS.axisLearningApproveProposal,
+    }),
+    rejectAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-reject-proposal",
+      tag: WS_METHODS.axisLearningRejectProposal,
+    }),
+    activateAxisLearningVersion: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-activate-version",
+      tag: WS_METHODS.axisLearningActivateVersion,
+    }),
+    rollbackAxisLearningVersion: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-rollback-version",
+      tag: WS_METHODS.axisLearningRollbackVersion,
     }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",

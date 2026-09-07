@@ -1,0 +1,274 @@
+name: Release Axis (macOS)
+
+# Publishes the signed macOS artifacts that feed the in-app updater. The app
+# reads GitHub Releases of this repository through the `app-update.yml` that
+# electron-builder embeds at packaging time, so an Axis release is complete only
+# once the DMG, ZIP, blockmap, and `latest-mac.yml` are all attached to the tag.
+#
+# See docs/axis/RELEASE.md.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example 1.2.3 or v1.2.3)"
+        required: true
+        type: string
+
+concurrency:
+  group: axis-macos-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - id: meta
+        name: Resolve release version
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          raw="${DISPATCH_VERSION:-$GITHUB_REF_NAME}"
+          version="${raw#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid release version: $raw"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: [preflight]
+    runs-on: macos-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            rust_target: aarch64-apple-darwin
+          - arch: x64
+            rust_target: x86_64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@v6
+        with:
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor
+          key: axis-resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Verify the Axis icons match their source mark
+        run: vp run icons:check:axis
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      # Squirrel.Mac validates an update against the designated requirement of
+      # the running app, so releases must carry a stable certificate-pinned
+      # signature. The certificate is self-signed: it enables updates, not
+      # Gatekeeper trust. See scripts/create-macos-signing-cert.sh.
+      - name: Trust and verify the self-signed signing identity
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MAC_CSC_LINK:-}" || -z "${MAC_CSC_KEY_PASSWORD:-}" ]]; then
+            echo "::error::Missing MAC_CSC_LINK or MAC_CSC_KEY_PASSWORD. Run scripts/create-macos-signing-cert.sh and configure both repository secrets."
+            exit 1
+          fi
+
+          p12="$RUNNER_TEMP/axis-signing.p12"
+          pem="$RUNNER_TEMP/axis-signing.pem"
+          echo "$MAC_CSC_LINK" | base64 --decode > "$p12"
+
+          openssl pkcs12 -in "$p12" -clcerts -nokeys \
+            -passin "pass:$MAC_CSC_KEY_PASSWORD" -out "$pem" 2>/dev/null || \
+          openssl pkcs12 -legacy -in "$p12" -clcerts -nokeys \
+            -passin "pass:$MAC_CSC_KEY_PASSWORD" -out "$pem"
+
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain "$pem"
+
+          scratch="$RUNNER_TEMP/axis-signing-check.keychain"
+          security create-keychain -p check "$scratch"
+          security unlock-keychain -p check "$scratch"
+          security set-keychain-settings "$scratch"
+          security import "$p12" -k "$scratch" -P "$MAC_CSC_KEY_PASSWORD" -T /usr/bin/codesign >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k check "$scratch" >/dev/null 2>&1
+          security find-identity -v -p codesigning "$scratch" | grep -F 'Axis Code Signing'
+          security delete-keychain "$scratch"
+          rm -f "$p12" "$pem"
+
+      - name: Build signed desktop artifact
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "true"
+        run: |
+          vp run dist:desktop:artifact \
+            --platform mac \
+            --target dmg \
+            --arch "${{ matrix.arch }}" \
+            --build-version "${{ needs.preflight.outputs.version }}" \
+            --signed \
+            --verbose
+
+      # A cdhash-pinned (ad-hoc) requirement would let this release install but
+      # would reject every future update, so fail the build instead of shipping it.
+      - name: Verify the update payload signature
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          zip="release/Axis-$VERSION-${{ matrix.arch }}.zip"
+          test -f "$zip" || { echo "::error::Missing update payload: $zip"; exit 1; }
+          test -f "release/Axis-$VERSION-${{ matrix.arch }}.dmg" || { echo "::error::Missing DMG."; exit 1; }
+
+          unpacked="$RUNNER_TEMP/axis-update-payload"
+          rm -rf "$unpacked"
+          mkdir -p "$unpacked"
+          ditto -x -k "$zip" "$unpacked"
+
+          app="$unpacked/Axis.app"
+          test -d "$app" || { echo "::error::The update payload does not contain Axis.app."; exit 1; }
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          requirement="$(codesign -d -r- "$app" 2>&1 | sed -n 's/^.*designated => //p')"
+          echo "designated requirement: $requirement"
+          case "$requirement" in
+            *"certificate root = H"*|*"certificate leaf = H"*) ;;
+            *cdhash*)
+              echo "::error::Ad-hoc signature detected. Automatic updates would break."
+              exit 1
+              ;;
+            *)
+              echo "::error::Expected a certificate-pinned designated requirement."
+              exit 1
+              ;;
+          esac
+
+      - name: Collect release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-publish
+          shopt -s nullglob
+          for file in release/*.dmg release/*.zip release/*.blockmap release/*.yml; do
+            cp "$file" release-publish/
+          done
+
+          # The release job merges the per-arch manifests into one latest-mac.yml.
+          if [[ "${{ matrix.arch }}" != "arm64" ]]; then
+            for manifest in release-publish/*-mac.yml; do
+              mv "$manifest" "${manifest%.yml}-${{ matrix.arch }}.yml"
+            done
+          fi
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: axis-macos-${{ matrix.arch }}
+          path: release-publish/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish release
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: axis-macos-*
+          merge-multiple: true
+          path: release-assets
+
+      # electron-updater reads one manifest per channel, so the arm64 and x64
+      # manifests have to become a single latest-mac.yml listing both payloads.
+      - name: Merge macOS updater manifests
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for x64_manifest in release-assets/*-mac-x64.yml; do
+            arm64_manifest="${x64_manifest%-x64.yml}.yml"
+            if [[ -f "$arm64_manifest" ]]; then
+              node scripts/merge-update-manifests.ts --platform mac "$arm64_manifest" "$x64_manifest"
+              rm -f "$x64_manifest"
+            fi
+          done
+          test -f release-assets/latest-mac.yml || { echo "::error::No latest-mac.yml to publish; the updater would find nothing."; exit 1; }
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.preflight.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Axis ${{ needs.preflight.outputs.tag }}
+          generate_release_notes: true
+          make_latest: true
+          files: |
+            release-assets/*.dmg
+            release-assets/*.zip
+            release-assets/*.blockmap
+            release-assets/*.yml
+          fail_on_unmatched_files: true
+          token: ${{ github.token }}

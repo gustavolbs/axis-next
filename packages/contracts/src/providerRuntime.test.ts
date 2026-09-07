@@ -77,6 +77,32 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.providerInstanceId).toBe("ollama_local");
   });
 
+  it("accepts only normalized runtime failure kinds", () => {
+    const base = {
+      type: "runtime.error",
+      eventId: "event-quota",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        message: "Usage limit reached",
+        class: "provider_error",
+      },
+    };
+
+    const parsed = decodeRuntimeEvent({
+      ...base,
+      payload: { ...base.payload, failureKind: "quota-exhausted" },
+    });
+    expect(parsed.type === "runtime.error" && parsed.payload.failureKind).toBe("quota-exhausted");
+    expect(() =>
+      decodeRuntimeEvent({
+        ...base,
+        payload: { ...base.payload, failureKind: "rate-limited" },
+      }),
+    ).toThrow();
+  });
+
   it("decodes turn.plan.updated for plan rendering", () => {
     const parsed = decodeRuntimeEvent({
       type: "turn.plan.updated",

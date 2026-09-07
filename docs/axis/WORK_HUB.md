@@ -33,7 +33,8 @@ Company's content is never inserted into another Company's model context to prod
 
 Calendar presents Personal and Company events in a familiar Teams, Outlook, or Google Calendar-style
 view. Events are normalized for layout and filtering while retaining their native source ID,
-calendar, participants, time zone, status, deep link, and source context.
+start/end time, status, meeting/deep links, location, and source context. Calendar identity,
+participants, all-day/multi-day semantics, and explicit source time zone remain contract extensions.
 
 Overlapping events from different contexts may appear together for the user. Visibility in the
 combined calendar does not grant either Company access to the other event. Sensitive details may be
@@ -58,10 +59,11 @@ columns:
 TO DO → WORKING → BLOCKED → CODE REVIEW → QA → DONE
 ```
 
-Each connector owns an explicit mapping from native statuses to Axis columns. The normalized card
-retains its native issue ID, original status, source context, assignee, priority, due date, deep link,
-and last synchronization cursor. Unsupported or ambiguous statuses must remain visible for mapping;
-they are not silently guessed.
+Each connector owns an explicit mapping from native statuses to Axis columns. The implemented card
+retains its native issue ID, original status, source context, summary, and deep link; the source
+snapshot retains the synchronization cursor. Assignee, priority, and due date remain contract
+extensions. Unsupported or ambiguous statuses stay visible in an Unmapped lane; they are not
+silently guessed.
 
 Moving a card is a source-system mutation. When enabled, it runs through the originating
 provider/MCP binding, uses T3 approvals where applicable, and is considered complete only after the
@@ -87,7 +89,7 @@ an ephemeral provider process without creating a visible Thread or durable provi
 adds focused collection policy, validated normalization, and the Work Hub read model. It does not
 scrape provider session files or call a Company connector from Personal.
 
-The normalized record should include at least:
+The target normalized record should include at least:
 
 - `contextId` and source Company/Personal label;
 - the T3 environment, Project, Thread, and Turn provenance used for acquisition when applicable;
@@ -134,6 +136,25 @@ incremental messages are merged so a later sync does not erase still-relevant DM
 assigned-ticket comments. A failure keeps the prior snapshot and allows an individual retry. Cache
 records remain context-keyed so deduplication cannot create a cross-Company data path.
 
+## Scheduled refresh
+
+A user may schedule refresh for one MCP or an explicit set of selected Work Hub sources. The
+schedule retains its context, provider instance, MCP capability, time zone, enabled state, next run,
+last confirmed result, and delivery behavior. It uses the same source-specific acquisition and
+atomic cache replacement as manual **Sync**; it does not create a second collection path.
+
+Scheduled refresh currently runs through a narrow server-side Axis worker because T3 does not yet
+provide a reusable generic scheduler. It reuses the same Work Hub synchronization and cache path as
+manual refresh rather than introducing a second acquisition implementation. Each source runs and
+reports independently, so an offline Company, expired connector authorization, or malformed source
+result does not block other sources or erase their last confirmed snapshots. Users can pause,
+resume, edit, delete, or run a schedule immediately. Automatic runs skip a source while its cached
+snapshot is fresh; **Run now** deliberately forces a new collection.
+
+Scheduled agent activities, such as a morning briefing generated from confirmed Work Hub
+snapshots, are separate from source refresh. They run in the selected context with only its allowed
+provider/MCP bindings and preserve the normal T3 approval and Thread lifecycle.
+
 Source mutations—calendar responses, message replies, issue transitions, assignments—are separate
 capabilities. Each needs typed input/output, authorization, approval behavior, an idempotency key,
 and confirmation from the source. They should not be inferred as part of the initial read model.
@@ -144,7 +165,12 @@ A Work Hub item may open its supporting T3 Thread in Chat or a task-focused Cowo
 Neither action copies the item into a new conversation model. Follow-up work uses a Thread in the
 item's source context and only the provider/MCP bindings allowed there.
 
-The UI, persisted source selection, per-source cache policy, cache store, and manual Codex/Claude MCP
-sync are implemented. Scheduled refresh, provider adapters beyond Codex and Claude, richer
-connector-specific mappings, source-system writes, and a native mobile presentation remain later
-implementation slices.
+The UI, persisted source selection, per-source cache policy, cache store, server-authoritative
+manual Codex/Claude MCP sync, scheduled source refresh, and scheduled agent Threads are implemented.
+An agent activity accepts an arbitrary prompt and can therefore run recurring research or briefing
+work with the selected provider's available tools. Axis follows the canonical T3 Turn after dispatch
+and records completion, failure, interruption, missing Threads, and approval/user-input attention in
+the run history. Generated artifacts are currently ordinary files in the bound Project; standalone
+artifact publishing and delivery destinations remain future work.
+Provider adapters beyond Codex and Claude, richer connector-specific mappings, source-system writes,
+and a native mobile presentation remain later implementation slices.

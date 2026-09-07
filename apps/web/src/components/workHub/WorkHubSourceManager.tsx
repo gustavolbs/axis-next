@@ -1,5 +1,5 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
-import { RefreshCwIcon } from "lucide-react";
+import { RefreshCwIcon, Settings2Icon } from "lucide-react";
 
 import {
   axisProviderInstanceLocatorKey,
@@ -11,6 +11,7 @@ import {
   type AxisContextCatalogSnapshot,
   type AxisContextId,
   type AxisProviderInstanceLocator,
+  type AxisWorkHubCollectionPolicy,
   type AxisWorkHubSource,
 } from "@t3tools/contracts";
 import {
@@ -28,6 +29,7 @@ import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { buildWorkHubSourceGroups } from "./WorkHub.logic";
+import { WorkHubSourceSettingsDialog } from "./WorkHubSourceSettingsDialog";
 
 function contextTone(index: number): string {
   return ["bg-blue-500", "bg-violet-500", "bg-amber-500", "bg-emerald-500"][index % 4]!;
@@ -75,6 +77,10 @@ export function WorkHubSourceManager() {
       : serverEnvironment.axisWorkHubCache({ environmentId, input: {} }),
   );
   const [saving, setSaving] = useState(false);
+  const [settingsSource, setSettingsSource] = useState<{
+    readonly source: AxisWorkHubSource;
+    readonly mcpName: string;
+  } | null>(null);
   const syncingSourceIds = useSyncingSourceIds();
   const providerLabels = useMemo(
     () =>
@@ -95,8 +101,11 @@ export function WorkHubSourceManager() {
     [environments],
   );
 
-  const save = async (snapshot: AxisContextCatalogSnapshot, catalog: AxisContextCatalog) => {
-    if (environmentId === null || saving) return;
+  const save = async (
+    snapshot: AxisContextCatalogSnapshot,
+    catalog: AxisContextCatalog,
+  ): Promise<boolean> => {
+    if (environmentId === null || saving) return false;
     setSaving(true);
     const result = await replaceCatalog({
       environmentId,
@@ -105,7 +114,7 @@ export function WorkHubSourceManager() {
     setSaving(false);
     if (result._tag === "Success") {
       query.refresh();
-      return;
+      return true;
     }
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -115,6 +124,30 @@ export function WorkHubSourceManager() {
         description: error instanceof Error ? error.message : "Reload and try again.",
       });
     }
+    return false;
+  };
+
+  const updateSourceSettings = async (input: {
+    readonly source: AxisWorkHubSource;
+    readonly cacheTtlSeconds: number;
+    readonly collectionPolicy: AxisWorkHubCollectionPolicy;
+  }): Promise<boolean> => {
+    const snapshot = query.data;
+    if (!snapshot) return false;
+    const updatedAt = new Date().toISOString();
+    return save(snapshot, {
+      ...snapshot.catalog,
+      workHubSources: snapshot.catalog.workHubSources.map((source) =>
+        source.id === input.source.id
+          ? {
+              ...source,
+              cacheTtlSeconds: input.cacheTtlSeconds,
+              collectionPolicy: input.collectionPolicy,
+              updatedAt,
+            }
+          : source,
+      ),
+    });
   };
 
   const toggleMcp = (
@@ -217,27 +250,9 @@ export function WorkHubSourceManager() {
   };
 
   const runSync = async (source: AxisWorkHubSource, mcpName: string) => {
-    const previous = cacheQuery.data?.find((snapshot) => snapshot.sourceId === source.id);
     const collected = await collectSource({
       environmentId: source.provider.environmentId,
-      input: {
-        sourceId: source.id,
-        contextId: source.contextId,
-        provider: source.provider,
-        capabilityId: source.capabilityId,
-        mcpName,
-        // ponytail: no policy editor exists yet, so stored policies are frozen copies of
-        // old defaults; sync with the current defaults until per-source editing lands.
-        collectionPolicy: DEFAULT_AXIS_WORK_HUB_COLLECTION_POLICY,
-        cacheTtlSeconds: source.cacheTtlSeconds,
-        previousCursor: previous?.cursor ?? null,
-        // An incremental window only makes sense when the last sync actually captured
-        // messages; otherwise re-run the full initial lookback so an empty or broken
-        // sync doesn't permanently hide older unread mentions and DMs.
-        previousRefreshedAt: previous?.items.some((item) => item.view === "messages")
-          ? previous.refreshedAt
-          : null,
-      },
+      input: { sourceId: source.id },
     });
     if (collected._tag !== "Success") {
       if (isAtomCommandInterrupted(collected)) {
@@ -362,21 +377,36 @@ export function WorkHubSourceManager() {
                                   ) : null}
                                 </span>
                                 {source?.enabled ? (
-                                  <Button
-                                    type="button"
-                                    size="xs"
-                                    variant="ghost-muted"
-                                    className="shrink-0"
-                                    disabled={syncingSourceIds.has(source.id)}
-                                    onClick={() => void syncMcp(source, mcp.name)}
-                                  >
-                                    <RefreshCwIcon
-                                      className={
-                                        syncingSourceIds.has(source.id) ? "animate-spin" : undefined
+                                  <div className="flex shrink-0 items-center gap-1">
+                                    <Button
+                                      type="button"
+                                      size="icon-xs"
+                                      variant="ghost-muted"
+                                      disabled={saving || syncingSourceIds.has(source.id)}
+                                      aria-label={`Configure ${mcp.name} collection`}
+                                      onClick={() =>
+                                        setSettingsSource({ source, mcpName: mcp.name })
                                       }
-                                    />
-                                    {syncingSourceIds.has(source.id) ? "Syncing…" : "Sync"}
-                                  </Button>
+                                    >
+                                      <Settings2Icon />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="xs"
+                                      variant="ghost-muted"
+                                      disabled={syncingSourceIds.has(source.id)}
+                                      onClick={() => void syncMcp(source, mcp.name)}
+                                    >
+                                      <RefreshCwIcon
+                                        className={
+                                          syncingSourceIds.has(source.id)
+                                            ? "animate-spin"
+                                            : undefined
+                                        }
+                                      />
+                                      {syncingSourceIds.has(source.id) ? "Syncing…" : "Sync"}
+                                    </Button>
+                                  </div>
                                 ) : null}
                               </div>
                             );
@@ -391,6 +421,14 @@ export function WorkHubSourceManager() {
           </div>
         ))}
       </div>
+      <WorkHubSourceSettingsDialog
+        source={settingsSource?.source ?? null}
+        mcpName={settingsSource?.mcpName ?? "MCP"}
+        open={settingsSource !== null}
+        saving={saving}
+        onOpenChange={(open) => !open && setSettingsSource(null)}
+        onSave={updateSourceSettings}
+      />
     </section>
   );
 }

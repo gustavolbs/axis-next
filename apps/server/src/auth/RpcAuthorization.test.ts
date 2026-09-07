@@ -43,6 +43,23 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("allows reading learning history without allowing lifecycle changes", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.axisLearningGetSnapshot)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    for (const method of [
+      WS_METHODS.axisLearningRecordEvidence,
+      WS_METHODS.axisLearningCreateProposal,
+      WS_METHODS.axisLearningSubmitProposal,
+      WS_METHODS.axisLearningApproveProposal,
+      WS_METHODS.axisLearningRejectProposal,
+      WS_METHODS.axisLearningActivateVersion,
+      WS_METHODS.axisLearningRollbackVersion,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("reads the reviewer menu under the same scope as the pull request it belongs to", () => {
     // The candidate list is a read like the detail beside it, and asking somebody for a review is
     // a write like every other pull request operation.

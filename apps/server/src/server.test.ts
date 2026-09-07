@@ -7,6 +7,9 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   AuthAccessTokenType,
   AxisContextCatalogSnapshot,
+  AxisLearningSnapshot,
+  AxisWorkHubSourceValidationError,
+  AxisWorkHubSyncError,
   AxisWorkHubCacheSnapshot,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
@@ -95,10 +98,14 @@ const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
 );
 const decodeAxisContextCatalogSnapshot = Schema.decodeUnknownEffect(AxisContextCatalogSnapshot);
 const decodeAxisWorkHubCacheSnapshot = Schema.decodeUnknownEffect(AxisWorkHubCacheSnapshot);
+const decodeAxisLearningSnapshot = Schema.decodeUnknownEffect(AxisLearningSnapshot);
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
 import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
+import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActivityRunner.ts";
+import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
+import { AxisWorkHubSourceSync } from "./axis/workHub/AxisWorkHubSourceSync.ts";
 import * as ServerConfig from "./config.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import {
@@ -543,6 +550,9 @@ const buildAppUnderTest = (options?: {
     >;
     axisContextCatalog?: Partial<AxisContextCatalogStore["Service"]>;
     axisWorkHubCache?: Partial<AxisWorkHubCacheStore["Service"]>;
+    axisScheduledActivities?: Partial<AxisScheduledActivityRunner["Service"]>;
+    axisLearning?: Partial<AxisLearningStore["Service"]>;
+    axisWorkHubSourceSync?: Partial<AxisWorkHubSourceSync["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -814,6 +824,23 @@ const buildAppUnderTest = (options?: {
             replace: () => Effect.void,
             remove: () => Effect.void,
             ...options?.layers?.axisWorkHubCache,
+          }),
+          Layer.mock(AxisScheduledActivityRunner)({
+            list: Effect.succeed([]),
+            create: () => Effect.die("Scheduled activity create is not stubbed in this test"),
+            update: () => Effect.die("Scheduled activity update is not stubbed in this test"),
+            remove: () => Effect.die("Scheduled activity delete is not stubbed in this test"),
+            listRuns: () => Effect.succeed([]),
+            runNow: () => Effect.die("Scheduled activity run is not stubbed in this test"),
+            tick: Effect.void,
+            ...options?.layers?.axisScheduledActivities,
+          }),
+          Layer.mock(AxisLearningStore)({
+            ...options?.layers?.axisLearning,
+          }),
+          Layer.mock(AxisWorkHubSourceSync)({
+            sync: () => Effect.die("Work Hub source sync is not stubbed in this test"),
+            ...options?.layers?.axisWorkHubSourceSync,
           }),
         ),
       ),
@@ -5380,21 +5407,103 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes one MCP sync through its provider and persists the returned cache", () =>
+  it.effect("routes an authorized context-scoped Axis Learning snapshot", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* decodeAxisLearningSnapshot({
+        contextId: "personal",
+        evidence: [],
+        proposals: [],
+        versions: [],
+        activeVersions: [],
+        lifecycle: [],
+      });
+      const getSnapshot = vi.fn<AxisLearningStore["Service"]["getSnapshot"]>(() =>
+        Effect.succeed(snapshot),
+      );
+      yield* buildAppUnderTest({ layers: { axisLearning: { getSnapshot } } });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.axisLearningGetSnapshot]({ contextId: snapshot.contextId }),
+        ),
+      );
+
+      assert.deepEqual(response, snapshot);
+      assert.deepEqual(getSnapshot.mock.calls, [[snapshot.contextId]]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes one MCP sync by source id through the shared coordinator", () =>
     Effect.gen(function* () {
       const snapshot = yield* decodeAxisWorkHubCacheSnapshot({
         sourceId: "personal_calendar",
         contextId: "personal",
-        provider: { environmentId: "env", instanceId: "codex" },
+        provider: {
+          environmentId: testEnvironmentDescriptor.environmentId,
+          instanceId: "codex",
+        },
         capabilityId: "calendar",
         items: [],
         refreshedAt: "2026-09-05T00:00:00.000Z",
         expiresAt: "2026-09-05T08:00:00.000Z",
       });
+      const catalog = yield* decodeAxisContextCatalogSnapshot({
+        revision: 1,
+        updatedAt: "2026-09-05T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "personal",
+              kind: "personal",
+              name: "Personal",
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+          providerOwnerships: [{ contextId: "personal", provider: snapshot.provider }],
+          providerAccessGrants: [],
+          capabilities: [
+            {
+              id: snapshot.capabilityId,
+              provider: snapshot.provider,
+              kind: "mcp",
+              name: "Calendar",
+              enabled: true,
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+          workHubSources: [
+            {
+              id: snapshot.sourceId,
+              contextId: snapshot.contextId,
+              provider: snapshot.provider,
+              capabilityId: snapshot.capabilityId,
+              enabled: true,
+              cacheTtlSeconds: 28_800,
+              collectionPolicy: {
+                calendarLookbackDays: 14,
+                calendarLookaheadDays: 90,
+                assignedWorkItemsOnly: true,
+                directMessages: true,
+                mentions: true,
+                assignedIssueComments: true,
+              },
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      const previous = { ...snapshot, cursor: "server-cursor" };
       const collect = vi.fn<NonNullable<ProviderInstance["collectWorkHubSource"]>>(() =>
         Effect.succeed(snapshot),
       );
       const replace = vi.fn<AxisWorkHubCacheStore["Service"]["replace"]>(() => Effect.void);
+      const sync = vi.fn<AxisWorkHubSourceSync["Service"]["sync"]>(() =>
+        Effect.succeed({ status: "synced", snapshot }),
+      );
       const instance: ProviderInstance = {
         instanceId: ProviderInstanceId.make("codex"),
         driverKind: ProviderDriverKind.make("codex"),
@@ -5418,39 +5527,262 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
-          axisWorkHubCache: { get: () => Effect.succeed(null), replace },
+          axisContextCatalog: { get: Effect.succeed(catalog) },
+          axisWorkHubCache: { get: () => Effect.succeed(previous), replace },
+          axisWorkHubSourceSync: { sync },
         },
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const response = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
-          Effect.gen(function* () {
-            return yield* client[WS_METHODS.providerWorkHubCollect]({
-              sourceId: snapshot.sourceId,
-              contextId: snapshot.contextId,
-              provider: snapshot.provider,
-              capabilityId: snapshot.capabilityId,
-              mcpName: "Calendar",
-              collectionPolicy: {
-                calendarLookbackDays: 14,
-                calendarLookaheadDays: 90,
-                assignedWorkItemsOnly: true,
-                directMessages: true,
-                mentions: true,
-                assignedIssueComments: true,
-              },
-              cacheTtlSeconds: 28_800,
-              previousCursor: null,
-              previousRefreshedAt: null,
-            });
-          }),
+          client[WS_METHODS.providerWorkHubCollect]({
+            sourceId: snapshot.sourceId,
+            // Unknown fields are deliberately hostile. The wire schema strips
+            // them and the server resolves every authoritative value by sourceId.
+            contextId: snapshot.contextId,
+            provider: { environmentId: "attacker", instanceId: "other" },
+            capabilityId: "other",
+            mcpName: "Secrets",
+            cacheTtlSeconds: 999_999,
+            previousCursor: "attacker-cursor",
+          } as never),
         ),
       );
 
       assert.deepEqual(response, snapshot);
-      assert.equal(collect.mock.calls.length, 1);
-      assert.deepEqual(replace.mock.calls, [[snapshot]]);
+      assert.deepEqual(sync.mock.calls, [[snapshot.sourceId, "manual"]]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("propagates source validation errors from the Work Hub coordinator", () =>
+    Effect.gen(function* () {
+      const provider = {
+        environmentId: testEnvironmentDescriptor.environmentId,
+        instanceId: ProviderInstanceId.make("codex"),
+      };
+      const catalog = yield* decodeAxisContextCatalogSnapshot({
+        revision: 1,
+        updatedAt: "2026-09-05T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "personal",
+              kind: "personal",
+              name: "Personal",
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+            {
+              id: "company",
+              kind: "company",
+              name: "Company",
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+          providerOwnerships: [{ contextId: "personal", provider }],
+          providerAccessGrants: [
+            {
+              id: "revoked_grant",
+              ownerContextId: "personal",
+              targetContextId: "company",
+              provider,
+              status: "revoked",
+              revokedAt: "2026-09-05T00:00:00.000Z",
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+          capabilities: [
+            {
+              id: "calendar",
+              provider,
+              kind: "mcp",
+              name: "Calendar",
+              enabled: true,
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+          workHubSources: [
+            {
+              id: "disabled_source",
+              contextId: "personal",
+              provider,
+              capabilityId: "calendar",
+              enabled: false,
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+            {
+              id: "revoked_source",
+              contextId: "company",
+              provider,
+              capabilityId: "calendar",
+              enabled: true,
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      const getInstance = vi.fn<ProviderInstanceRegistry["Service"]["getInstance"]>(() =>
+        Effect.die("Invalid sources must not reach provider lookup"),
+      );
+      yield* buildAppUnderTest({
+        layers: {
+          axisContextCatalog: { get: Effect.succeed(catalog) },
+          providerInstanceRegistry: { getInstance },
+          axisWorkHubSourceSync: {
+            sync: (sourceId) =>
+              Effect.fail(
+                new AxisWorkHubSourceValidationError({
+                  sourceId,
+                  message: "Invalid source for test.",
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const failures = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all(
+            ["missing_source", "disabled_source", "revoked_source"].map((sourceId) =>
+              client[WS_METHODS.providerWorkHubCollect]({ sourceId } as never).pipe(Effect.flip),
+            ),
+          ),
+        ),
+      );
+
+      assert.deepEqual(
+        failures.map((failure) => failure._tag),
+        [
+          "AxisWorkHubSourceValidationError",
+          "AxisWorkHubSourceValidationError",
+          "AxisWorkHubSourceValidationError",
+        ],
+      );
+      assert.equal(getInstance.mock.calls.length, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("propagates provider and environment errors from the Work Hub coordinator", () =>
+    Effect.gen(function* () {
+      const localProvider = {
+        environmentId: testEnvironmentDescriptor.environmentId,
+        instanceId: ProviderInstanceId.make("missing"),
+      };
+      const remoteProvider = {
+        environmentId: EnvironmentId.make("remote-environment"),
+        instanceId: ProviderInstanceId.make("remote"),
+      };
+      const catalog = yield* decodeAxisContextCatalogSnapshot({
+        revision: 1,
+        updatedAt: "2026-09-05T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "personal",
+              kind: "personal",
+              name: "Personal",
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+          providerOwnerships: [
+            { contextId: "personal", provider: localProvider },
+            { contextId: "personal", provider: remoteProvider },
+          ],
+          providerAccessGrants: [],
+          capabilities: [
+            {
+              id: "local_mcp",
+              provider: localProvider,
+              kind: "mcp",
+              name: "Local MCP",
+              enabled: true,
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+            {
+              id: "remote_mcp",
+              provider: remoteProvider,
+              kind: "mcp",
+              name: "Remote MCP",
+              enabled: true,
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+          workHubSources: [
+            {
+              id: "missing_provider_source",
+              contextId: "personal",
+              provider: localProvider,
+              capabilityId: "local_mcp",
+              enabled: true,
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+            {
+              id: "remote_source",
+              contextId: "personal",
+              provider: remoteProvider,
+              capabilityId: "remote_mcp",
+              enabled: true,
+              createdAt: "2026-09-05T00:00:00.000Z",
+              updatedAt: "2026-09-05T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      const getInstance = vi.fn<ProviderInstanceRegistry["Service"]["getInstance"]>(() =>
+        Effect.succeed(undefined),
+      );
+      yield* buildAppUnderTest({
+        layers: {
+          axisContextCatalog: { get: Effect.succeed(catalog) },
+          providerInstanceRegistry: { getInstance },
+          axisWorkHubSourceSync: {
+            sync: (sourceId) =>
+              sourceId === "remote_source"
+                ? Effect.fail(
+                    new AxisWorkHubSourceValidationError({
+                      sourceId,
+                      message: "Foreign source for test.",
+                    }),
+                  )
+                : Effect.fail(
+                    new AxisWorkHubSyncError({
+                      sourceId,
+                      instanceId: ProviderInstanceId.make("missing"),
+                      message: "Missing provider for test.",
+                    }),
+                  ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const failures = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all([
+            client[WS_METHODS.providerWorkHubCollect]({
+              sourceId: "remote_source",
+            } as never).pipe(Effect.flip),
+            client[WS_METHODS.providerWorkHubCollect]({
+              sourceId: "missing_provider_source",
+            } as never).pipe(Effect.flip),
+          ]),
+        ),
+      );
+
+      assert.equal(failures[0]._tag, "AxisWorkHubSourceValidationError");
+      assert.equal(failures[1]._tag, "AxisWorkHubSyncError");
+      assert.equal(getInstance.mock.calls.length, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

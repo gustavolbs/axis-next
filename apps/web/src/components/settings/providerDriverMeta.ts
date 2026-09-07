@@ -5,7 +5,10 @@ import {
   CursorSettings,
   GrokSettings,
   OpenCodeSettings,
+  PROVIDER_GATEWAYS,
   ProviderDriverKind,
+  type ProviderGatewayDefinition,
+  type ProviderGatewayId,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 import {
@@ -16,6 +19,7 @@ import {
   type Icon,
   OpenAI,
   OpenCodeIcon,
+  RouteMuxIcon,
 } from "../Icons";
 
 type ProviderSettingsSchema = {
@@ -102,4 +106,40 @@ export type DriverOption = ProviderClientDefinition;
 export function getDriverOption(driver: ProviderDriverKind | undefined): DriverOption | undefined {
   if (driver === undefined) return undefined;
   return PROVIDER_CLIENT_DEFINITION_BY_VALUE[driver];
+}
+
+/**
+ * Presentation for a gateway preset. The gateway itself is defined in
+ * contracts (server and client agree on its endpoint and credential); only
+ * the icon and the one-line pitch are client concerns.
+ */
+export interface ProviderGatewayOption {
+  readonly gateway: ProviderGatewayDefinition;
+  readonly icon: Icon;
+  readonly description: string;
+}
+
+const GATEWAY_PRESENTATION: Readonly<
+  Record<string, { readonly icon: Icon; readonly description: string }>
+> = {
+  routemux: {
+    icon: RouteMuxIcon,
+    description: "Pay-per-request gateway to hundreds of models, billed by RouteMux.",
+  },
+};
+
+export const PROVIDER_GATEWAY_OPTIONS: readonly ProviderGatewayOption[] = PROVIDER_GATEWAYS.flatMap(
+  (gateway) => {
+    const presentation = GATEWAY_PRESENTATION[gateway.id];
+    return presentation ? [{ gateway, ...presentation }] : [];
+  },
+);
+
+const PROVIDER_GATEWAY_OPTION_BY_ID: Readonly<Record<string, ProviderGatewayOption>> =
+  Object.fromEntries(PROVIDER_GATEWAY_OPTIONS.map((option) => [option.gateway.id, option]));
+
+export function getProviderGatewayOption(
+  id: ProviderGatewayId | undefined,
+): ProviderGatewayOption | undefined {
+  return id === undefined ? undefined : PROVIDER_GATEWAY_OPTION_BY_ID[id];
 }

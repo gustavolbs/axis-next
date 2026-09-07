@@ -2198,6 +2198,51 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("classifies only Claude blocking_limit results as quota failures", () => {
+    const classifyTerminalReason = (terminalReason: "blocking_limit" | "api_error") => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const runtimeErrorFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.type === "runtime.error"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "",
+          errors: [],
+          stop_reason: null,
+          terminal_reason: terminalReason,
+          session_id: `sdk-session-${terminalReason}`,
+          uuid: `result-${terminalReason}`,
+        } as unknown as SDKMessage);
+
+        const event = yield* Fiber.join(runtimeErrorFiber);
+        assert.equal(event._tag, "Some");
+        return event._tag === "Some" && event.value.type === "runtime.error"
+          ? event.value.payload.failureKind
+          : undefined;
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    };
+
+    return Effect.gen(function* () {
+      assert.equal(yield* classifyTerminalReason("blocking_limit"), "quota-exhausted");
+      assert.equal(yield* classifyTerminalReason("api_error"), undefined);
+    });
+  });
+
   it.effect("fails a turn for every dead-turn terminal_reason", () => {
     const reasons = [
       "blocking_limit",

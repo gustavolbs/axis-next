@@ -40,7 +40,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { DriverOption } from "./providerDriverMeta";
+import { getProviderGatewayOption, type DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
@@ -56,6 +56,20 @@ import {
 } from "./providerStatus";
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+export function isApiBilledProviderInstance(instance: ProviderInstanceConfig): boolean {
+  if (instance.credentialSource !== undefined) {
+    return instance.credentialSource === "api-key";
+  }
+  return (
+    instance.environment?.some(
+      (variable) =>
+        variable.sensitive &&
+        ((instance.driver === "codex" && variable.name === "OPENAI_API_KEY") ||
+          (instance.driver === "claudeAgent" && variable.name === "ANTHROPIC_API_KEY")),
+    ) === true
+  );
+}
 
 let environmentVariableDraftId = 0;
 const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
@@ -437,10 +451,15 @@ export function ProviderInstanceCard({
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
-  const FallbackIconComponent = driverOption?.icon;
+  const gatewayOption = getProviderGatewayOption(instance.gateway);
+  const FallbackIconComponent = gatewayOption?.icon ?? driverOption?.icon;
   const displayName =
-    instance.displayName?.trim() || driverOption?.label || String(instance.driver);
+    instance.displayName?.trim() ||
+    gatewayOption?.gateway.label ||
+    driverOption?.label ||
+    String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
+  const isApiBilled = isApiBilledProviderInstance(instance);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
       toastManager.add({
@@ -532,6 +551,7 @@ export function ProviderInstanceCard({
   const titleIconNode = driverKind ? (
     <ProviderInstanceIcon
       driverKind={driverKind}
+      gateway={instance.gateway}
       displayName={displayName}
       accentColor={accentColor}
       showBadge={Boolean(accentColor)}
@@ -616,6 +636,11 @@ export function ProviderInstanceCard({
                   {instanceId}
                 </code>
               ) : null}
+              {isApiBilled ? (
+                <Badge variant="warning" size="sm" className="shrink-0">
+                  API billed
+                </Badge>
+              ) : null}
               {versionLabel ? (
                 <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
                   {versionLabel}
@@ -652,9 +677,19 @@ export function ProviderInstanceCard({
 
   const editorHeaderAction = (
     <div className="flex min-w-0 items-center gap-1.5">
+      {gatewayOption ? (
+        <Badge variant="info" size="sm" className="shrink-0">
+          {gatewayOption.gateway.label}
+        </Badge>
+      ) : null}
       {driverOption?.badgeLabel ? (
         <Badge variant="warning" size="sm" className="shrink-0">
           {driverOption.badgeLabel}
+        </Badge>
+      ) : null}
+      {isApiBilled ? (
+        <Badge variant="warning" size="sm" className="shrink-0">
+          API billed
         </Badge>
       ) : null}
       {versionCodeNode}

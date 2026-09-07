@@ -22,6 +22,12 @@ function validCatalog() {
       { id: "company_a", kind: "company", name: "Company A", createdAt: now, updatedAt: now },
       { id: "company_b", kind: "company", name: "Company B", createdAt: now, updatedAt: now },
     ],
+    projectBindings: [
+      {
+        contextId: "company_b",
+        project: { environmentId: "laptop", projectId: "company_b_project" },
+      },
+    ],
     providerOwnerships: [
       {
         contextId: "personal",
@@ -75,6 +81,7 @@ describe("AxisContextCatalog", () => {
   it("defaults collections and capability flags", () => {
     expect(decodeCatalog({})).toEqual({
       contexts: [],
+      projectBindings: [],
       providerOwnerships: [],
       providerAccessGrants: [],
       capabilities: [],
@@ -109,6 +116,21 @@ describe("AxisContextCatalog", () => {
 
   it("accepts a Personal-to-Company provider grant", () => {
     expect(validateAxisContextCatalog(validCatalog())).toEqual([]);
+  });
+
+  it("rejects duplicate and unknown-context Project bindings", () => {
+    const catalog = validCatalog();
+    const invalid = {
+      ...catalog,
+      projectBindings: [
+        ...catalog.projectBindings,
+        { ...catalog.projectBindings[0]!, contextId: AxisContextId.make("missing") },
+      ],
+    };
+    const codes = validateAxisContextCatalog(invalid).map((issue) => issue.code);
+
+    expect(codes).toContain("duplicate_project_binding");
+    expect(codes).toContain("project_binding_unknown_context");
   });
 
   it("keeps Company A and Company B provider access isolated", () => {

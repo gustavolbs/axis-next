@@ -106,7 +106,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   },
   configSchema: CodexSettings,
   defaultConfig: (): CodexSettings => decodeCodexSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, gateway, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -123,6 +123,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
+        gateway,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       yield* materializeCodexShadowHome(homeLayout).pipe(

@@ -5,7 +5,7 @@ import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 
 const settingsHooks = vi.hoisted(() => ({
   read: vi.fn(() => ({ providerInstances: {} })),
-  update: vi.fn(() => vi.fn()),
+  command: vi.fn(() => vi.fn()),
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -25,7 +25,10 @@ vi.mock("react/compiler-runtime", async () => {
 
 vi.mock("../../hooks/useSettings", () => ({
   useEnvironmentSettings: settingsHooks.read,
-  useUpdateEnvironmentSettings: settingsHooks.update,
+}));
+
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: settingsHooks.command,
 }));
 
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
@@ -36,10 +39,10 @@ describe("AddProviderInstanceDialog environment routing", () => {
   beforeEach(() => {
     hooks.reset();
     settingsHooks.read.mockClear();
-    settingsHooks.update.mockClear();
+    settingsHooks.command.mockClear();
   });
 
-  it("reads and writes settings through the supplied environment", () => {
+  it("reads settings from the supplied environment and binds the settings command", () => {
     hooks.beginRender();
     AddProviderInstanceDialog({
       open: true,
@@ -49,6 +52,6 @@ describe("AddProviderInstanceDialog environment routing", () => {
     });
 
     expect(settingsHooks.read).toHaveBeenCalledWith(remoteEnvironmentId);
-    expect(settingsHooks.update).toHaveBeenCalledWith(remoteEnvironmentId);
+    expect(settingsHooks.command).toHaveBeenCalledOnce();
   });
 });

@@ -60,6 +60,28 @@ can still be started by you. Invoke those one per message: Claude directly runs
 only the last named skill and may try to start earlier ones through its Skill
 tool, which refuses skills reserved for manual invocation.
 
+## RouteMux
+
+RouteMux is a pay-per-request gateway to models from many vendors. It is a
+built-in preset, so you do not configure endpoints by hand: pick **RouteMux** in
+**Add provider instance → Driver**, give it a label, and paste a key from
+[the RouteMux console](https://routemux.com/console/keys).
+
+The instance is marked **API billed** — every turn on it is charged to your
+RouteMux credits, never to a Claude subscription. It gets its own config
+directory under `~/.t3/provider-homes/`, so a Claude login elsewhere on the
+machine cannot take over its requests, and the key is stored as a sensitive
+environment secret that clients never receive.
+
+The model list is read from RouteMux itself, so it shows the models your key can
+actually call and follows RouteMux's catalog as it changes — nothing to keep in
+sync by hand. If RouteMux cannot be reached, the instance keeps the previous
+list rather than emptying the picker. You can still add entries by hand under
+the instance's **Models**.
+
+RouteMux does not report subscription usage windows, so the instance shows no
+usage bars. Credit balance and per-request logs live in the RouteMux console.
+
 ## OpenRouter
 
 Create a Claude instance with its own config directory, such as
