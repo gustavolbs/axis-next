@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 import {
   ProviderDriverKind,
+  ProviderGatewayId,
   ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
@@ -40,6 +41,17 @@ describe("isApiBilledProviderInstance", () => {
         environment: [{ name: "ANTHROPIC_API_KEY", value: "", sensitive: false }],
       }),
     ).toBe(false);
+  });
+
+  it("treats a gateway instance as API billed", () => {
+    expect(
+      isApiBilledProviderInstance({
+        driver: ProviderDriverKind.make("claudeAgent"),
+        gateway: ProviderGatewayId.make("routemux"),
+        credentialSource: "api-key",
+        environment: [{ name: "ANTHROPIC_AUTH_TOKEN", value: "", sensitive: true }],
+      }),
+    ).toBe(true);
   });
 });
 

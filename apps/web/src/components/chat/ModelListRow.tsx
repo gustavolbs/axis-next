@@ -1,11 +1,15 @@
-import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import {
+  type ProviderDriverKind,
+  type ProviderGatewayId,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
 import { memo } from "react";
 import { StarIcon } from "lucide-react";
 import {
   getDisplayModelName,
   getTriggerDisplayModelLabel,
   type ModelEsque,
-  PROVIDER_ICON_BY_PROVIDER,
+  resolveProviderIcon,
 } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
@@ -22,6 +26,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
   instanceId: ProviderInstanceId;
   /** Driver kind of the instance — used for the provider icon glyph. */
   driverKind: ProviderDriverKind;
+  /** Gateway preset behind the instance, when any; it owns the glyph. */
+  gateway?: ProviderGatewayId | undefined;
   /**
    * Display name to show in the secondary line (provider footer). Usually
    * the instance's configured `displayName` so custom instances like
@@ -40,7 +46,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: () => void;
 }) {
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
+  const ProviderIcon = resolveProviderIcon({
+    driverKind: props.driverKind,
+    gateway: props.gateway,
+  });
   const providerLabel = props.model.subProvider
     ? `${props.providerDisplayName} · ${props.model.subProvider}`
     : props.providerDisplayName;

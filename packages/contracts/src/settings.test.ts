@@ -423,6 +423,28 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     ).toThrow();
   });
 
+  it("round-trips a gateway instance, including one this build does not ship", () => {
+    const decoded = decodeServerSettings({
+      providerInstances: {
+        routemux_fallback: {
+          driver: "claudeAgent",
+          gateway: "routemux",
+          credentialSource: "api-key",
+          environment: [{ name: "ANTHROPIC_AUTH_TOKEN", value: "", sensitive: true }],
+        },
+        // Same rule as unknown drivers: a fork's gateway must survive a
+        // round-trip through a build that has never heard of it.
+        forked: { driver: "claudeAgent", gateway: "someForkGateway" },
+      },
+    });
+    expect(decoded.providerInstances[ProviderInstanceId.make("routemux_fallback")]?.gateway).toBe(
+      "routemux",
+    );
+    expect(decoded.providerInstances[ProviderInstanceId.make("forked")]?.gateway).toBe(
+      "someForkGateway",
+    );
+  });
+
   it("rejects unknown provider credential sources", () => {
     expect(() =>
       decodeServerSettings({

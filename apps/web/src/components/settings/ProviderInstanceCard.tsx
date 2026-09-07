@@ -40,7 +40,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { DriverOption } from "./providerDriverMeta";
+import { getProviderGatewayOption, type DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
@@ -451,9 +451,13 @@ export function ProviderInstanceCard({
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
-  const FallbackIconComponent = driverOption?.icon;
+  const gatewayOption = getProviderGatewayOption(instance.gateway);
+  const FallbackIconComponent = gatewayOption?.icon ?? driverOption?.icon;
   const displayName =
-    instance.displayName?.trim() || driverOption?.label || String(instance.driver);
+    instance.displayName?.trim() ||
+    gatewayOption?.gateway.label ||
+    driverOption?.label ||
+    String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const isApiBilled = isApiBilledProviderInstance(instance);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
@@ -547,6 +551,7 @@ export function ProviderInstanceCard({
   const titleIconNode = driverKind ? (
     <ProviderInstanceIcon
       driverKind={driverKind}
+      gateway={instance.gateway}
       displayName={displayName}
       accentColor={accentColor}
       showBadge={Boolean(accentColor)}
@@ -672,6 +677,11 @@ export function ProviderInstanceCard({
 
   const editorHeaderAction = (
     <div className="flex min-w-0 items-center gap-1.5">
+      {gatewayOption ? (
+        <Badge variant="info" size="sm" className="shrink-0">
+          {gatewayOption.gateway.label}
+        </Badge>
+      ) : null}
       {driverOption?.badgeLabel ? (
         <Badge variant="warning" size="sm" className="shrink-0">
           {driverOption.badgeLabel}

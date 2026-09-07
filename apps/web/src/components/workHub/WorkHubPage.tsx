@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CalendarDaysIcon,
   CalendarClockIcon,
+  PlugIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CircleAlertIcon,
@@ -43,7 +44,7 @@ import {
 import { WorkHubSourceManager } from "./WorkHubSourceManager";
 import { WorkHubScheduledActivities } from "./WorkHubScheduledActivities";
 
-type WorkHubView = "overview" | "calendar" | "messages" | "board" | "scheduled";
+type WorkHubView = "overview" | "calendar" | "messages" | "board" | "scheduled" | "sources";
 
 const VIEWS: ReadonlyArray<{
   readonly id: WorkHubView;
@@ -55,6 +56,10 @@ const VIEWS: ReadonlyArray<{
   { id: "messages", label: "Messages", icon: InboxIcon },
   { id: "board", label: "Work Board", icon: Columns3Icon },
   { id: "scheduled", label: "Scheduled", icon: CalendarClockIcon },
+  // Choosing sources is setup, not a daily read. It sat at the bottom of
+  // Overview, where the longest panel on the page pushed today's work off
+  // screen; it earns its own tab instead.
+  { id: "sources", label: "Sources", icon: PlugIcon },
 ];
 
 const CALENDAR_HOUR_HEIGHT_PX = 64;
@@ -206,7 +211,6 @@ function OverviewView({
           })}
         </div>
       </section>
-      <WorkHubSourceManager />
     </div>
   );
 }
@@ -791,6 +795,8 @@ export function WorkHubPage() {
               contexts={query.data.catalog.contexts}
               items={cachedItems.filter((item) => item.view === "messages")}
             />
+          ) : view === "sources" ? (
+            <WorkHubSourceManager />
           ) : view === "scheduled" ? (
             <WorkHubScheduledActivities
               catalog={query.data.catalog}

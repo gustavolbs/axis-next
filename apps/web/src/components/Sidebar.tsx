@@ -366,6 +366,7 @@ function SidebarThreadTooltip({
             <div className="flex min-w-0 items-center gap-2">
               <ProviderInstanceIcon
                 driverKind={driverKind}
+                gateway={providerEntry?.gateway}
                 displayName={
                   providerEntry?.displayName ?? thread.session?.providerName ?? modelInstanceId
                 }
@@ -1699,6 +1700,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   <span className="inline-flex shrink-0 items-center">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
+                      gateway={providerEntry?.gateway}
                       displayName={
                         providerEntry?.displayName ??
                         thread.session?.providerName ??

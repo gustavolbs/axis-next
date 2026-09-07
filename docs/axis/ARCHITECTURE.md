@@ -226,6 +226,13 @@ Use these defaults when implementation begins:
 The name of a directory is not sufficient isolation. Axis code must depend on T3's public contracts
 and services, avoid deep UI-to-persistence coupling, and keep environment scoping explicit.
 
+When an Axis screen has to appear in a T3 navigation surface, declare it in an Axis-owned module and
+have the T3 file import that module. `apps/web/src/features/axis/settings/axisSettingsNav.ts` is the
+worked example: the settings sidebar and the settings search index each carry one import and one
+spread, so adding or renaming an Axis screen touches no upstream file, and an upstream change to
+either file rarely conflicts with an Axis change. Inline Axis literals inside a T3 file are a
+conflict the next sync will pay for.
+
 ## When T3 core may change
 
 Prefer, in order:

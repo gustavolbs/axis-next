@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  getProviderGateway,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ProviderGatewayDefinition,
+} from "@t3tools/contracts";
 
 import {
   apiKeyEnvironmentVariableForDriver,
   buildApiKeyProviderInstance,
+  buildGatewayProviderInstance,
+  parseProviderSelection,
+  providerSelectionValue,
   resolveWizardNavigation,
 } from "./AddProviderInstanceDialog.logic";
 
@@ -120,5 +128,92 @@ describe("API-key provider preset", () => {
         config: { homePath: " ~/.claude-api " },
       }).config,
     ).toMatchObject({ homePath: "~/.claude-api" });
+  });
+});
+
+describe("gateway provider preset", () => {
+  const routemux = getProviderGateway("routemux") as ProviderGatewayDefinition;
+
+  it("builds an isolated, API-billed RouteMux instance on the Claude driver", () => {
+    const instance = buildGatewayProviderInstance({
+      instanceId: ProviderInstanceId.make("routemux_fallback"),
+      gateway: routemux,
+      displayName: "RouteMux",
+      apiKey: "  sk-routemux-test  ",
+      config: { launchArgs: "--quiet" },
+    });
+
+    expect(instance).toMatchObject({
+      driver: "claudeAgent",
+      gateway: "routemux",
+      credentialSource: "api-key",
+      environment: [
+        { name: "ANTHROPIC_AUTH_TOKEN", value: "sk-routemux-test", sensitive: true },
+        { name: "ANTHROPIC_BASE_URL", value: "https://api.routemux.com", sensitive: false },
+        // Blanked so an ambient Anthropic key cannot outrank the gateway token.
+        { name: "ANTHROPIC_API_KEY", value: "", sensitive: false },
+      ],
+      config: {
+        launchArgs: "--quiet",
+        homePath: "~/.t3/provider-homes/routemux_fallback",
+      },
+    });
+    // The key must never ride along as a non-sensitive variable.
+    expect(
+      instance.environment?.filter((variable) => variable.value.includes("sk-routemux-test")),
+    ).toEqual([{ name: "ANTHROPIC_AUTH_TOKEN", value: "sk-routemux-test", sensitive: true }]);
+  });
+
+  it("pins no model list, leaving the catalog to live discovery", () => {
+    const config = buildGatewayProviderInstance({
+      instanceId: ProviderInstanceId.make("routemux_seeded"),
+      gateway: routemux,
+      apiKey: "sk-test",
+      config: {},
+    }).config as Record<string, unknown>;
+    expect(config.customModels).toBeUndefined();
+
+    // A list the user curated by hand still round-trips untouched.
+    const curated = buildGatewayProviderInstance({
+      instanceId: ProviderInstanceId.make("routemux_curated"),
+      gateway: routemux,
+      apiKey: "sk-test",
+      config: { customModels: [{ slug: "openai/gpt-5.4-mini" }] },
+    }).config as { readonly customModels: ReadonlyArray<{ readonly slug: string }> };
+    expect(curated.customModels).toEqual([{ slug: "openai/gpt-5.4-mini" }]);
+  });
+
+  it("requires a key and keeps an explicitly configured home", () => {
+    expect(() =>
+      buildGatewayProviderInstance({
+        instanceId: ProviderInstanceId.make("routemux_empty"),
+        gateway: routemux,
+        apiKey: "   ",
+        config: {},
+      }),
+    ).toThrow(/API key is required/u);
+    expect(
+      buildGatewayProviderInstance({
+        instanceId: ProviderInstanceId.make("routemux_custom"),
+        gateway: routemux,
+        apiKey: "sk-test",
+        config: { homePath: " ~/.routemux " },
+      }).config,
+    ).toMatchObject({ homePath: "~/.routemux" });
+  });
+
+  it("round-trips the driver-step selection encoding", () => {
+    const value = providerSelectionValue(routemux.driver, routemux.id);
+    expect(value).toBe("gateway:routemux");
+    expect(parseProviderSelection(value)).toEqual({
+      driver: routemux.driver,
+      gateway: routemux,
+    });
+    // A plain driver slug is not a gateway, and neither is an unknown one.
+    expect(parseProviderSelection("claudeAgent")).toBeNull();
+    expect(parseProviderSelection("gateway:not-a-gateway")).toBeNull();
+    expect(providerSelectionValue(ProviderDriverKind.make("claudeAgent"), null)).toBe(
+      "claudeAgent",
+    );
   });
 });

@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   type EnvironmentId,
+  type ProviderGatewayDefinition,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -30,13 +31,20 @@ import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
 import { RadioGroup } from "../ui/radio-group";
 import { toastManager } from "../ui/toast";
-import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
+import {
+  DRIVER_OPTION_BY_VALUE,
+  DRIVER_OPTIONS,
+  PROVIDER_GATEWAY_OPTIONS,
+} from "./providerDriverMeta";
 import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSettingsForm";
 import { AnimatedHeight } from "../AnimatedHeight";
 import {
   ADD_PROVIDER_WIZARD_STEPS,
   apiKeyEnvironmentVariableForDriver,
   buildApiKeyProviderInstance,
+  buildGatewayProviderInstance,
+  parseProviderSelection,
+  providerSelectionValue,
   resolveWizardNavigation,
   type WizardNavigation,
 } from "./AddProviderInstanceDialog.logic";
@@ -67,9 +75,13 @@ function slugifyLabel(value: string): string {
     .slice(0, 48);
 }
 
-function deriveInstanceId(driver: ProviderDriverKind, label: string): string {
+/**
+ * `prefix` is the driver slug, or the gateway id for a gateway preset, so a
+ * RouteMux instance reads `routemux_work` rather than `claudeAgent_work`.
+ */
+function deriveInstanceId(prefix: string, label: string): string {
   const slug = slugifyLabel(label);
-  return slug ? `${driver}_${slug}` : "";
+  return slug ? `${prefix}_${slug}` : "";
 }
 
 const INSTANCE_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
@@ -138,14 +150,17 @@ export function AddProviderInstanceDialog({
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
+  const [gateway, setGateway] = useState<ProviderGatewayDefinition | null>(null);
   const [label, setLabel] = useState("");
   const [accentColor, setAccentColor] = useState<string>("");
   const [credentialMode, setCredentialMode] = useState<"existing" | "apiKey">("existing");
-  const [apiKeysByDriver, setApiKeysByDriver] = useState<Record<string, string>>({});
+  const [apiKeysBySelection, setApiKeysBySelection] = useState<Record<string, string>>({});
   const [instanceIdOverride, setInstanceIdOverride] = useState<string | null>(null);
-  // Driver-specific config drafts keyed by driver so toggling between drivers
-  // during the same dialog session does not lose in-progress input.
-  const [configByDriver, setConfigByDriver] = useState<Record<string, Record<string, unknown>>>({});
+  // Config drafts keyed by driver-or-gateway selection so toggling between
+  // entries during the same dialog session does not lose in-progress input.
+  const [configBySelection, setConfigBySelection] = useState<
+    Record<string, Record<string, unknown>>
+  >({});
   // Errors are suppressed until the user has tried to submit once. After that
   // they update live so fixing the problem clears the message in place.
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
@@ -157,15 +172,23 @@ export function AddProviderInstanceDialog({
   );
 
   const driverOption = DRIVER_OPTION_BY_VALUE[driver] ?? DEFAULT_DRIVER_OPTION;
-  const instanceId = instanceIdOverride ?? deriveInstanceId(driver, label);
+  // Drafts and the entered key are keyed by selection, not by driver, so a
+  // RouteMux key never leaks into a plain Claude instance built in the same
+  // dialog session (both run the `claudeAgent` driver).
+  const selectionValue = providerSelectionValue(driver, gateway?.id ?? null);
+  const selectionLabel = gateway ? gateway.label : driverOption.label;
+  const instanceId = instanceIdOverride ?? deriveInstanceId(gateway?.id ?? driver, label);
   const driverSettingsFields = useMemo(
     () => deriveProviderSettingsFields(driverOption),
     [driverOption],
   );
   const instanceIdError = validateInstanceId(instanceId, existingIds);
-  const apiKeyEnvironmentVariable = apiKeyEnvironmentVariableForDriver(driver);
-  const usesApiKey = credentialMode === "apiKey" && apiKeyEnvironmentVariable !== null;
-  const apiKey = apiKeysByDriver[driver] ?? "";
+  const apiKeyEnvironmentVariable =
+    gateway?.apiKeyVariable ?? apiKeyEnvironmentVariableForDriver(driver);
+  // A gateway has no CLI sign-in to fall back to: its key is the only way in.
+  const usesApiKey =
+    gateway !== null || (credentialMode === "apiKey" && apiKeyEnvironmentVariable !== null);
+  const apiKey = apiKeysBySelection[selectionValue] ?? "";
   const apiKeyError =
     usesApiKey && apiKey.trim().length === 0
       ? "API key is required for this provider instance."
@@ -173,21 +196,41 @@ export function AddProviderInstanceDialog({
   const showInstanceIdError = hasAttemptedSubmit && instanceIdError !== null;
   const showApiKeyError = hasAttemptedSubmit && apiKeyError !== null;
   const previewLabel =
-    label.trim() ||
-    (usesApiKey ? `${driverOption.label} API Key` : `${driverOption.label} Workspace`);
-  const wizardStepSummaries = [driverOption.label, previewLabel, null] as const;
+    label.trim() || (usesApiKey ? `${selectionLabel} API Key` : `${selectionLabel} Workspace`);
+  const wizardStepSummaries = [selectionLabel, previewLabel, null] as const;
 
-  const configDraft = configByDriver[driver] ?? EMPTY_CONFIG_DRAFT;
+  const configDraft = configBySelection[selectionValue] ?? EMPTY_CONFIG_DRAFT;
+  // Leaving the home field empty gives a gateway instance its own directory,
+  // not the driver's shared one. Show the directory it will actually get, so
+  // the generic `~/.claude` placeholder cannot read as the default.
+  const gatewayPlaceholders = useMemo(
+    () =>
+      gateway && instanceId.length > 0
+        ? { homePath: `~/.t3/provider-homes/${instanceId}` }
+        : undefined,
+    [gateway, instanceId],
+  );
   const setConfigDraft = (config: Record<string, unknown> | undefined) => {
-    setConfigByDriver((existing) => {
+    setConfigBySelection((existing) => {
       const next = { ...existing };
       if (config === undefined || Object.keys(config).length === 0) {
-        delete next[driver];
+        delete next[selectionValue];
       } else {
-        next[driver] = config;
+        next[selectionValue] = config;
       }
       return next;
     });
+  };
+
+  const selectProvider = (value: string) => {
+    const gatewaySelection = parseProviderSelection(value);
+    if (gatewaySelection) {
+      setDriver(gatewaySelection.driver);
+      setGateway(gatewaySelection.gateway);
+      return;
+    }
+    setDriver(ProviderDriverKind.make(value));
+    setGateway(null);
   };
 
   const applyWizardNavigation = (navigation: WizardNavigation) => {
@@ -208,7 +251,7 @@ export function AddProviderInstanceDialog({
   const closeDialog = () => {
     // Do not retain bearer credentials in the mounted settings tree after
     // the dialog closes. The server owns persistence in its secret store.
-    setApiKeysByDriver({});
+    setApiKeysBySelection({});
     onOpenChange(false);
   };
 
@@ -216,7 +259,7 @@ export function AddProviderInstanceDialog({
     setHasAttemptedSubmit(true);
     if (instanceIdError !== null || apiKeyError !== null || saving) return;
 
-    const config = configByDriver[driver] ?? {};
+    const config = configBySelection[selectionValue] ?? {};
     const hasConfig = Object.keys(config).length > 0;
     const normalizedAccentColor = normalizeProviderAccentColor(accentColor);
 
@@ -226,23 +269,32 @@ export function AddProviderInstanceDialog({
     // the slug rules.
     const brandedId = ProviderInstanceId.make(instanceId);
     const displayName = label.trim() || (usesApiKey ? previewLabel : undefined);
-    const nextInstance: ProviderInstanceConfig = usesApiKey
-      ? buildApiKeyProviderInstance({
+    const nextInstance: ProviderInstanceConfig = gateway
+      ? buildGatewayProviderInstance({
           instanceId: brandedId,
-          driver,
+          gateway,
           ...(displayName ? { displayName } : {}),
           ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
           apiKey,
           config,
         })
-      : {
-          driver,
-          enabled: true,
-          credentialSource: "cli",
-          ...(displayName ? { displayName } : {}),
-          ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
-          ...(hasConfig ? { config } : {}),
-        };
+      : usesApiKey
+        ? buildApiKeyProviderInstance({
+            instanceId: brandedId,
+            driver,
+            ...(displayName ? { displayName } : {}),
+            ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
+            apiKey,
+            config,
+          })
+        : {
+            driver,
+            enabled: true,
+            credentialSource: "cli",
+            ...(displayName ? { displayName } : {}),
+            ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
+            ...(hasConfig ? { config } : {}),
+          };
     const nextMap = {
       ...settings.providerInstances,
       [brandedId]: nextInstance,
@@ -265,7 +317,7 @@ export function AddProviderInstanceDialog({
     toastManager.add({
       type: "success",
       title: "Provider instance added",
-      description: `${driverOption.label} instance '${instanceId}' was added.`,
+      description: `${selectionLabel} instance '${instanceId}' was added.`,
     });
     closeDialog();
   };
@@ -274,7 +326,7 @@ export function AddProviderInstanceDialog({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) setApiKeysByDriver({});
+        if (!nextOpen) setApiKeysBySelection({});
         onOpenChange(nextOpen);
       }}
     >
@@ -304,8 +356,8 @@ export function AddProviderInstanceDialog({
                   Driver
                 </div>
                 <RadioGroup
-                  value={driver}
-                  onValueChange={(value) => setDriver(ProviderDriverKind.make(value))}
+                  value={selectionValue}
+                  onValueChange={selectProvider}
                   aria-labelledby="add-instance-driver-label"
                   className="grid grid-cols-1 gap-2 sm:grid-cols-2"
                 >
@@ -332,6 +384,30 @@ export function AddProviderInstanceDialog({
                             {option.badgeLabel}
                           </Badge>
                         ) : null}
+                      </RadioPrimitive.Root>
+                    );
+                  })}
+                  {PROVIDER_GATEWAY_OPTIONS.map((option) => {
+                    const IconComponent = option.icon;
+                    return (
+                      <RadioPrimitive.Root
+                        key={option.gateway.id}
+                        value={providerSelectionValue(option.gateway.driver, option.gateway.id)}
+                        className="relative flex cursor-pointer items-center gap-3 rounded-lg bg-card px-3 py-3 text-left text-muted-foreground outline-none ring-1 ring-black/5 hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-ring data-checked:bg-primary/8 data-checked:text-foreground data-checked:ring-2 data-checked:ring-primary data-checked:hover:bg-primary/8 dark:bg-white/3 dark:ring-white/5 dark:hover:bg-white/5 dark:data-checked:bg-primary/15 dark:data-checked:ring-primary dark:data-checked:hover:bg-primary/15"
+                      >
+                        <IconComponent className="size-4 shrink-0" aria-hidden />
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                          {option.gateway.label}
+                        </span>
+                        <RadioPrimitive.Indicator
+                          className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
+                          aria-hidden
+                        >
+                          <CheckIcon className="size-3.5 shrink-0" />
+                        </RadioPrimitive.Indicator>
+                        <Badge variant="warning" size="sm">
+                          API billed
+                        </Badge>
                       </RadioPrimitive.Root>
                     );
                   })}
@@ -379,7 +455,7 @@ export function AddProviderInstanceDialog({
                 <span className="text-xs font-medium text-foreground">Instance ID</span>
                 <Input
                   className="bg-background"
-                  placeholder={`${driver}_work`}
+                  placeholder={`${gateway?.id ?? driver}_work`}
                   value={instanceId}
                   onChange={(event) => {
                     setInstanceIdOverride(event.target.value);
@@ -449,31 +525,34 @@ export function AddProviderInstanceDialog({
                       <div>
                         <p className="text-sm font-medium text-foreground">Authentication</p>
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                          Add a separate API-key instance to keep available when subscription quota
-                          is exhausted.
+                          {gateway
+                            ? `Every turn on this instance is billed by ${gateway.label} against the key below. Create one at ${gateway.consoleUrl}.`
+                            : "Add a separate API-key instance to keep available when subscription quota is exhausted."}
                         </p>
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={credentialMode === "existing" ? "secondary" : "outline"}
-                          aria-pressed={credentialMode === "existing"}
-                          onClick={() => setCredentialMode("existing")}
-                        >
-                          CLI sign-in
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={credentialMode === "apiKey" ? "secondary" : "outline"}
-                          aria-pressed={credentialMode === "apiKey"}
-                          onClick={() => setCredentialMode("apiKey")}
-                        >
-                          API key
-                        </Button>
-                      </div>
-                      {credentialMode === "apiKey" ? (
+                      {gateway ? null : (
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={credentialMode === "existing" ? "secondary" : "outline"}
+                            aria-pressed={credentialMode === "existing"}
+                            onClick={() => setCredentialMode("existing")}
+                          >
+                            CLI sign-in
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={credentialMode === "apiKey" ? "secondary" : "outline"}
+                            aria-pressed={credentialMode === "apiKey"}
+                            onClick={() => setCredentialMode("apiKey")}
+                          >
+                            API key
+                          </Button>
+                        </div>
+                      )}
+                      {usesApiKey ? (
                         <label className="grid gap-1.5">
                           <span className="text-xs font-medium text-foreground">
                             {apiKeyEnvironmentVariable}
@@ -486,9 +565,9 @@ export function AddProviderInstanceDialog({
                             placeholder="Enter API key"
                             aria-invalid={showApiKeyError}
                             onChange={(event) =>
-                              setApiKeysByDriver((current) => ({
+                              setApiKeysBySelection((current) => ({
                                 ...current,
-                                [driver]: event.target.value,
+                                [selectionValue]: event.target.value,
                               }))
                             }
                           />
@@ -497,7 +576,8 @@ export function AddProviderInstanceDialog({
                           ) : (
                             <span className="text-[11px] text-muted-foreground">
                               Stored separately as a sensitive environment secret. This instance
-                              uses an isolated provider home.
+                              uses an isolated provider home
+                              {gateway ? ` and talks to ${gateway.baseUrl}` : ""}.
                             </span>
                           )}
                         </label>
@@ -507,8 +587,9 @@ export function AddProviderInstanceDialog({
                   <ProviderSettingsForm
                     definition={driverOption}
                     value={configDraft}
-                    idPrefix={`add-provider-${driver}`}
+                    idPrefix={`add-provider-${selectionValue}`}
                     variant="dialog"
+                    {...(gatewayPlaceholders ? { placeholders: gatewayPlaceholders } : {})}
                     onChange={setConfigDraft}
                   />
                 </div>

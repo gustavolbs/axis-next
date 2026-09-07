@@ -48,6 +48,7 @@ import {
   type SettingsSearchItem,
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+import { AXIS_SETTINGS_SIDEBAR_SECTIONS } from "~/features/axis/settings/axisSettingsNav";
 
 const T3ConnectSidebarSignIn = lazy(() =>
   import("../clerk/T3ConnectSidebarSignIn").then((module) => ({
@@ -84,8 +85,22 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: SETTINGS_SECTION_ICONS[to],
 }));
 
+/**
+ * Sub-items under a settings page. Most scroll to an anchor; one that carries
+ * `search` switches which screen the page renders instead, for pages whose
+ * sections are too large to share a scroll.
+ */
 const SETTINGS_PAGE_SECTIONS: Partial<
-  Readonly<Record<SettingsPath, ReadonlyArray<{ label: string; targetId: string }>>>
+  Readonly<
+    Record<
+      SettingsPath,
+      ReadonlyArray<{
+        label: string;
+        targetId: string;
+        search?: Readonly<Record<string, string>> | undefined;
+      }>
+    >
+  >
 > = {
   "/settings/general": [
     { label: "Organization", targetId: "organization" },
@@ -109,11 +124,7 @@ const SETTINGS_PAGE_SECTIONS: Partial<
     { label: "This environment", targetId: "connections-environment" },
     { label: "Remote environments", targetId: "remote-environments" },
   ],
-  "/settings/axis": [
-    { label: "Personal & Companies", targetId: "axis-contexts" },
-    { label: "Agent capabilities", targetId: "axis-capabilities" },
-    { label: "Provider & company grants", targetId: "axis-provider-access" },
-  ],
+  "/settings/axis": AXIS_SETTINGS_SIDEBAR_SECTIONS,
 };
 
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
@@ -192,9 +203,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     [isMobile, navigate, setOpenMobile],
   );
   const handlePageSectionClick = useCallback(
-    (to: SettingsPath, targetId: string) => {
+    (to: SettingsPath, targetId: string, search?: Readonly<Record<string, string>>) => {
       if (isMobile) {
         setOpenMobile(false);
+      }
+      if (search) {
+        void navigate({ to, search, replace: true });
+        return;
       }
       if (pathname === to && scrollToSettingsTarget(targetId, { highlight: false })) {
         return;
@@ -373,7 +388,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                               render={<button type="button" />}
                               size="sm"
                               className="w-full text-sidebar-muted-foreground/65"
-                              onClick={() => handlePageSectionClick(item.to, section.targetId)}
+                              onClick={() =>
+                                handlePageSectionClick(item.to, section.targetId, section.search)
+                              }
                             >
                               <span className="ms-0.5">{section.label}</span>
                             </SidebarMenuSubButton>

@@ -1,4 +1,4 @@
-import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
+import type { ProviderDriverKind, ProviderGatewayId, ServerProvider } from "@t3tools/contracts";
 
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
@@ -16,6 +16,7 @@ export const withInstanceIdentity =
     readonly driverKind: ProviderDriverKind;
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
+    readonly gateway?: ProviderGatewayId | undefined;
     readonly continuationGroupKey: string;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
@@ -24,5 +25,6 @@ export const withInstanceIdentity =
     driver: input.driverKind,
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    ...(input.gateway ? { gateway: input.gateway } : {}),
     continuation: { groupKey: input.continuationGroupKey },
   });

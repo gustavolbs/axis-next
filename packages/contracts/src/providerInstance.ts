@@ -83,6 +83,21 @@ export const ProviderInstanceId = slugSchema.pipe(Schema.brand("ProviderInstance
 export type ProviderInstanceId = typeof ProviderInstanceId.Type;
 
 /**
+ * `ProviderGatewayId` — names a *gateway preset*: a hosted, multi-model API
+ * endpoint an existing driver is pointed at instead of its vendor's own
+ * endpoint (e.g. `routemux`). A gateway never replaces the driver; it only
+ * decides which base URL and credential the driver's CLI talks to, so a
+ * gateway instance stays an ordinary provider instance everywhere else.
+ *
+ * Open slug for the same reason `ProviderDriverKind` is: a fork may ship its
+ * own gateway, and settings written by a build that knows it must round-trip
+ * through a build that does not. Unknown ids resolve to no preset rather than
+ * failing to parse.
+ */
+export const ProviderGatewayId = slugSchema.pipe(Schema.brand("ProviderGatewayId"));
+export type ProviderGatewayId = typeof ProviderGatewayId.Type;
+
+/**
  * Lightweight reference identifying which driver implements an instance.
  * Carried alongside `ProviderInstanceId` on wire shapes so consumers can
  * branch on driver behavior (icons, capabilities, presentation) without
@@ -131,6 +146,12 @@ export const ProviderInstanceConfig = Schema.Struct({
    * continue to round-trip unchanged.
    */
   credentialSource: Schema.optionalKey(Schema.Literals(["cli", "api-key"])),
+  /**
+   * Set when the instance was created from a gateway preset, naming which
+   * one. Presentation and error classification read it; routing does not —
+   * `driver` still decides which driver runs the instance.
+   */
+  gateway: Schema.optionalKey(ProviderGatewayId),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),

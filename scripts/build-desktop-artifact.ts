@@ -23,10 +23,15 @@ import serverPackageJson from "../apps/server/package.json" with { type: "json" 
 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import {
-  BRAND_ASSET_PATHS,
-  resolveWebAssetBrandForChannel,
-  type WebAssetBrand,
-} from "./lib/brand-assets.ts";
+  applyAxisDocumentTitle,
+  AXIS_ARTIFACT_NAME,
+  AXIS_DESKTOP_APP_ID,
+  AXIS_UPDATE_REPOSITORY,
+  resolveAxisDesktopIconAssets,
+  resolveAxisProductName,
+  resolveAxisWebIconOverrides,
+} from "./lib/axis-brand.ts";
+import { resolveWebAssetBrandForChannel, type WebAssetBrand } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
 import {
   findInlinedExternalPackages,
@@ -52,7 +57,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+const DESKTOP_APP_ID = AXIS_DESKTOP_APP_ID;
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -2492,10 +2497,14 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
     updateRepository: Config.string("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
     githubRepository: Config.string("GITHUB_REPOSITORY").pipe(Config.option),
   });
+  // Falling back to the Axis repository (rather than to no feed at all) is what
+  // makes a plain `vp run dist:desktop:dmg` produce an artifact that can update
+  // itself. GITHUB_REPOSITORY is deliberately not consulted before the explicit
+  // override, so a fork's CI still publishes against its own releases.
   const rawRepo = (
     Option.getOrUndefined(env.updateRepository)?.trim() ||
     Option.getOrUndefined(env.githubRepository)?.trim() ||
-    ""
+    AXIS_UPDATE_REPOSITORY
   ).trim();
   if (!rawRepo) return undefined;
 
@@ -2523,21 +2532,37 @@ export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
   return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
 }
 
-export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
-  if (resolveDesktopUpdateChannel(version) === "nightly") {
-    return {
-      macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
-      linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
-      windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
-    };
-  }
-
-  return {
-    macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
-    linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
-    windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
-  };
+export function resolveDesktopBuildIconAssets(_version: string): DesktopBuildIconAssets {
+  return resolveAxisDesktopIconAssets();
 }
+
+/**
+ * Rebrands the client that ships inside the desktop bundle. It runs after
+ * `applyWebBrandAssets` so the upstream channel assets stay the fallback for
+ * anything Axis does not override, and it never touches the hosted web build.
+ */
+export const applyAxisPackagedWebBranding = Effect.fn("applyAxisPackagedWebBranding")(function* (
+  targetDirectory: string,
+  productName: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const repoRoot = yield* RepoRoot;
+
+  yield* Effect.forEach(
+    resolveAxisWebIconOverrides(targetDirectory),
+    (override) =>
+      fs.copyFile(
+        path.join(repoRoot, override.sourceRelativePath),
+        path.join(repoRoot, override.targetRelativePath),
+      ),
+    { concurrency: "unbounded" },
+  );
+
+  const indexPath = path.join(repoRoot, targetDirectory, "index.html");
+  const html = yield* fs.readFileString(indexPath);
+  yield* fs.writeFileString(indexPath, applyAxisDocumentTitle(html, productName));
+});
 
 export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefined): string {
   return `http://localhost:${mockUpdateServerPort ?? 3000}`;
@@ -2557,9 +2582,7 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 }
 
 export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+  return resolveAxisProductName(resolveDesktopUpdateChannel(version));
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2584,7 +2607,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: AXIS_ARTIFACT_NAME,
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -3543,7 +3566,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const webAssetBrand = resolveDesktopWebAssetBrand(appVersion);
   yield* applyWebBrandAssets(webAssetBrand, "apps/server/dist/client");
-  yield* Effect.log(`[desktop-artifact] Applied ${webAssetBrand} web client branding.`);
+  yield* applyAxisPackagedWebBranding(
+    "apps/server/dist/client",
+    resolveDesktopProductName(appVersion),
+  );
+  yield* Effect.log("[desktop-artifact] Applied Axis web client branding.");
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
 
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });

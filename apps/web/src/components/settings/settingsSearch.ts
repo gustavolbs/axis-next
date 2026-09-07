@@ -1,5 +1,6 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
+import { AXIS_SETTINGS_SEARCH_ITEMS } from "~/features/axis/settings/axisSettingsNav";
 
 export type SettingsPath =
   | "/settings/general"
@@ -65,24 +66,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
-  {
-    id: "axis-contexts",
-    title: "Personal & Companies",
-    to: "/settings/axis",
-    searchTerms: ["Axis workspace organization isolation company personal"],
-  },
-  {
-    id: "axis-capabilities",
-    title: "Agent capabilities",
-    to: "/settings/axis",
-    searchTerms: ["MCP skills instructions preferences enable disable manage"],
-  },
-  {
-    id: "axis-provider-access",
-    title: "Provider & company grants",
-    to: "/settings/axis",
-    searchTerms: ["share personal provider company permission access grant"],
-  },
+  ...AXIS_SETTINGS_SEARCH_ITEMS,
   {
     id: "color-scheme",
     title: "Color scheme",

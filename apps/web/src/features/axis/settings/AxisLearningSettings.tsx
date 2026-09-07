@@ -21,13 +21,19 @@ import { ensureLocalApi } from "~/localApi";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { Textarea } from "../ui/textarea";
-import { toastManager } from "../ui/toast";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
+import { Input } from "~/components/ui/input";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
+import { Textarea } from "~/components/ui/textarea";
+import { toastManager } from "~/components/ui/toast";
+import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayout";
 import {
   buildManualLearningEvidence,
   buildManualLearningProposal,

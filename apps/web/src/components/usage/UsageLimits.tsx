@@ -199,6 +199,7 @@ function LimitWindows({
  */
 function AccountHeading({
   driver,
+  gateway,
   label,
   instanceLabel,
   plan,
@@ -206,6 +207,7 @@ function AccountHeading({
   accentColor,
 }: {
   readonly driver: ServerProvider["driver"];
+  readonly gateway: ServerProvider["gateway"];
   readonly label: string;
   readonly instanceLabel: string;
   readonly plan: string | undefined;
@@ -216,6 +218,7 @@ function AccountHeading({
     <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-foreground">
       <ProviderInstanceIcon
         driverKind={driver}
+        gateway={gateway}
         displayName={instanceLabel}
         accentColor={accentColor}
         showBadge={Boolean(accentColor)}
@@ -258,6 +261,7 @@ function ProviderLimits({
     <section className="flex flex-col gap-3">
       <AccountHeading
         driver={provider.driver}
+        gateway={provider.gateway}
         label={getDriverOption(provider.driver)?.label ?? String(provider.driver)}
         instanceLabel={providerLimitsLabel(provider, (driver) => getDriverOption(driver)?.label)}
         plan={provider.auth.label}
@@ -379,6 +383,7 @@ function SourceAccountLimits({
     <section className="flex flex-col gap-3">
       <AccountHeading
         driver={account.driver}
+        gateway={undefined}
         label={getDriverOption(account.driver)?.label ?? String(account.driver)}
         instanceLabel={sourceKind}
         plan={account.plan}

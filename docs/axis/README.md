@@ -29,6 +29,8 @@ conflicts without adding product value.
   changes are synchronized.
 - [Legacy migration](./LEGACY_MIGRATION.md) defines the decision framework for moving useful Axis
   Legacy behavior without moving its infrastructure debt.
+- [Desktop releases](./RELEASE.md) defines the Axis branding applied at packaging time, the signing
+  identity automatic updates depend on, and how a release is cut.
 
 These documents describe durable boundaries and may cover both implemented and planned slices. The
 current implementation includes the Axis context/provider catalog, provider-owned MCP and skill

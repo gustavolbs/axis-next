@@ -26,6 +26,7 @@ import type {
   AxisWorkHubCacheSnapshot,
   AxisWorkHubCollectInput,
   ProviderDriverKind,
+  ProviderGatewayId,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
   ProviderMcpServer,
@@ -123,6 +124,13 @@ export interface ProviderDriverCreateInput<Config> {
   readonly instanceId: ProviderInstanceId;
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
+  /**
+   * Set when the instance came from a gateway preset. A driver that knows the
+   * gateway can adapt what it reports — most usefully its model catalog,
+   * which belongs to the gateway rather than the driver's own vendor. Drivers
+   * that ignore it behave exactly as before.
+   */
+  readonly gateway?: ProviderGatewayId | undefined;
   readonly environment: ProviderInstanceEnvironment;
   readonly enabled: boolean;
   readonly config: Config;

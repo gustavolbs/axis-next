@@ -71,19 +71,26 @@ fallback when a subscription provider reaches its quota or rate limit. It must r
 provider instance from Axis's perspective, while participating in the same explicit billing and
 context-isolation rules as API-key providers.
 
-- [ ] Add a RouteMux provider adapter/preset with isolated credentials, home, model selection, and
+- [x] Add a RouteMux provider adapter/preset with isolated credentials, home, model selection, and
       provider-instance metadata.
-- [ ] Support adding a RouteMux API key through the environment secret store; never expose the key
+- [x] Support adding a RouteMux API key through the environment secret store; never expose the key
       to clients, logs, Threads, or Work Hub records.
-- [ ] Surface RouteMux as an explicitly **API billed** provider and require confirmation before it
-      can be selected as an automatic fallback.
+- [~] Surface RouteMux as an explicitly **API billed** provider and require confirmation before it
+  can be selected as an automatic fallback. The **API billed** boundary ships; the fallback
+  confirmation lands with the fallback graph.
+- [x] Read the RouteMux model catalog live from `GET /v1/models` with the instance key instead of
+      pinning a list, falling back to the driver catalog when the listing cannot be refreshed.
+- [ ] Extend the gateway preset to the OpenAI-compatible endpoint so the Codex driver can run
+      RouteMux too. Today the preset rides the Anthropic-compatible endpoint on the Claude driver;
+      the Codex path additionally needs T3 to generate a `model_provider` block in Codex's
+      `config.toml`, which no driver does yet.
 - [ ] Add RouteMux to the primary → fallback graph, with one-attempt quota-only failover,
       idempotency, cancellation, and protection against duplicate tool/file/source-system writes.
 - [ ] Preserve the original context, Project, Thread, MCP/skill grants, and audit trail when a Turn
       is routed through RouteMux; do not leak Personal or Company data across contexts.
 - [ ] Normalize RouteMux quota, rate-limit, authentication, model, and upstream errors into the
       provider error taxonomy and expose actionable UI state.
-- [ ] Add manual “Use RouteMux now” selection independently of automatic fallback.
+- [x] Add manual “Use RouteMux now” selection independently of automatic fallback.
 - [ ] Add focused adapter, contract, fallback, secret-redaction, and remote/relay tests before
       enabling RouteMux in the default provider picker.
 
@@ -282,16 +289,16 @@ and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
       tool-result, latency, retries, and billed cost where the provider exposes them.
 - [ ] Add an optional provider-owned **Concise output** profile with explicit verbosity limits;
       preserve normal human-facing language instead of forcing “caveman speak” into every reply.
-- [ ] Define a replaceable `TokenEfficiencyEngine` boundary with `off`, `record`, and `compress`
+- [x] Define a replaceable `TokenEfficiencyEngine` boundary with `off`, `record`, and `compress`
       modes so Caveman Engine, LLMLingua-2, or deterministic compactors can be evaluated without
       changing orchestration.
-- [ ] Start with deterministic compaction of repeated logs, terminal output, search results,
-      accessibility trees, and MCP/tool payloads before applying lossy natural-language
-      compression.
-- [ ] Store the original payload locally before any lossy transform and expose a context-scoped,
+- [~] Start with deterministic compaction of repeated logs, terminal output, search results,
+  accessibility trees, and MCP/tool payloads before applying lossy natural-language
+  compression. The compactor and its payload kinds ship; no call site feeds it yet.
+- [x] Store the original payload locally before any lossy transform and expose a context-scoped,
       expiring recovery handle; pass the original through if storage, parsing, compression, or token
       estimation fails.
-- [ ] Never compress code, diffs, commands, paths, URLs, identifiers, numbers, JSON/schema fields,
+- [x] Never compress code, diffs, commands, paths, URLs, identifiers, numbers, JSON/schema fields,
       errors, approvals, security policy, secrets, or the user's current request unless a
       format-aware lossless transform proves byte-safe.
 - [ ] Preserve stable prompt prefixes and provider-native prompt caching; do not trade cache hits for
@@ -303,8 +310,10 @@ and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
 - [ ] Benchmark Caveman Engine against no compression, deterministic shape-aware compaction, and
       LLMLingua-2 on representative Codex, Claude, Work Hub, remote-dispatch, and scheduled-agent
       tasks in English and Portuguese.
-- [ ] Gate rollout per provider instance and Axis context with a kill switch, visible savings/
-      accuracy/latency statistics, and automatic pass-through when compression is net-negative.
+- [~] Gate rollout per provider instance and Axis context with a kill switch, visible savings/
+  accuracy/latency statistics, and automatic pass-through when compression is net-negative.
+  Per-instance gating, the `off` kill switch, and net-negative pass-through ship; the
+  statistics surface waits on the baselines.
 - [ ] Feed only aggregate, non-sensitive efficiency outcomes into Hermes; Hermes may propose a
       compression policy change but cannot activate it.
 
@@ -326,6 +335,8 @@ and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
 - [x] Keep API secrets out of Axis databases and client-visible settings.
 - [x] Make manual Work Hub sync server-authoritative.
 - [x] Complete source-level single-flight/monotonic cache writes and test races without sleeps.
+- [x] Ship the desktop app as Axis (name, bundle identity, icons) at packaging time only, and publish
+      signed macOS releases that the in-app updater can consume.
 - [ ] Make catalog updates and dependent cache/schedule cleanup transactional or reconciled.
 - [ ] Add scheduler retention for old run history and bounded diagnostics.
 - [ ] Add metrics/logging for connector duration, cache hit/skip, failures, scheduled drift, dispatch,

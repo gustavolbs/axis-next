@@ -1,7 +1,11 @@
-import type {
-  ProviderDriverKind,
-  ProviderInstanceConfig,
-  ProviderInstanceId,
+import {
+  getProviderGateway,
+  providerGatewayEnvironment,
+  type ProviderDriverKind,
+  type ProviderGatewayDefinition,
+  type ProviderGatewayId,
+  type ProviderInstanceConfig,
+  type ProviderInstanceId,
 } from "@t3tools/contracts";
 
 export type WizardNavigation =
@@ -19,6 +23,26 @@ const API_KEY_ENVIRONMENT_VARIABLES: Readonly<Record<string, string>> = {
 
 export function apiKeyEnvironmentVariableForDriver(driver: ProviderDriverKind): string | null {
   return API_KEY_ENVIRONMENT_VARIABLES[driver] ?? null;
+}
+
+/**
+ * Point the instance at its own CLI home unless the wizard supplied one.
+ * Codex isolates through `shadowHomePath`, every other driver through
+ * `homePath`. Non-auth configuration from the wizard is preserved.
+ */
+function withIsolatedProviderHome(
+  driver: ProviderDriverKind,
+  instanceId: ProviderInstanceId,
+  config: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const isolatedHome = `~/.t3/provider-homes/${instanceId}`;
+  const key = driver === "codex" ? "shadowHomePath" : "homePath";
+  const configured = config[key];
+  const resolved =
+    typeof configured === "string" && configured.trim().length > 0
+      ? configured.trim()
+      : isolatedHome;
+  return { ...config, [key]: resolved };
 }
 
 /**
@@ -42,19 +66,7 @@ export function buildApiKeyProviderInstance(input: {
   if (apiKey.length === 0) {
     throw new Error("API key is required for an API-key provider instance.");
   }
-  const isolatedHome = `~/.t3/provider-homes/${input.instanceId}`;
-  const configuredHome =
-    typeof input.config.homePath === "string" && input.config.homePath.trim().length > 0
-      ? input.config.homePath.trim()
-      : isolatedHome;
-  const configuredShadowHome =
-    typeof input.config.shadowHomePath === "string" && input.config.shadowHomePath.trim().length > 0
-      ? input.config.shadowHomePath.trim()
-      : isolatedHome;
-  const config =
-    input.driver === "codex"
-      ? { ...input.config, shadowHomePath: configuredShadowHome }
-      : { ...input.config, homePath: configuredHome };
+  const config = withIsolatedProviderHome(input.driver, input.instanceId, input.config);
   return {
     driver: input.driver,
     enabled: true,
@@ -70,6 +82,62 @@ export function buildApiKeyProviderInstance(input: {
     ],
     config,
   };
+}
+
+/**
+ * A gateway instance is an API-key instance whose driver is aimed at a
+ * hosted multi-model endpoint. It carries the same isolated home and
+ * sensitive-secret handling, plus the base-URL variable, and records which
+ * preset produced it.
+ *
+ * No model list is written here: the server reads the gateway's live catalog
+ * with this key, so the picker shows exactly what the key can call and stays
+ * correct as the gateway's lineup changes.
+ */
+export function buildGatewayProviderInstance(input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly gateway: ProviderGatewayDefinition;
+  readonly displayName?: string;
+  readonly accentColor?: string;
+  readonly apiKey: string;
+  readonly config: Readonly<Record<string, unknown>>;
+}): ProviderInstanceConfig {
+  const apiKey = input.apiKey.trim();
+  if (apiKey.length === 0) {
+    throw new Error(`An API key is required for a ${input.gateway.label} provider instance.`);
+  }
+  const config = withIsolatedProviderHome(input.gateway.driver, input.instanceId, input.config);
+  return {
+    driver: input.gateway.driver,
+    enabled: true,
+    credentialSource: "api-key",
+    gateway: input.gateway.id,
+    ...(input.displayName ? { displayName: input.displayName } : {}),
+    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    environment: providerGatewayEnvironment(input.gateway, apiKey),
+    config,
+  };
+}
+
+/**
+ * The driver step offers drivers and gateway presets in one radio group, so
+ * its value is either a driver slug or `gateway:<id>`. These two functions
+ * are the only place that encoding is known.
+ */
+export function providerSelectionValue(
+  driver: ProviderDriverKind,
+  gateway: ProviderGatewayId | null,
+): string {
+  return gateway ? `gateway:${gateway}` : driver;
+}
+
+export function parseProviderSelection(value: string): {
+  readonly driver: ProviderDriverKind;
+  readonly gateway: ProviderGatewayDefinition | null;
+} | null {
+  if (!value.startsWith("gateway:")) return null;
+  const gateway = getProviderGateway(value.slice("gateway:".length));
+  return gateway ? { driver: gateway.driver, gateway } : null;
 }
 
 /**
