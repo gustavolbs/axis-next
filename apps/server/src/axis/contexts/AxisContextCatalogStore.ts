@@ -89,19 +89,35 @@ export const make = Effect.gen(function* () {
         Effect.mapError(persistenceError("encode replacement catalog")),
       );
       const updatedAt = DateTime.formatIso(yield* DateTime.now);
-      return yield* sql<CatalogRow>`
-        UPDATE axis_context_catalog
-        SET
-          revision = revision + 1,
-          catalog_json = ${catalogJson},
-          updated_at = ${updatedAt}
-        WHERE singleton = 1
-          AND revision = ${input.expectedRevision}
-        RETURNING
-          revision AS "revision",
-          catalog_json AS "catalogJson",
-          updated_at AS "updatedAt"
-      `;
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const rows = yield* sql<CatalogRow>`
+            UPDATE axis_context_catalog
+            SET
+              revision = revision + 1,
+              catalog_json = ${catalogJson},
+              updated_at = ${updatedAt}
+            WHERE singleton = 1
+              AND revision = ${input.expectedRevision}
+            RETURNING
+              revision AS "revision",
+              catalog_json AS "catalogJson",
+              updated_at AS "updatedAt"
+          `;
+          if (rows[0] !== undefined) {
+            const sourceIds = input.catalog.workHubSources.map((source) => source.id);
+            if (sourceIds.length === 0) {
+              yield* sql`DELETE FROM axis_work_hub_cache`;
+            } else {
+              yield* sql`
+                DELETE FROM axis_work_hub_cache
+                WHERE source_id NOT IN ${sql.in(sourceIds)}
+              `;
+            }
+          }
+          return rows;
+        }),
+      );
     }).pipe(
       Effect.mapError(persistenceError("replace catalog")),
       Effect.flatMap((rows) => {

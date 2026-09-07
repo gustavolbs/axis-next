@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
-import { RefreshCwIcon, SearchIcon } from "lucide-react";
+import { RefreshCwIcon, SearchIcon, Trash2Icon } from "lucide-react";
 import {
   axisProviderInstanceLocatorKey,
   AxisCapabilityId,
+  type AxisCapability,
+  type AxisContextCatalog,
   type EnvironmentId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -12,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { randomUUID } from "~/lib/utils";
+import { ensureLocalApi } from "~/localApi";
 import { usePrimaryEnvironment } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -19,8 +22,13 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  removeAxisProviderCapability,
+  setAxisProviderCapabilityEnabled,
+} from "./ProviderCapabilities.logic";
 
 type CapabilitySection = "mcps" | "skills" | "instructions" | "preferences";
 type McpFilter = "all" | "connected" | "attention";
@@ -65,7 +73,7 @@ export function ProviderCapabilitiesSection({
       : null,
   );
   const axisQuery = useEnvironmentQuery(
-    section === "mcps" && axisEnvironmentId !== null && axisSupported
+    needsInventory && axisEnvironmentId !== null && axisSupported
       ? serverEnvironment.axisContextCatalog({ environmentId: axisEnvironmentId, input: {} })
       : null,
   );
@@ -73,6 +81,7 @@ export function ProviderCapabilitiesSection({
     reportFailure: false,
   });
   const [publishingMcp, setPublishingMcp] = useState<string | null>(null);
+  const [savingCapabilityId, setSavingCapabilityId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [mcpFilter, setMcpFilter] = useState<McpFilter>("all");
   const [skillFilter, setSkillFilter] = useState<SkillFilter>("all");
@@ -82,14 +91,14 @@ export function ProviderCapabilitiesSection({
     axisQuery.data?.catalog.providerOwnerships.some(
       (ownership) => axisProviderInstanceLocatorKey(ownership.provider) === providerKey,
     ) ?? false;
-  const workHubMcpNames = new Set(
-    axisQuery.data?.catalog.capabilities
-      .filter(
-        (capability) =>
-          capability.kind === "mcp" &&
-          axisProviderInstanceLocatorKey(capability.provider) === providerKey,
-      )
-      .map((capability) => capability.name) ?? [],
+  const providerCapabilities =
+    axisQuery.data?.catalog.capabilities.filter(
+      (capability) => axisProviderInstanceLocatorKey(capability.provider) === providerKey,
+    ) ?? [];
+  const mcpCapabilitiesByName = new Map(
+    providerCapabilities
+      .filter((capability) => capability.kind === "mcp")
+      .map((capability) => [capability.name, capability]),
   );
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const visibleMcps = useMemo(
@@ -127,7 +136,13 @@ export function ProviderCapabilitiesSection({
 
   const publishMcpToWorkHub = async (name: string, enabled: boolean) => {
     const snapshot = axisQuery.data;
-    if (!snapshot || axisEnvironmentId === null || publishingMcp !== null) return;
+    if (
+      !snapshot ||
+      axisEnvironmentId === null ||
+      publishingMcp !== null ||
+      savingCapabilityId !== null
+    )
+      return;
     const now = new Date().toISOString();
     setPublishingMcp(name);
     const result = await replaceCatalog({
@@ -169,6 +184,95 @@ export function ProviderCapabilitiesSection({
       });
     }
   };
+
+  const saveCapabilityCatalog = async (
+    capability: AxisCapability,
+    catalog: AxisContextCatalog,
+    successTitle: string,
+  ) => {
+    const snapshot = axisQuery.data;
+    if (!snapshot || axisEnvironmentId === null || savingCapabilityId !== null) return;
+    setSavingCapabilityId(capability.id);
+    const result = await replaceCatalog({
+      environmentId: axisEnvironmentId,
+      input: { expectedRevision: snapshot.revision, catalog },
+    });
+    setSavingCapabilityId(null);
+    if (result._tag === "Success") {
+      axisQuery.refresh();
+      toastManager.add({ type: "success", title: successTitle });
+    } else if (!isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: `Could not update ${capability.name}`,
+        description:
+          error instanceof Error ? error.message : "Refresh Axis settings and try again.",
+      });
+    }
+  };
+
+  const toggleCapability = (capability: AxisCapability, enabled: boolean) => {
+    const snapshot = axisQuery.data;
+    if (!snapshot) return;
+    const catalog = setAxisProviderCapabilityEnabled({
+      catalog: snapshot.catalog,
+      provider: { environmentId, instanceId },
+      capabilityId: capability.id,
+      enabled,
+      updatedAt: new Date().toISOString(),
+    });
+    void saveCapabilityCatalog(
+      capability,
+      catalog,
+      enabled ? `${capability.name} enabled` : `${capability.name} disabled`,
+    );
+  };
+
+  const removeCapability = async (capability: AxisCapability) => {
+    const snapshot = axisQuery.data;
+    if (!snapshot) return;
+    const bindingCount = snapshot.catalog.workHubSources.filter(
+      (source) => source.capabilityId === capability.id,
+    ).length;
+    const bindingMessage =
+      bindingCount === 0
+        ? "It is not currently selected by any Work Hub context."
+        : `This will also remove ${bindingCount} Work Hub source binding${bindingCount === 1 ? "" : "s"}.`;
+    const confirmed = await ensureLocalApi().dialogs.confirm(
+      `Remove “${capability.name}” from Axis? ${bindingMessage} Its native provider configuration will not be changed.`,
+      { variant: "destructive" },
+    );
+    if (!confirmed) return;
+    const catalog = removeAxisProviderCapability({
+      catalog: snapshot.catalog,
+      provider: { environmentId, instanceId },
+      capabilityId: capability.id,
+    });
+    void saveCapabilityCatalog(capability, catalog, `${capability.name} removed`);
+  };
+
+  const capabilityControls = (capability: AxisCapability) => (
+    <div className="flex items-center gap-2">
+      <Switch
+        checked={capability.enabled}
+        disabled={savingCapabilityId !== null || publishingMcp !== null}
+        aria-label={`Enable ${capability.name}`}
+        onCheckedChange={(enabled) => toggleCapability(capability, enabled)}
+      />
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost-muted"
+        disabled={savingCapabilityId !== null || publishingMcp !== null}
+        aria-label={`Remove ${capability.name}`}
+        title="Remove from Axis"
+        onClick={() => void removeCapability(capability)}
+      >
+        <Trash2Icon />
+      </Button>
+    </div>
+  );
 
   if (section === "instructions") {
     return (
@@ -277,55 +381,63 @@ export function ProviderCapabilitiesSection({
               <span>Type</span>
               <span>Scope</span>
               <span>Status</span>
-              <span>Work Hub</span>
+              <span>Axis</span>
             </div>
-            {visibleMcps.map((server) => (
-              <div
-                key={`${server.scope ?? "provider"}:${server.name}`}
-                className="grid items-center gap-2 px-3 py-3 lg:grid-cols-[minmax(12rem,1fr)_8rem_9rem_11rem_auto] lg:gap-3 lg:px-4"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">{server.name}</span>
-                  {server.target ? (
-                    <code className="block truncate text-[11px] text-muted-foreground">
-                      {server.target}
-                    </code>
-                  ) : null}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {server.transport ?? "Native"}
-                </span>
-                <span className="text-xs text-muted-foreground">{server.scope ?? "Provider"}</span>
-                <Badge
-                  variant={server.status === "failed" ? "destructive" : "secondary"}
-                  className="w-fit"
+            {visibleMcps.map((server) => {
+              const capability = mcpCapabilitiesByName.get(server.name);
+              return (
+                <div
+                  key={`${server.scope ?? "provider"}:${server.name}`}
+                  className="grid items-center gap-2 px-3 py-3 lg:grid-cols-[minmax(12rem,1fr)_8rem_9rem_11rem_auto] lg:gap-3 lg:px-4"
                 >
-                  {MCP_STATUS_LABELS[server.status]}
-                </Badge>
-                {workHubMcpNames.has(server.name) ? (
-                  <Badge variant="success" className="w-fit">
-                    Available
-                  </Badge>
-                ) : (
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    disabled={!axisSupported || !providerIsAssigned || publishingMcp !== null}
-                    title={
-                      !axisSupported
-                        ? "Update the primary environment to enable Axis."
-                        : providerIsAssigned
-                          ? undefined
-                          : "Assign this provider in Axis first."
-                    }
-                    onClick={() => void publishMcpToWorkHub(server.name, server.enabled)}
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{server.name}</span>
+                    {server.target ? (
+                      <code className="block truncate text-[11px] text-muted-foreground">
+                        {server.target}
+                      </code>
+                    ) : null}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {server.transport ?? "Native"}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {server.scope ?? "Provider"}
+                  </span>
+                  <Badge
+                    variant={server.status === "failed" ? "destructive" : "secondary"}
+                    className="w-fit"
                   >
-                    {publishingMcp === server.name ? "Adding…" : "Add"}
-                  </Button>
-                )}
-              </div>
-            ))}
+                    {MCP_STATUS_LABELS[server.status]}
+                  </Badge>
+                  {capability ? (
+                    capabilityControls(capability)
+                  ) : (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      disabled={
+                        !axisSupported ||
+                        !providerIsAssigned ||
+                        publishingMcp !== null ||
+                        savingCapabilityId !== null
+                      }
+                      title={
+                        !axisSupported
+                          ? "Update the primary environment to enable Axis."
+                          : providerIsAssigned
+                            ? undefined
+                            : "Assign this provider in Axis first."
+                      }
+                      onClick={() => void publishMcpToWorkHub(server.name, server.enabled)}
+                    >
+                      {publishingMcp === server.name ? "Adding…" : "Add"}
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )
       ) : null}
@@ -338,19 +450,30 @@ export function ProviderCapabilitiesSection({
           />
         ) : (
           <div className="divide-y divide-border/50">
-            {visibleSkills.map((skill) => (
-              <SettingsRow
-                key={skill.path}
-                title={skill.displayName ?? skill.name}
-                description={skill.shortDescription ?? skill.description ?? skill.path}
-                status={skill.scope ?? "Provider"}
-                control={
-                  <Badge variant={skill.enabled ? "success" : "outline"}>
-                    {skill.enabled ? "Enabled" : "Disabled"}
-                  </Badge>
-                }
-              />
-            ))}
+            {visibleSkills.map((skill) => {
+              const capability = providerCapabilities.find(
+                (candidate) =>
+                  candidate.kind === "skill" &&
+                  (candidate.name === skill.name || candidate.name === skill.displayName),
+              );
+              return (
+                <SettingsRow
+                  key={skill.path}
+                  title={skill.displayName ?? skill.name}
+                  description={skill.shortDescription ?? skill.description ?? skill.path}
+                  status={skill.scope ?? "Provider"}
+                  control={
+                    capability ? (
+                      capabilityControls(capability)
+                    ) : (
+                      <Badge variant={skill.enabled ? "success" : "outline"}>
+                        {skill.enabled ? "Native enabled" : "Native disabled"}
+                      </Badge>
+                    )
+                  }
+                />
+              );
+            })}
           </div>
         )
       ) : null}

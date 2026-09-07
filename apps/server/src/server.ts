@@ -12,6 +12,10 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as AxisContextCatalogStore from "./axis/contexts/AxisContextCatalogStore.ts";
 import * as AxisWorkHubCacheStore from "./axis/workHub/AxisWorkHubCacheStore.ts";
+import * as AxisWorkHubSourceSync from "./axis/workHub/AxisWorkHubSourceSync.ts";
+import * as AxisScheduledActivityStore from "./axis/scheduled/AxisScheduledActivityStore.ts";
+import * as AxisScheduledActivityRunner from "./axis/scheduled/AxisScheduledActivityRunner.ts";
+import * as AxisLearningStore from "./axis/learning/AxisLearningStore.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import {
@@ -305,6 +309,12 @@ const AxisContextCatalogLayerLive = AxisContextCatalogStore.layer.pipe(
 const AxisWorkHubCacheLayerLive = AxisWorkHubCacheStore.layer.pipe(
   Layer.provide(SqlitePersistenceLayerLive),
 );
+const AxisScheduledActivityStoreLayerLive = AxisScheduledActivityStore.layer.pipe(
+  Layer.provide(SqlitePersistenceLayerLive),
+);
+const AxisLearningStoreLayerLive = AxisLearningStore.layer.pipe(
+  Layer.provide(SqlitePersistenceLayerLive),
+);
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
@@ -405,6 +415,29 @@ const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
 
+const AxisWorkHubSourceSyncLayerLive = AxisWorkHubSourceSync.layer.pipe(
+  Layer.provide(AxisContextCatalogLayerLive),
+  Layer.provide(AxisWorkHubCacheLayerLive),
+  Layer.provide(ProviderInstanceRegistryHydrationLive),
+  Layer.provide(ServerEnvironmentLayerLive),
+);
+
+const AxisScheduledActivityRunnerLayerLive = AxisScheduledActivityRunner.layer.pipe(
+  Layer.provide(AxisScheduledActivityStoreLayerLive),
+  Layer.provide(AxisContextCatalogLayerLive),
+  Layer.provide(AxisWorkHubCacheLayerLive),
+  Layer.provide(AxisWorkHubSourceSyncLayerLive),
+  Layer.provide(ProviderInstanceRegistryHydrationLive),
+  Layer.provide(ServerEnvironmentLayerLive),
+  // Scheduled agent turns dispatch into the same memoized orchestration
+  // layer used by the provider runtime, preserving the canonical T3
+  // Thread/Turn lifecycle instead of creating an Axis execution path.
+  Layer.provide(OrchestrationLayerLive),
+);
+const AxisScheduledActivitySchedulerLayerLive = AxisScheduledActivityRunner.schedulerLayer.pipe(
+  Layer.provide(AxisScheduledActivityRunnerLayerLive),
+);
+
 const AuthLayerLive = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provide(ServerEnvironmentLayerLive),
@@ -470,6 +503,11 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(AxisContextCatalogLayerLive),
   Layer.provideMerge(AxisWorkHubCacheLayerLive),
+  Layer.provideMerge(AxisWorkHubSourceSyncLayerLive),
+  Layer.provideMerge(AxisScheduledActivityStoreLayerLive),
+  Layer.provideMerge(AxisScheduledActivityRunnerLayerLive),
+  Layer.provideMerge(AxisScheduledActivitySchedulerLayerLive),
+  Layer.provideMerge(AxisLearningStoreLayerLive),
   // Both read a user-owned file out of the state directory and stream changes
   // to clients; neither depends on the other.
   Layer.provideMerge(

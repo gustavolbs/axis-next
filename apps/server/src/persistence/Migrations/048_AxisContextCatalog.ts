@@ -20,6 +20,7 @@ export default Effect.gen(function* () {
         updatedAt: now,
       },
     ],
+    projectBindings: [],
     providerOwnerships: [],
     providerAccessGrants: [],
     capabilities: [],

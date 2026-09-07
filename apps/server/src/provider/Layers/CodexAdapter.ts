@@ -2070,6 +2070,7 @@ function mapToRuntimeEvents(
     const payload = readPayload(EffectCodexSchema.V2ErrorNotification, event.payload);
     const message = payload?.error.message ?? event.message ?? "Provider runtime error";
     const willRetry = payload?.willRetry === true;
+    const isQuotaExhausted = payload?.error.codexErrorInfo === "usageLimitExceeded";
     return [
       {
         type: willRetry ? "runtime.warning" : "runtime.error",
@@ -2077,6 +2078,7 @@ function mapToRuntimeEvents(
         payload: {
           message,
           ...(!willRetry ? { class: "provider_error" as const } : {}),
+          ...(!willRetry && isQuotaExhausted ? { failureKind: "quota-exhausted" as const } : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },

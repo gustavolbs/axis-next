@@ -16,6 +16,7 @@ import {
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
+  ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -59,6 +60,20 @@ export const AxisProviderInstanceLocator = Schema.Struct({
   instanceId: ProviderInstanceId,
 });
 export type AxisProviderInstanceLocator = typeof AxisProviderInstanceLocator.Type;
+
+/** A T3 Project identity qualified by the environment that owns it. */
+export const AxisProjectLocator = Schema.Struct({
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+});
+export type AxisProjectLocator = typeof AxisProjectLocator.Type;
+
+/** Places one environment-local T3 Project inside an Axis isolation context. */
+export const AxisContextProjectBinding = Schema.Struct({
+  contextId: AxisContextId,
+  project: AxisProjectLocator,
+});
+export type AxisContextProjectBinding = typeof AxisContextProjectBinding.Type;
 
 /** Assigns one T3 provider instance to its Personal or Company owner. */
 export const AxisProviderOwnership = Schema.Struct({
@@ -162,6 +177,9 @@ export type AxisWorkHubSource = typeof AxisWorkHubSource.Type;
 
 export const AxisContextCatalog = Schema.Struct({
   contexts: Schema.Array(AxisContext).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  projectBindings: Schema.Array(AxisContextProjectBinding).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   providerOwnerships: Schema.Array(AxisProviderOwnership).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -178,6 +196,8 @@ export type AxisContextCatalog = typeof AxisContextCatalog.Type;
 export const AxisContextCatalogIssueCode = Schema.Literals([
   "personal_context_count",
   "duplicate_context_id",
+  "duplicate_project_binding",
+  "project_binding_unknown_context",
   "unknown_context",
   "duplicate_provider_owner",
   "duplicate_grant_id",
@@ -246,6 +266,10 @@ export function axisProviderInstanceLocatorKey(provider: AxisProviderInstanceLoc
   return `${provider.environmentId}\u0000${provider.instanceId}`;
 }
 
+export function axisProjectLocatorKey(project: AxisProjectLocator): string {
+  return `${project.environmentId}\u0000${project.projectId}`;
+}
+
 function duplicateIds(
   ids: ReadonlyArray<string>,
   code: AxisContextCatalogIssueCode,
@@ -281,6 +305,11 @@ export function validateAxisContextCatalog(
   }
   issues.push(
     ...duplicateIds(
+      catalog.projectBindings.map((binding) => axisProjectLocatorKey(binding.project)),
+      "duplicate_project_binding",
+      "projectBindings",
+    ),
+    ...duplicateIds(
       catalog.contexts.map((context) => context.id),
       "duplicate_context_id",
       "contexts",
@@ -301,6 +330,16 @@ export function validateAxisContextCatalog(
       "workHubSources",
     ),
   );
+
+  for (const [index, binding] of catalog.projectBindings.entries()) {
+    if (!contexts.has(binding.contextId)) {
+      issues.push({
+        code: "project_binding_unknown_context",
+        path: `projectBindings[${index}]`,
+        message: "Project binding context does not exist.",
+      });
+    }
+  }
 
   const providerOwners = new Map<string, AxisContextId>();
   for (const [index, ownership] of catalog.providerOwnerships.entries()) {

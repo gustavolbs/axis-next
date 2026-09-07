@@ -148,16 +148,14 @@ export function buildAxisWorkHubCacheSnapshot(input: {
 
 export function buildCollectionPrompt(input: AxisWorkHubCollectInput, nowEpochMs: number): string {
   const dayMs = 86_400_000;
-  // Calendar scope is deliberately fixed: previous, current, and next week only,
-  // Sunday-aligned like the calendar view. Exact dates are computed here so the
-  // agent copies them instead of inferring windows.
-  const weekStartMs = DateTime.toEpochMillis(
-    DateTime.startOf(DateTime.makeUnsafe(nowEpochMs), "week"),
+  // Compute exact bounds from the source policy so acquisition and the cache
+  // filter agree. One contiguous query avoids sequential weekly agent turns.
+  const calendarStart = DateTime.formatIso(
+    DateTime.makeUnsafe(nowEpochMs - input.collectionPolicy.calendarLookbackDays * dayMs),
   );
-  // ponytail: one range instead of three slices. The bounds are computed here
-  // either way, so slicing only bought three sequential agent turns.
-  const calendarStart = DateTime.formatIso(DateTime.makeUnsafe(weekStartMs - 7 * dayMs));
-  const calendarEnd = DateTime.formatIso(DateTime.makeUnsafe(weekStartMs + 14 * dayMs));
+  const calendarEnd = DateTime.formatIso(
+    DateTime.makeUnsafe(nowEpochMs + input.collectionPolicy.calendarLookaheadDays * dayMs),
+  );
   const previousRefreshedAtMs = input.previousRefreshedAt
     ? Date.parse(input.previousRefreshedAt)
     : Number.NaN;
@@ -177,7 +175,7 @@ Only if a select: load returns nothing for a category, fall back to a single key
 Issue every independent read in the SAME block so they run in parallel — the calendar, board, and message queries do not depend on each other. Do not serialize them, do not re-run a query that already returned, and do not keep searching once each category has been answered.
 
 Collect only categories the MCP actually supports:
-- calendar-event / calendar: ONE query covering exactly start: "${calendarStart}" end: "${calendarEnd}" (previous, current, and next week). Copy those two values VERBATIM into the tool arguments — never infer, round, reformat, widen, or split the range. Include meetingLink and location when available.
+- calendar-event / calendar: ONE query covering exactly start: "${calendarStart}" end: "${calendarEnd}" (${input.collectionPolicy.calendarLookbackDays} days back and ${input.collectionPolicy.calendarLookaheadDays} days ahead). Copy those two values VERBATIM into the tool arguments — never infer, round, reformat, widen, or split the range. Include meetingLink and location when available.
 - assigned-work-item / board: only work items assigned to the authenticated user that are not finished or closed.
 - direct-message / messages: only direct messages to the authenticated user since ${messageCutoffIso}.
 - mention / messages: only messages mentioning the authenticated user since ${messageCutoffIso}.

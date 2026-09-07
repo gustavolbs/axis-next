@@ -86,6 +86,12 @@ instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display
 their original values.
 
+For Codex and Claude, the add-instance dialog also has an **API key** authentication
+option. It creates an isolated provider home and stores the key as a sensitive
+secret on that environment. You can select this instance manually when a
+subscription account reaches its quota. T3 Code does not automatically switch to
+paid API usage.
+
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md), and
 [Antigravity](./providers-antigravity.md).

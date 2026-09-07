@@ -6,6 +6,7 @@ import {
   axisProviderInstanceLocatorKey,
   AxisContextId,
   AxisProviderAccessGrantId,
+  type AxisCapability,
   type AxisCapabilityKind,
   type AxisContextCatalog,
   type AxisContextCatalogSnapshot,
@@ -17,8 +18,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { randomUUID } from "~/lib/utils";
+import { ensureLocalApi } from "~/localApi";
 import { environmentCatalog } from "~/connection/catalog";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
+import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -31,8 +34,14 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import {
   removeAxisCompany,
   removeAxisProviderAccessGrant,
+  setAxisProjectContext,
   setAxisProviderOwner,
 } from "./AxisSettings.logic";
+import {
+  removeAxisProviderCapability,
+  setAxisProviderCapabilityEnabled,
+} from "./ProviderCapabilities.logic";
+import { AxisLearningSettings } from "./AxisLearningSettings";
 
 const CAPABILITY_LABELS: Readonly<Record<AxisCapabilityKind, string>> = {
   mcp: "MCP",
@@ -49,6 +58,7 @@ export function AxisSettingsPanel() {
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
   const { environments } = useEnvironments();
+  const projects = useProjects();
   const axisSupported = primaryEnvironment?.serverConfig?.environment.capabilities.axis === true;
   const query = useEnvironmentQuery(
     environmentId === null || !axisSupported
@@ -94,6 +104,16 @@ export function AxisSettingsPanel() {
   const companies =
     snapshot?.catalog.contexts.filter((context) => context.kind === "company") ?? [];
   const personalContext = snapshot?.catalog.contexts.find((context) => context.kind === "personal");
+  const localProjects = projects.filter((project) => project.environmentId === environmentId);
+  const projectContextById = useMemo(
+    () =>
+      new Map(
+        snapshot?.catalog.projectBindings
+          .filter((binding) => binding.project.environmentId === environmentId)
+          .map((binding) => [binding.project.projectId, binding.contextId]) ?? [],
+      ),
+    [environmentId, snapshot],
+  );
   const providerOwnerByKey = useMemo(
     () =>
       new Map(
@@ -148,6 +168,46 @@ export function AxisSettingsPanel() {
       });
     }
     return false;
+  };
+
+  const toggleCapability = (capability: AxisCapability, enabled: boolean) => {
+    if (!snapshot) return;
+    void save(
+      snapshot,
+      setAxisProviderCapabilityEnabled({
+        catalog: snapshot.catalog,
+        provider: capability.provider,
+        capabilityId: capability.id,
+        enabled,
+        updatedAt: new Date().toISOString(),
+      }),
+      enabled ? "Capability enabled" : "Capability disabled",
+    );
+  };
+
+  const removeCapability = async (capability: AxisCapability) => {
+    if (!snapshot) return;
+    const bindingCount = snapshot.catalog.workHubSources.filter(
+      (source) => source.capabilityId === capability.id,
+    ).length;
+    const bindingMessage =
+      bindingCount === 0
+        ? "It is not currently selected by any Work Hub context."
+        : `This will also remove ${bindingCount} Work Hub source binding${bindingCount === 1 ? "" : "s"}.`;
+    const confirmed = await ensureLocalApi().dialogs.confirm(
+      `Remove “${capability.name}” from Axis? ${bindingMessage} Its native provider configuration will not be changed.`,
+      { variant: "destructive" },
+    );
+    if (!confirmed) return;
+    void save(
+      snapshot,
+      removeAxisProviderCapability({
+        catalog: snapshot.catalog,
+        provider: capability.provider,
+        capabilityId: capability.id,
+      }),
+      "Capability removed",
+    );
   };
 
   const addCompany = async () => {
@@ -323,6 +383,61 @@ export function AxisSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection
+        id="axis-project-contexts"
+        title="Project contexts"
+        description="Assign each Project to Personal or one Company before scheduled agents can work in it."
+      >
+        {localProjects.length === 0 ? (
+          <SettingsRow
+            title="No Projects found"
+            description="Add a Project to this environment before assigning its Axis context."
+          />
+        ) : (
+          localProjects.map((project) => {
+            const contextId = projectContextById.get(project.id);
+            return (
+              <SettingsRow
+                key={project.id}
+                title={project.title}
+                description={project.workspaceRoot}
+                status={contextId ? (contextNames.get(contextId) ?? contextId) : "Unassigned"}
+                control={
+                  <Select
+                    value={contextId ?? "unassigned"}
+                    disabled={saving}
+                    onValueChange={(value) => {
+                      if (value === null) return;
+                      void save(
+                        snapshot,
+                        setAxisProjectContext(
+                          snapshot.catalog,
+                          { environmentId, projectId: project.id },
+                          value === "unassigned" ? null : AxisContextId.make(value),
+                        ),
+                        "Project context updated",
+                      );
+                    }}
+                  >
+                    <SelectTrigger className="w-44" aria-label={`Context of ${project.title}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      <SelectItem value="unassigned">Unassigned</SelectItem>
+                      {snapshot.catalog.contexts.map((context) => (
+                        <SelectItem key={context.id} value={context.id}>
+                          {context.name}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                }
+              />
+            );
+          })
+        )}
+      </SettingsSection>
+
+      <SettingsSection
         id="axis-provider-ownership"
         title="Provider ownership"
         description="Assign every configured provider account to Personal or exactly one Company."
@@ -428,42 +543,15 @@ export function AxisSettingsPanel() {
                     checked={capability.enabled}
                     disabled={saving}
                     aria-label={`Enable ${capability.name}`}
-                    onCheckedChange={(enabled) => {
-                      const now = new Date().toISOString();
-                      void save(
-                        snapshot,
-                        {
-                          ...snapshot.catalog,
-                          capabilities: snapshot.catalog.capabilities.map((candidate) =>
-                            candidate.id === capability.id
-                              ? { ...candidate, enabled, updatedAt: now }
-                              : candidate,
-                          ),
-                        },
-                        enabled ? "Capability enabled" : "Capability disabled",
-                      );
-                    }}
+                    onCheckedChange={(enabled) => toggleCapability(capability, enabled)}
                   />
                   <Button
                     size="icon-sm"
                     variant="ghost-muted"
                     disabled={saving}
                     aria-label={`Remove ${capability.name}`}
-                    onClick={() =>
-                      void save(
-                        snapshot,
-                        {
-                          ...snapshot.catalog,
-                          capabilities: snapshot.catalog.capabilities.filter(
-                            (candidate) => candidate.id !== capability.id,
-                          ),
-                          workHubSources: snapshot.catalog.workHubSources.filter(
-                            (source) => source.capabilityId !== capability.id,
-                          ),
-                        },
-                        "Capability removed",
-                      )
-                    }
+                    title="Remove from Axis"
+                    onClick={() => void removeCapability(capability)}
                   >
                     <Trash2Icon />
                   </Button>
@@ -556,6 +644,8 @@ export function AxisSettingsPanel() {
           </div>
         </SettingsRow>
       </SettingsSection>
+
+      <AxisLearningSettings environmentId={environmentId} contexts={snapshot.catalog.contexts} />
     </SettingsPageContainer>
   );
 }

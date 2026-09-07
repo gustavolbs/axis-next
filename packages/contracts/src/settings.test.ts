@@ -385,6 +385,7 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
         codex_personal: {
           driver: "codex",
           displayName: "Codex (personal)",
+          credentialSource: "api-key",
           config: { homePath: "~/.codex_personal" },
         },
         codex_work: {
@@ -403,6 +404,7 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     const ollamaId = ProviderInstanceId.make("ollama_local");
 
     expect(decoded.providerInstances[personalId]?.driver).toBe("codex");
+    expect(decoded.providerInstances[personalId]?.credentialSource).toBe("api-key");
     expect(decoded.providerInstances[workId]?.config).toEqual({ homePath: "~/.codex_work" });
     // Critical: a config naming a driver this build does not know about
     // (`ollama` is not in `ProviderDriverKind`) must round-trip without loss.
@@ -417,6 +419,16 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     expect(() =>
       decodeServerSettings({
         providerInstances: { "1bad": { driver: "codex" } },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects unknown provider credential sources", () => {
+    expect(() =>
+      decodeServerSettings({
+        providerInstances: {
+          codex_paid: { driver: "codex", credentialSource: "metered" },
+        },
       }),
     ).toThrow();
   });

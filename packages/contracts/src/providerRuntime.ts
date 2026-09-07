@@ -103,6 +103,14 @@ const RuntimeErrorClass = Schema.Literals([
 ]);
 export type RuntimeErrorClass = typeof RuntimeErrorClass.Type;
 
+/**
+ * Provider-normalized terminal failure kinds that are safe for orchestration
+ * policy. Absent means the adapter did not receive an authoritative signal;
+ * consumers must never infer one from user-facing message text.
+ */
+export const RuntimeFailureKind = Schema.Literals(["quota-exhausted"]);
+export type RuntimeFailureKind = typeof RuntimeFailureKind.Type;
+
 export const TOOL_LIFECYCLE_ITEM_TYPES = [
   "command_execution",
   "file_change",
@@ -862,6 +870,7 @@ export type RuntimeWarningPayload = typeof RuntimeWarningPayload.Type;
 const RuntimeErrorPayload = Schema.Struct({
   message: TrimmedNonEmptyStringSchema,
   class: Schema.optional(RuntimeErrorClass),
+  failureKind: Schema.optional(RuntimeFailureKind),
   detail: Schema.optional(Schema.Unknown),
 });
 export type RuntimeErrorPayload = typeof RuntimeErrorPayload.Type;

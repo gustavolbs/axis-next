@@ -57,6 +57,20 @@ import {
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
+export function isApiBilledProviderInstance(instance: ProviderInstanceConfig): boolean {
+  if (instance.credentialSource !== undefined) {
+    return instance.credentialSource === "api-key";
+  }
+  return (
+    instance.environment?.some(
+      (variable) =>
+        variable.sensitive &&
+        ((instance.driver === "codex" && variable.name === "OPENAI_API_KEY") ||
+          (instance.driver === "claudeAgent" && variable.name === "ANTHROPIC_API_KEY")),
+    ) === true
+  );
+}
+
 let environmentVariableDraftId = 0;
 const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
 
@@ -441,6 +455,7 @@ export function ProviderInstanceCard({
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
+  const isApiBilled = isApiBilledProviderInstance(instance);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
       toastManager.add({
@@ -616,6 +631,11 @@ export function ProviderInstanceCard({
                   {instanceId}
                 </code>
               ) : null}
+              {isApiBilled ? (
+                <Badge variant="warning" size="sm" className="shrink-0">
+                  API billed
+                </Badge>
+              ) : null}
               {versionLabel ? (
                 <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
                   {versionLabel}
@@ -655,6 +675,11 @@ export function ProviderInstanceCard({
       {driverOption?.badgeLabel ? (
         <Badge variant="warning" size="sm" className="shrink-0">
           {driverOption.badgeLabel}
+        </Badge>
+      ) : null}
+      {isApiBilled ? (
+        <Badge variant="warning" size="sm" className="shrink-0">
+          API billed
         </Badge>
       ) : null}
       {versionCodeNode}
