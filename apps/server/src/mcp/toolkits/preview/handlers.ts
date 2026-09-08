@@ -10,6 +10,8 @@ import type {
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
   PreviewTabId,
+  TokenEfficiencyApplied,
+  TokenEfficiencyPayloadKind,
 } from "@t3tools/contracts";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -74,14 +76,24 @@ const invokeTargeted = <A>(
 
 const tokenEfficiencyEngine = makeTokenEfficiencyEngine();
 
-/**
- * Compacts only an unstructured tool result. Structured results stay typed and
- * lossless; the textual representation is the provider-facing payload that can
- * safely be evaluated by the token-efficiency engine.
- */
-export const compactPreviewToolResult = (result: unknown) =>
+const previewTokenEfficiencyMetadata = (
+  outcome: TokenEfficiencyMetrics.TokenEfficiencyCompactionObservation["outcome"],
+): TokenEfficiencyApplied | undefined =>
+  outcome.applied && outcome.engine !== undefined && outcome.recoveryHandle !== undefined
+    ? {
+        engine: outcome.engine,
+        recoveryHandle: outcome.recoveryHandle,
+        estimatedTokensBefore: outcome.estimatedTokensBefore,
+        estimatedTokensAfter: outcome.estimatedTokensAfter,
+      }
+    : undefined;
+
+/** Compact one textual MCP field while keeping the recovery metadata beside it. */
+export const compactPreviewText = (
+  text: string,
+  kind: Extract<TokenEfficiencyPayloadKind, "accessibility-tree" | "log" | "tool-result">,
+) =>
   Effect.gen(function* () {
-    if (typeof result !== "string") return result;
     const invocation = yield* McpInvocationContext.requireMcpCapability("preview");
     const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
     const resolved = yield* Option.match(settings, {
@@ -98,34 +110,44 @@ export const compactPreviewToolResult = (result: unknown) =>
         ),
     });
     const outcome = yield* tokenEfficiencyEngine.compact({
-      text: result,
-      kind: "tool-result",
+      text,
+      kind,
       contextKey: `${invocation.environmentId}\u0000${invocation.threadId}`,
       mode: resolved.mode,
       engine: resolved.engine,
     });
-    const metrics = yield* TokenEfficiencyMetrics.TokenEfficiencyMetrics;
-    if (invocation.provider !== undefined) {
-      yield* metrics.recordCompaction({
+    const metrics = yield* Effect.serviceOption(TokenEfficiencyMetrics.TokenEfficiencyMetrics);
+    if (invocation.provider !== undefined && Option.isSome(metrics)) {
+      yield* metrics.value.recordCompaction({
         provider: invocation.provider,
         providerInstanceId: invocation.providerInstanceId,
-        payloadKind: "tool-result",
+        payloadKind: kind,
         ...(invocation.model === undefined ? {} : { model: invocation.model }),
         contextId: invocation.contextId ?? null,
         outcome,
       });
     }
-    return outcome.applied && outcome.recoveryHandle !== undefined
+    return {
+      text: outcome.text,
+      tokenEfficiency: previewTokenEfficiencyMetadata(outcome),
+    };
+  });
+
+/**
+ * Compacts only an unstructured tool result. Structured results stay typed and
+ * lossless; the textual representation is the provider-facing payload that can
+ * safely be evaluated by the token-efficiency engine.
+ */
+export const compactPreviewToolResult = (result: unknown) =>
+  Effect.gen(function* () {
+    if (typeof result !== "string") return result;
+    const compacted = yield* compactPreviewText(result, "tool-result");
+    return compacted.tokenEfficiency !== undefined
       ? {
-          value: outcome.text,
-          tokenEfficiency: {
-            engine: outcome.engine,
-            recoveryHandle: outcome.recoveryHandle,
-            estimatedTokensBefore: outcome.estimatedTokensBefore,
-            estimatedTokensAfter: outcome.estimatedTokensAfter,
-          },
+          value: compacted.text,
+          tokenEfficiency: compacted.tokenEfficiency,
         }
-      : outcome.text;
+      : compacted.text;
   });
 
 export const recoverPreviewToolPayload = (handle: string) =>

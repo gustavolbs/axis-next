@@ -94,6 +94,84 @@ it.effect("compacts textual evaluate results only when the provider instance opt
   );
 });
 
+it.effect("compacts textual snapshot fields with field-scoped recovery handles", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const repeatedLine = "repeated browser log line that is long enough to collapse";
+    const repeated = ["start", repeatedLine, repeatedLine, repeatedLine, repeatedLine, "done"].join(
+      "\n",
+    );
+    yield* Stream.runForEach(
+      yield* broker.connect({
+        clientId: "mcp-snapshot-compaction-client",
+        environmentId,
+      }),
+      (event) =>
+        event.type === "connected"
+          ? Effect.void
+          : broker.respond({
+              clientId: "mcp-snapshot-compaction-client",
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+              ok: true,
+              result: {
+                url: "http://example.test/",
+                title: "Example",
+                loading: false,
+                visibleText: repeated,
+                interactiveElements: [],
+                accessibilityTree: { nodes: [{ nodeId: "1" }] },
+                consoleEntries: [{ level: "info", text: repeated, timestamp: "now" }],
+                networkEntries: [],
+                actionTimeline: [],
+                screenshot: {
+                  mimeType: "image/png",
+                  data: Buffer.from("png").toString("base64"),
+                  width: 10,
+                  height: 5,
+                },
+              },
+            }),
+    ).pipe(Effect.forkScoped);
+    yield* Effect.yieldNow;
+
+    const result = yield* server
+      .callTool({ name: "preview_snapshot", arguments: {} })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      visibleText: expect.stringContaining("previous line repeated"),
+      accessibilityTree: { nodes: [{ nodeId: "1" }] },
+      tokenEfficiency: {
+        fields: [{ field: "visibleText" }, { field: "consoleEntries[0].text" }],
+      },
+    });
+
+    const fields = (
+      result.structuredContent as {
+        tokenEfficiency: { fields: Array<{ field: string; applied: { recoveryHandle: string } }> };
+      }
+    ).tokenEfficiency.fields;
+    for (const field of fields) {
+      expect(yield* PreviewHandlers.recoverPreviewToolPayload(field.applied.recoveryHandle)).toBe(
+        repeated,
+      );
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.ServerSettingsService.layerTest({ tokenEfficiency: { mode: "compress" } }),
+        TestLayer,
+        Layer.succeed(McpInvocationContext.McpInvocationContext, invocation),
+      ),
+    ),
+  ),
+);
+
 it.effect("returns bounded structural preview snapshot failures", () =>
   Effect.scoped(
     Effect.gen(function* () {

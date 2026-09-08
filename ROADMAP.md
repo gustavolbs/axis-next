@@ -298,8 +298,9 @@ and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
       changing orchestration.
 - [~] Start with deterministic compaction of repeated logs, terminal output, search results,
   accessibility trees, and MCP/tool payloads before applying lossy natural-language
-  compression. The compactor and its payload kinds ship, and `preview_evaluate` feeds it for
-  textual MCP results; provider-owned terminal/search/accessibility payloads still need adapters.
+  compression. The compactor and its payload kinds ship; `preview_evaluate`, textual
+  `preview_snapshot` fields, and the optional ACP `terminal/output` hook feed it. Native
+  provider search and structured accessibility-tree payloads still need adapters.
 - [x] Store the original payload locally before any lossy transform and expose a context-scoped,
       expiring recovery handle; pass the original through if storage, parsing, compression, or token
       estimation fails.

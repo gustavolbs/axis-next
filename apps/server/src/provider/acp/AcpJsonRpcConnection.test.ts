@@ -18,6 +18,7 @@ import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
+import type * as EffectAcpSchema from "effect-acp/schema";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -32,6 +33,41 @@ const mockRuntimeOptions = {
 } satisfies AcpSessionRuntime.AcpSessionRuntimeOptions;
 
 describe("AcpSessionRuntime", () => {
+  it.effect("applies the optional terminal output transform", () =>
+    Effect.gen(function* () {
+      const original = {
+        output: "verbose output",
+        truncated: false,
+      } satisfies EffectAcpSchema.TerminalOutputResponse;
+      const transformed = yield* AcpSessionRuntime.applyTerminalOutputTransform(
+        original,
+        (response) => Effect.succeed({ ...response, output: "compact output" }),
+      );
+
+      expect(transformed).toEqual({ ...original, output: "compact output" });
+    }),
+  );
+
+  it.effect("passes through the original terminal output when the transform fails", () =>
+    Effect.gen(function* () {
+      const original = {
+        output: "verbose output",
+        truncated: false,
+      } satisfies EffectAcpSchema.TerminalOutputResponse;
+      const transformed = yield* AcpSessionRuntime.applyTerminalOutputTransform(original, () =>
+        Effect.fail(
+          new EffectAcpErrors.AcpRequestError({
+            code: -32603,
+            errorMessage: "transform failed",
+            method: "terminal/output",
+          }),
+        ),
+      );
+
+      expect(transformed).toBe(original);
+    }),
+  );
+
   for (const setupMethod of ["session/new", "session/resume"] as const) {
     it.effect(`buffers root metadata while ${setupMethod} startup is still pending`, () =>
       Effect.gen(function* () {

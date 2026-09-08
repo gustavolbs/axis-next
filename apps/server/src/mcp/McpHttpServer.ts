@@ -10,12 +10,14 @@ import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
+import type { PreviewAutomationSnapshot } from "@t3tools/contracts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
+  compactPreviewText,
 } from "./toolkits/preview/handlers.ts";
 import {
   PreviewSnapshotTool,
@@ -162,30 +164,64 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.matchCauseEffect({
             onFailure: previewSnapshotFailure,
-            onSuccess: ({ encodedResult }) => {
-              const snapshot = encodedResult as {
-                readonly screenshot: {
-                  readonly mimeType: "image/png";
-                  readonly data: string;
-                  readonly width: number;
-                  readonly height: number;
+            onSuccess: ({ encodedResult }) =>
+              Effect.gen(function* () {
+                const snapshot = encodedResult as PreviewAutomationSnapshot;
+                const { screenshot, ...page } = snapshot;
+                const compactSnapshotText = (
+                  text: string,
+                  kind: Parameters<typeof compactPreviewText>[1],
+                ) =>
+                  compactPreviewText(text, kind).pipe(
+                    Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+                    Effect.catchCause(() => Effect.succeed({ text, tokenEfficiency: undefined })),
+                    Effect.catchDefect(() => Effect.succeed({ text, tokenEfficiency: undefined })),
+                  );
+                const compactedVisibleText = yield* compactSnapshotText(
+                  page.visibleText,
+                  "accessibility-tree",
+                );
+                const compactedConsoleEntries = yield* Effect.forEach(
+                  page.consoleEntries,
+                  (entry) => compactSnapshotText(entry.text, "log"),
+                );
+                const tokenEfficiencyFields = [
+                  ...(compactedVisibleText.tokenEfficiency === undefined
+                    ? []
+                    : [{ field: "visibleText", applied: compactedVisibleText.tokenEfficiency }]),
+                  ...compactedConsoleEntries.flatMap((entry, index) =>
+                    entry.tokenEfficiency === undefined
+                      ? []
+                      : [
+                          {
+                            field: `consoleEntries[${index}].text`,
+                            applied: entry.tokenEfficiency,
+                          },
+                        ],
+                  ),
+                ];
+                const metadata = {
+                  ...page,
+                  visibleText: compactedVisibleText.text,
+                  consoleEntries: page.consoleEntries.map((entry, index) => ({
+                    ...entry,
+                    text: compactedConsoleEntries[index]?.text ?? entry.text,
+                  })),
+                  ...(tokenEfficiencyFields.length === 0
+                    ? {}
+                    : { tokenEfficiency: { fields: tokenEfficiencyFields } }),
+                  screenshot: {
+                    mimeType: screenshot.mimeType,
+                    width: screenshot.width,
+                    height: screenshot.height,
+                  },
                 };
-                readonly [key: string]: unknown;
-              };
-              const { screenshot, ...page } = snapshot;
-              const metadata = {
-                ...page,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
-              };
-              return Effect.succeed(
-                new McpSchema.CallToolResult({
+                return new McpSchema.CallToolResult({
                   isError: false,
                   structuredContent: metadata,
                   content: [
+                    // MCP requires a JSON text representation alongside the structured payload.
+                    // @effect-diagnostics-next-line preferSchemaOverJson:off
                     { type: "text", text: JSON.stringify(metadata) },
                     {
                       type: "image",
@@ -193,9 +229,8 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                       mimeType: screenshot.mimeType,
                     },
                   ],
-                }),
-              );
-            },
+                });
+              }),
           }),
         );
       }),

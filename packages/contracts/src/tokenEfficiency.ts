@@ -264,6 +264,15 @@ export interface TokenEfficiencyOutcome {
   readonly skippedReason: string | undefined;
 }
 
+/** Metadata carried beside a transformed payload so the caller can recover it. */
+export const TokenEfficiencyApplied = Schema.Struct({
+  engine: TokenEfficiencyEngineId,
+  recoveryHandle: TrimmedNonEmptyString,
+  estimatedTokensBefore: NonNegativeInt,
+  estimatedTokensAfter: NonNegativeInt,
+});
+export type TokenEfficiencyApplied = typeof TokenEfficiencyApplied.Type;
+
 /**
  * Resolve the mode and engine for one provider instance.
  *

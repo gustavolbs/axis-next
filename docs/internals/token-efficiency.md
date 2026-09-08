@@ -84,11 +84,14 @@ created, so changing the profile while a Claude session is active takes effect
 on the next session; the other adapters read the profile at turn dispatch.
 
 Provider turn completion events feed aggregate, in-memory baselines and
-rollout metrics per provider instance/model/context. The first call site is
-`preview_evaluate`: textual MCP results may be compacted when the instance is
-explicitly opted in, and the original is recoverable with a context-scoped,
-expiring handle. Provider-owned terminal, search, and accessibility payloads
-still need adapter-specific call sites. Caveman/LLMLingua evaluation,
+rollout metrics per provider instance/model/context. The first call sites are
+`preview_evaluate` and textual `preview_snapshot` fields: MCP results may be
+compacted when the instance is explicitly opted in, and each original is
+recoverable with a context-scoped, expiring handle. ACP runtimes also expose an
+optional fail-open `terminal/output` transform hook for provider adapters;
+current adapters do not advertise ACP terminal capabilities yet. Native
+provider search and structured accessibility-tree payloads still need
+adapter-specific call sites. Caveman/LLMLingua evaluation,
 provider-native prompt caching, task-quality benchmarks, and Hermes promotion
 remain future roadmap work.
 

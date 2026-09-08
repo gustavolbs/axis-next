@@ -10,6 +10,7 @@ import {
   PreviewViewportSize,
 } from "./preview.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { TokenEfficiencyApplied } from "./tokenEfficiency.ts";
 
 const BoundedUrl = Schema.String.check(Schema.isTrimmed())
   .check(Schema.isNonEmpty())
@@ -537,6 +538,16 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   consoleEntries: Schema.Array(PreviewAutomationConsoleEntry),
   networkEntries: Schema.Array(PreviewAutomationNetworkEntry),
   actionTimeline: Schema.Array(PreviewAutomationActionEvent),
+  tokenEfficiency: Schema.optional(
+    Schema.Struct({
+      fields: Schema.Array(
+        Schema.Struct({
+          field: TrimmedNonEmptyString,
+          applied: TokenEfficiencyApplied,
+        }),
+      ),
+    }),
+  ),
   screenshot: Schema.Struct({
     mimeType: Schema.Literal("image/png"),
     data: Schema.String,

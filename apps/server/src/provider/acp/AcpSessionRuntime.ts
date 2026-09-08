@@ -102,6 +102,10 @@ export interface AcpSessionRuntimeOptions {
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
+  /** Transforms terminal output before it is returned to the provider. Failures pass through the original response. */
+  readonly transformTerminalOutput?: (
+    response: EffectAcpSchema.TerminalOutputResponse,
+  ) => Effect.Effect<EffectAcpSchema.TerminalOutputResponse, EffectAcpErrors.AcpError>;
   /** Receives bounded stderr chunks. Redact secrets before logging. A failure closes the runtime. */
   readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
@@ -111,6 +115,14 @@ export interface AcpSessionRuntimeOptions {
     readonly logger?: (event: EffectAcpProtocol.AcpProtocolLogEvent) => Effect.Effect<void, never>;
   };
 }
+
+export const applyTerminalOutputTransform = (
+  response: EffectAcpSchema.TerminalOutputResponse,
+  transform: AcpSessionRuntimeOptions["transformTerminalOutput"] | undefined,
+): Effect.Effect<EffectAcpSchema.TerminalOutputResponse, EffectAcpErrors.AcpError> =>
+  transform === undefined
+    ? Effect.succeed(response)
+    : transform(response).pipe(Effect.catchCause(() => Effect.succeed(response)));
 
 export interface AcpSessionRequestLogEvent {
   readonly method: string;
@@ -961,7 +973,14 @@ export const make = (
       handleReadTextFile: acp.handleReadTextFile,
       handleWriteTextFile: acp.handleWriteTextFile,
       handleCreateTerminal: acp.handleCreateTerminal,
-      handleTerminalOutput: acp.handleTerminalOutput,
+      handleTerminalOutput: (handler) =>
+        acp.handleTerminalOutput((request) =>
+          handler(request).pipe(
+            Effect.flatMap((response) =>
+              applyTerminalOutputTransform(response, options.transformTerminalOutput),
+            ),
+          ),
+        ),
       handleTerminalWaitForExit: acp.handleTerminalWaitForExit,
       handleTerminalKill: acp.handleTerminalKill,
       handleTerminalRelease: acp.handleTerminalRelease,
