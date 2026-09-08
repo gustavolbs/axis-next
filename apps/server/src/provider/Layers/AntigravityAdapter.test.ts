@@ -603,8 +603,16 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       const initialPrompt = yield* h.nextPrompt;
       expect(initialPrompt.content).toEqual([
         { type: "text", text: "First prompt" },
-        { type: "text", text: expect.stringContaining(`Antigravity harness, as ${nativeDefault}`) },
+        {
+          type: "text",
+          text: expect.stringContaining("through the Antigravity harness"),
+        },
       ]);
+      if (initialPrompt.content[1]?.type === "text") {
+        expect(initialPrompt.content[1].text).toContain(
+          `Current turn settings, as ${nativeDefault}.`,
+        );
+      }
       const marker = h.calls.length;
       const second = yield* h.adapter
         .sendTurn({
@@ -626,9 +634,14 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         { type: "text", text: "Steer the turn" },
         {
           type: "text",
-          text: expect.stringContaining(`Antigravity harness, as ${nativeAlternative}`),
+          text: expect.stringContaining("through the Antigravity harness"),
         },
       ]);
+      if (replacement.content[1]?.type === "text") {
+        expect(replacement.content[1].text).toContain(
+          `Current turn settings, as ${nativeAlternative}.`,
+        );
+      }
       expect(h.calls.slice(marker)).toEqual([
         "cancel:1",
         "drained:1",

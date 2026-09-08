@@ -12,7 +12,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   EnvironmentId,
   ServerProcessDiagnosticsEntry,
@@ -976,8 +976,10 @@ export function DiagnosticsSettingsPanel() {
   const signalingPidRef = useRef<number | null>(null);
   const environmentIdRef = useRef(environmentId);
   const processDataRef = useRef(processData);
-  environmentIdRef.current = environmentId;
-  processDataRef.current = processData;
+  useEffect(() => {
+    environmentIdRef.current = environmentId;
+    processDataRef.current = processData;
+  }, [environmentId, processData]);
 
   const openLogsDirectory = useCallback(() => {
     const logsDirectoryPath = observability?.logsDirectoryPath ?? null;

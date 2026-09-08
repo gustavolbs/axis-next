@@ -20,6 +20,7 @@ import {
 
 const decode = Schema.decodeUnknownSync(TokenEfficiencySettings);
 const decodeConciseOutput = Schema.decodeUnknownSync(TokenEfficiencyConciseOutputProfile);
+const encodeConciseOutput = Schema.encodeSync(TokenEfficiencyConciseOutputProfile);
 const decodeScope = Schema.decodeUnknownSync(TokenEfficiencyScopeKey);
 const encodeScope = Schema.encodeSync(TokenEfficiencyScopeKey);
 const decodeMetrics = Schema.decodeUnknownSync(TokenEfficiencyMetrics);
@@ -80,7 +81,7 @@ describe("concise output profile", () => {
     const profile = decodeConciseOutput({ enabled: true, maxSentences: 3, maxBullets: 2 });
 
     expect(profile).toEqual({ enabled: true, maxSentences: 3, maxBullets: 2 });
-    expect(Schema.encodeSync(TokenEfficiencyConciseOutputProfile)(profile)).toEqual(profile);
+    expect(encodeConciseOutput(profile)).toEqual(profile);
     expect(
       decode({
         conciseOutput: { enabled: true, maxSentences: 3, maxBullets: 2 },

@@ -1,3 +1,4 @@
+// oxlint-disable eslint/no-unused-vars -- typed mock callbacks intentionally ignore service arguments.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";

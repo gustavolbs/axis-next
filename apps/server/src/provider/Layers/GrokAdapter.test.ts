@@ -266,9 +266,14 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         );
       assert.equal(prompts.length, 2);
       assert.deepEqual(prompts[0]?.[0], { type: "text", text: "First prompt" });
-      assert.include(prompts[0]?.[1]?.text, "Grok harness, as grok-mock-alt");
+      assert.include(prompts[0]?.[1]?.text, "through the Grok harness");
+      assert.include(prompts[0]?.[1]?.text, "Current turn settings, as grok-mock-alt.");
       assert.deepEqual(prompts[1]?.[0], { type: "text", text: "Second prompt" });
-      assert.include(prompts[1]?.[1]?.text, "Grok harness, as grok-4.6");
+      assert.include(prompts[1]?.[1]?.text, "through the Grok harness");
+      assert.include(
+        prompts[1]?.[1]?.text,
+        "Current turn settings, as grok-4.6 with low reasoning effort.",
+      );
       assert.include(prompts[1]?.[1]?.text, "with low reasoning effort");
       assert.include(prompts[1]?.[1]?.text, "embed images and videos");
     }),

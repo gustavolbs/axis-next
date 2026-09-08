@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+// oxlint-disable eslint/no-unused-vars -- typed mock callbacks intentionally ignore service arguments.
 import * as NodePath from "node:path";
 
 import {

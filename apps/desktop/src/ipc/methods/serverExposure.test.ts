@@ -15,6 +15,7 @@ import * as DesktopServerExposure from "../../backend/DesktopServerExposure.ts";
 import { setServerExposureMode } from "./serverExposure.ts";
 
 const decodeState = Schema.decodeUnknownEffect(DesktopServerExposureStateSchema);
+const isBackendRestartTimeoutError = Schema.is(DesktopBackendManager.BackendRestartTimeoutError);
 
 function makeExposureLayer(input: {
   readonly state: DesktopServerExposureState;
@@ -153,7 +154,7 @@ describe("serverExposure IPC", () => {
         Effect.provide(layer),
       );
 
-      assert.ok(Schema.is(DesktopBackendManager.BackendRestartTimeoutError)(error));
+      assert.ok(isBackendRestartTimeoutError(error));
       assert.equal(error.instanceId, DesktopBackendPool.PRIMARY_INSTANCE_ID);
       assert.equal(error.readyTimeoutMs, 15_000);
     }),
