@@ -47,6 +47,33 @@ export interface TokenEfficiencyBenchmarkResult {
   readonly qualityScore?: number;
 }
 
+export interface TokenEfficiencyBenchmarkAcceptancePolicy {
+  /** Minimum absolute quality score accepted for a candidate output. */
+  readonly minimumQualityScore?: number;
+  /** Maximum quality loss against the no-compression control. */
+  readonly maximumQualityRegression?: number;
+  /** Maximum candidate/control latency ratio. */
+  readonly maximumLatencyMultiplier?: number;
+  /** Maximum latency allowed when the control completes in zero milliseconds. */
+  readonly maximumLatencyOverheadMs?: number;
+}
+
+export interface TokenEfficiencyBenchmarkVerdict {
+  readonly engine: TokenEfficiencyEngineId;
+  readonly accepted: boolean;
+  readonly fixtureCount: number;
+  readonly evaluatedFixtureCount: number;
+  readonly estimatedTokensBefore: number;
+  readonly estimatedTokensAfter: number;
+  readonly estimatedTokensSaved: number;
+  readonly meanQualityScore: number | undefined;
+  readonly controlMeanQualityScore: number | undefined;
+  readonly qualityDelta: number | undefined;
+  readonly meanLatencyMs: number;
+  readonly controlMeanLatencyMs: number;
+  readonly reasons: ReadonlyArray<string>;
+}
+
 export interface TokenEfficiencyBenchmarkOptions {
   readonly now?: () => number;
   readonly evaluateQuality?: (input: {
@@ -54,6 +81,99 @@ export interface TokenEfficiencyBenchmarkOptions {
     readonly output: string;
   }) => number | PromiseLike<number>;
 }
+
+const DEFAULT_ACCEPTANCE_POLICY: Required<TokenEfficiencyBenchmarkAcceptancePolicy> = {
+  minimumQualityScore: 0.95,
+  maximumQualityRegression: 0.02,
+  maximumLatencyMultiplier: 2,
+  maximumLatencyOverheadMs: 100,
+};
+
+const mean = (values: ReadonlyArray<number>): number | undefined =>
+  values.length === 0 ? undefined : values.reduce((sum, value) => sum + value, 0) / values.length;
+
+const sum = (values: ReadonlyArray<number>): number =>
+  values.reduce((total, value) => total + value, 0);
+
+const validQualityScore = (value: number | undefined): value is number =>
+  value !== undefined && Number.isFinite(value) && value >= 0 && value <= 1;
+
+/**
+ * Apply the task-quality rollout rule to offline benchmark results.
+ *
+ * A missing control, missing quality score, invalid score, no estimated
+ * saving, or excessive latency rejects the candidate. The function is
+ * intentionally pure so a reviewed evaluator can be used in CI without
+ * connecting a provider or changing runtime settings.
+ */
+export const evaluateTokenEfficiencyBenchmark = (
+  results: ReadonlyArray<TokenEfficiencyBenchmarkResult>,
+  policy: TokenEfficiencyBenchmarkAcceptancePolicy = {},
+): ReadonlyArray<TokenEfficiencyBenchmarkVerdict> => {
+  const resolved = { ...DEFAULT_ACCEPTANCE_POLICY, ...policy };
+  const fixtureIds = [...new Set(results.map((result) => result.fixtureId))];
+  const controls = new Map(
+    results
+      .filter((result) => result.engine === NO_COMPRESSION_ENGINE_ID)
+      .map((result) => [result.fixtureId, result]),
+  );
+  const candidates = [...new Set(results.map((result) => result.engine))].filter(
+    (engine) => engine !== NO_COMPRESSION_ENGINE_ID,
+  );
+
+  return candidates.map((engine) => {
+    const candidateResults = results.filter((result) => result.engine === engine);
+    const reasons: Array<string> = [];
+    const candidateQuality = candidateResults.map((result) => result.qualityScore);
+    const controlQuality = fixtureIds.map((fixtureId) => controls.get(fixtureId)?.qualityScore);
+    const evaluatedFixtureCount = candidateQuality.filter(validQualityScore).length;
+    const candidateBefore = sum(candidateResults.map((result) => result.estimatedTokensBefore));
+    const candidateAfter = sum(candidateResults.map((result) => result.estimatedTokensAfter));
+    const candidateLatency = mean(candidateResults.map((result) => result.elapsedMs)) ?? 0;
+    const controlLatency =
+      mean(fixtureIds.map((fixtureId) => controls.get(fixtureId)?.elapsedMs ?? 0)) ?? 0;
+    const quality = candidateQuality.every(validQualityScore) ? mean(candidateQuality) : undefined;
+    const control = controlQuality.every(validQualityScore) ? mean(controlQuality) : undefined;
+    const qualityDelta =
+      quality === undefined || control === undefined ? undefined : quality - control;
+
+    if (candidateResults.length !== fixtureIds.length || controls.size !== fixtureIds.length) {
+      reasons.push("incomplete-control-or-candidate-results");
+    }
+    if (quality === undefined || control === undefined) {
+      reasons.push("reviewed-quality-scores-required");
+    } else {
+      if (quality < resolved.minimumQualityScore) reasons.push("quality-below-minimum");
+      if (qualityDelta !== undefined && qualityDelta < -resolved.maximumQualityRegression) {
+        reasons.push("quality-regression");
+      }
+    }
+    if (candidateAfter >= candidateBefore) reasons.push("no-estimated-token-saving");
+    if (
+      controlLatency === 0
+        ? candidateLatency > resolved.maximumLatencyOverheadMs
+        : candidateLatency > controlLatency * resolved.maximumLatencyMultiplier
+    ) {
+      reasons.push("latency-budget-exceeded");
+    }
+
+    return {
+      engine,
+      accepted: reasons.length === 0,
+      fixtureCount: fixtureIds.length,
+      evaluatedFixtureCount,
+      estimatedTokensBefore: candidateBefore,
+      estimatedTokensAfter: candidateAfter,
+      estimatedTokensSaved: Math.max(0, candidateBefore - candidateAfter),
+      meanQualityScore: quality,
+      controlMeanQualityScore: control,
+      qualityDelta,
+      meanLatencyMs: candidateLatency,
+      controlMeanLatencyMs: controlLatency,
+      reasons,
+    };
+  });
+};
 
 export const defaultTokenEfficiencyBenchmarkEngines =
   (): ReadonlyArray<TokenEfficiencyBenchmarkEngine> => [

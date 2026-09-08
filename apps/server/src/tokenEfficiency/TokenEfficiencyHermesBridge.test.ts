@@ -2,11 +2,19 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  evaluateTokenEfficiencyHermesProposal,
   makeHermesEvidence,
   summarizeHermesObservation,
   toHermesObservation,
 } from "./TokenEfficiencyHermesBridge.ts";
-import { AxisContextId, TokenEfficiencySnapshot } from "@t3tools/contracts";
+import {
+  AxisContextId,
+  AxisLearningEvidenceId,
+  AxisLearningProposalId,
+  ProviderInstanceId,
+  TokenEfficiencyEngineId,
+  TokenEfficiencySnapshot,
+} from "@t3tools/contracts";
 
 const snapshot = Schema.decodeUnknownSync(TokenEfficiencySnapshot)({
   contractVersion: 1,
@@ -48,6 +56,7 @@ const snapshot = Schema.decodeUnknownSync(TokenEfficiencySnapshot)({
     },
   ],
 });
+const decodeSnapshot = Schema.decodeUnknownSync(TokenEfficiencySnapshot);
 
 describe("TokenEfficiencyHermesBridge", () => {
   it("filters observations to the requested context", () => {
@@ -72,5 +81,68 @@ describe("TokenEfficiencyHermesBridge", () => {
     expect(evidence.provenance.sourceKind).toBe("evaluation");
     expect(evidence.summary).toBe(summary);
     expect(evidence).not.toHaveProperty("recoveryHandle");
+  });
+
+  it("creates a draft-only proposal after reviewed quality and efficiency gates pass", () => {
+    const observation = toHermesObservation(
+      decodeSnapshot({
+        ...snapshot,
+        baselines: [
+          {
+            ...snapshot.baselines[0]!,
+            sampleCount: 5,
+          },
+        ],
+        aggregates: [
+          {
+            ...snapshot.aggregates[0]!,
+            counters: { attempts: 5, compressionsApplied: 5, failures: 0 },
+            savings: { estimatedTokensBefore: 1_000, estimatedTokensAfter: 700 },
+          },
+        ],
+      }),
+      AxisContextId.make("company_a"),
+    );
+    const decision = evaluateTokenEfficiencyHermesProposal(observation, {
+      proposalId: AxisLearningProposalId.make("proposal-token-efficiency-1"),
+      evidenceId: AxisLearningEvidenceId.make("efficiency-evidence-1"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      engine: TokenEfficiencyEngineId.make("deterministic"),
+      quality: { reviewed: true, controlScore: 1, candidateScore: 0.99 },
+    });
+
+    expect(decision.status).toBe("propose");
+    if (decision.status !== "propose") throw new Error("expected a proposal");
+    expect(decision.proposal).toMatchObject({
+      contextId: "company_a",
+      id: AxisLearningProposalId.make("proposal-token-efficiency-1"),
+      evidenceIds: ["efficiency-evidence-1"],
+      change: {
+        kind: "token-efficiency-policy",
+        mode: "compress",
+        engine: "deterministic",
+      },
+    });
+    expect(JSON.stringify(decision.proposal)).not.toContain("prompt");
+  });
+
+  it("rejects Hermes proposals when quality was not reviewed or control evidence is weak", () => {
+    const observation = toHermesObservation(snapshot, AxisContextId.make("company_a"));
+    const decision = evaluateTokenEfficiencyHermesProposal(observation, {
+      proposalId: AxisLearningProposalId.make("proposal-token-efficiency-2"),
+      evidenceId: AxisLearningEvidenceId.make("efficiency-evidence-2"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      engine: TokenEfficiencyEngineId.make("deterministic"),
+      quality: { reviewed: false, controlScore: 1, candidateScore: 1 },
+    });
+
+    expect(decision).toEqual({
+      status: "rejected",
+      reasons: [
+        "reviewed-quality-scores-required",
+        "insufficient-control-samples",
+        "insufficient-applied-compressions",
+      ],
+    });
   });
 });

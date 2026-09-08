@@ -98,12 +98,20 @@ An externally installed Caveman executable can be configured with
 is not forwarded. `TokenEfficiencyBenchmark` provides bilingual fixtures for
 Codex, Claude, Work Hub, remote-dispatch, and scheduled-agent comparisons, but
 does not claim task-quality equivalence without a caller-supplied evaluator.
+`evaluateTokenEfficiencyBenchmark` turns those reviewed scores into a
+fail-closed candidate verdict: a candidate needs complete no-compression
+control results, valid quality scores, a bounded quality delta, positive
+estimated savings, and an acceptable latency budget before it can be treated
+as a rollout candidate.
 Runtime instructions keep a stable provider prompt prefix and append changing
 model/effort/profile metadata afterward. The Hermes bridge accepts only
 context-scoped aggregate observations and emits evidence; it cannot activate a
-compression policy. Native provider search adapters, real Caveman/LLMLingua
+compression policy. Its proposal evaluator requires reviewed quality scores,
+control samples, positive savings, and bounded failures before returning a
+draft-only `AxisLearningProposalDraft`; it never writes to the learning store
+or activates a version. Native provider search adapters, real Caveman/LLMLingua
 benchmark runs, reviewed task-quality scores, and Hermes proposal evaluation
-remain future roadmap work.
+against an external engine remain future roadmap work.
 
 Source: `apps/server/src/tokenEfficiency/`, contracts in
 `packages/contracts/src/tokenEfficiency.ts`.

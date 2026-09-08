@@ -317,15 +317,18 @@ and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
       adapter invokes an explicitly configured executable, ignores stderr, and remains record-only.
 - [~] Benchmark Caveman Engine against no compression, deterministic shape-aware compaction, and
   LLMLingua-2 on representative Codex, Claude, Work Hub, remote-dispatch, and scheduled-agent
-  tasks in English and Portuguese. The offline harness and bilingual fixtures ship; runs with
-  the externally installed engines and reviewed task-quality scores remain.
+  tasks in English and Portuguese. The offline harness, bilingual fixtures, and fail-closed
+  acceptance gate for reviewed quality, savings, and latency ship; runs with the externally
+  installed engines and reviewed task-quality scores remain.
 - [~] Gate rollout per provider instance and Axis context with a kill switch, visible savings/
   accuracy/latency statistics, and automatic pass-through when compression is net-negative.
   Per-instance gating, the `off` kill switch, net-negative pass-through, aggregate savings/latency
-  metrics, and the Settings diagnostics surface ship; task-quality accuracy evaluation remains.
+  metrics, the Settings diagnostics surface, and a benchmark acceptance policy that fails closed
+  without reviewed quality scores ship; runtime task-quality accuracy evaluation remains.
 - [~] Feed only aggregate, non-sensitive efficiency outcomes into Hermes; Hermes may propose a
   compression policy change but cannot activate it. An aggregate-only contract and context-
-  scoped evidence bridge ship; the concrete Hermes engine feed and proposal evaluator remain.
+  scoped evidence bridge, plus a fail-closed evaluator that returns a draft-only proposal only
+  after reviewed quality evidence, ship; wiring an external Hermes engine/feed remains.
 
 ## Multi-surface and remote environments
 
