@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { RefreshCwIcon, SearchIcon, Trash2Icon } from "lucide-react";
+import { CheckIcon, RefreshCwIcon, SearchIcon, Trash2Icon } from "lucide-react";
 import {
   axisProviderInstanceLocatorKey,
   AxisCapabilityId,
@@ -86,6 +86,7 @@ export function ProviderCapabilitiesSection({
   const [search, setSearch] = useState("");
   const [mcpFilter, setMcpFilter] = useState<McpFilter>("all");
   const [skillFilter, setSkillFilter] = useState<SkillFilter>("all");
+  const isMcpPage = section === "mcps";
   const inventory = query.data;
   const providerKey = axisProviderInstanceLocatorKey({ environmentId, instanceId });
   const providerIsAssigned =
@@ -134,6 +135,13 @@ export function ProviderCapabilitiesSection({
       }),
     [inventory, normalizedSearch, skillFilter],
   );
+  const adoptedCapabilities = providerCapabilities.filter(
+    (capability) => capability.kind === (isMcpPage ? "mcp" : "skill"),
+  );
+  const adoptedEnabledCount = adoptedCapabilities.filter((capability) => capability.enabled).length;
+  const nativeCount = isMcpPage
+    ? (inventory?.mcpServers.length ?? 0)
+    : (inventory?.skills.length ?? 0);
 
   const publishMcpToWorkHub = async (name: string, enabled: boolean) => {
     const snapshot = axisQuery.data;
@@ -295,7 +303,6 @@ export function ProviderCapabilitiesSection({
     );
   }
 
-  const isMcpPage = section === "mcps";
   const filters = isMcpPage
     ? (["all", "connected", "attention"] as const)
     : (["all", "enabled", "disabled"] as const);
@@ -321,6 +328,24 @@ export function ProviderCapabilitiesSection({
         </Button>
       }
     >
+      <div className="grid grid-cols-3 divide-x divide-border/60 border-b border-border/60">
+        <div className="min-w-0 px-3 py-3 first:pl-0 sm:px-4 sm:first:pl-0">
+          <p className="text-lg font-semibold tabular-nums text-foreground">{nativeCount}</p>
+          <p className="truncate text-[11px] text-muted-foreground">Native</p>
+        </div>
+        <div className="min-w-0 px-3 py-3 sm:px-4">
+          <p className="text-lg font-semibold tabular-nums text-foreground">
+            {adoptedEnabledCount}
+          </p>
+          <p className="truncate text-[11px] text-muted-foreground">Adopted by Axis</p>
+        </div>
+        <div className="min-w-0 px-3 py-3 sm:px-4">
+          <p className="text-lg font-semibold tabular-nums text-foreground">
+            {adoptedCapabilities.length - adoptedEnabledCount}
+          </p>
+          <p className="truncate text-[11px] text-muted-foreground">Disabled</p>
+        </div>
+      </div>
       <div className="grid gap-3 border-b border-border/60 p-3 sm:p-4">
         <div className="relative max-w-md">
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -473,16 +498,17 @@ export function ProviderCapabilitiesSection({
                   key={skill.path}
                   title={skill.displayName ?? skill.name}
                   description={skill.shortDescription ?? skill.description ?? skill.path}
-                  status={skill.scope ?? "Provider"}
-                  control={
-                    capability ? (
-                      capabilityControls(capability)
-                    ) : (
-                      <Badge variant={skill.enabled ? "success" : "outline"}>
-                        {skill.enabled ? "Native enabled" : "Native disabled"}
-                      </Badge>
-                    )
+                  status={
+                    <Badge variant={capability?.enabled ? "success" : "outline"}>
+                      {capability?.enabled ? <CheckIcon /> : null}
+                      {capability
+                        ? "Adopted by Axis"
+                        : skill.enabled
+                          ? "Native enabled"
+                          : "Native disabled"}
+                    </Badge>
                   }
+                  control={capability ? capabilityControls(capability) : undefined}
                 />
               );
             })}

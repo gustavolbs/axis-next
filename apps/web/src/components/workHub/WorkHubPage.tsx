@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CalendarDaysIcon,
   CalendarClockIcon,
-  PlugIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CircleAlertIcon,
@@ -10,6 +9,7 @@ import {
   ExternalLinkIcon,
   InboxIcon,
   LayoutDashboardIcon,
+  Settings2Icon,
   VideoIcon,
 } from "lucide-react";
 
@@ -42,11 +42,10 @@ import {
   resolveWorkHubBoardColumn,
   WORK_HUB_BOARD_COLUMNS,
   workHubCurrentTimePercentage,
+  type WorkHubView,
 } from "./WorkHub.logic";
 import { WorkHubSourceManager } from "./WorkHubSourceManager";
 import { WorkHubScheduledActivities } from "./WorkHubScheduledActivities";
-
-type WorkHubView = "overview" | "calendar" | "messages" | "board" | "scheduled" | "sources";
 
 const VIEWS: ReadonlyArray<{
   readonly id: WorkHubView;
@@ -58,10 +57,6 @@ const VIEWS: ReadonlyArray<{
   { id: "messages", label: "Messages", icon: InboxIcon },
   { id: "board", label: "Work Board", icon: Columns3Icon },
   { id: "scheduled", label: "Scheduled", icon: CalendarClockIcon },
-  // Choosing sources is setup, not a daily read. It sat at the bottom of
-  // Overview, where the longest panel on the page pushed today's work off
-  // screen; it earns its own tab instead.
-  { id: "sources", label: "Sources", icon: PlugIcon },
 ];
 
 const CALENDAR_HOUR_HEIGHT_PX = 64;
@@ -139,81 +134,155 @@ function contextName(contexts: ReadonlyArray<AxisContext>, contextId: string): s
 function OverviewView({
   catalog,
   items,
+  onConfigureSources,
 }: {
   readonly catalog: AxisContextCatalog;
   readonly items: ReadonlyArray<AxisWorkHubCachedItem>;
+  readonly onConfigureSources: () => void;
 }) {
   const sources = buildWorkHubSourceReadiness(catalog);
   const todayItems = items.filter((item) => isWorkHubOverviewItem(item, new Date())).slice(0, 8);
+  const selectedSources = sources.reduce((total, source) => total + source.selectedMcpCount, 0);
+  const availableSources = sources.reduce((total, source) => total + source.availableMcpCount, 0);
+  const readyContexts = sources.filter(
+    (source) =>
+      source.availableMcpCount > 0 && source.selectedMcpCount === source.availableMcpCount,
+  ).length;
+  const sourceStatus =
+    availableSources === 0
+      ? "No sources"
+      : selectedSources === availableSources
+        ? "All ready"
+        : selectedSources > 0
+          ? "Partially ready"
+          : "Needs setup";
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.55fr)]">
-      <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="font-medium text-foreground">Today</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Meetings, priority messages, and active work across every context.
-            </p>
+    <div className="space-y-8">
+      <div className="grid grid-cols-2 divide-x divide-y divide-border/60 border-y border-border/60 sm:grid-cols-4">
+        {[
+          { label: "Today", value: todayItems.length, detail: "items to review" },
+          { label: "Contexts", value: catalog.contexts.length, detail: "Personal and Company" },
+          { label: "Sources", value: selectedSources, detail: `${availableSources} available` },
+          { label: "Ready", value: readyContexts, detail: `of ${sources.length} contexts` },
+        ].map((metric) => (
+          <div key={metric.label} className="min-w-0 px-3 py-3 first:pl-0 sm:px-4 sm:first:pl-0">
+            <p className="text-xl font-semibold tabular-nums text-foreground">{metric.value}</p>
+            <p className="mt-0.5 text-xs font-medium text-foreground/80">{metric.label}</p>
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{metric.detail}</p>
           </div>
-          <Badge variant="secondary">{todayItems.length} items</Badge>
-        </div>
-        {todayItems.length === 0 ? (
-          <EmptyCollection>
-            Sync a selected MCP to place today&apos;s meetings and important messages here.
-          </EmptyCollection>
-        ) : (
-          <div className="divide-y divide-border/60 rounded-xl border border-border/60">
-            {todayItems.map((item) => (
-              <div key={item.id} className="flex items-start gap-3 px-3 py-2.5">
-                <Badge variant="outline" className="mt-0.5 shrink-0">
-                  {item.view === "calendar"
-                    ? "Event"
-                    : item.view === "board"
-                      ? "Work item"
-                      : "Message"}
-                </Badge>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{item.title}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {contextName(catalog.contexts, item.contextId)}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+        ))}
+      </div>
 
-      <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5">
-        <h2 className="font-medium text-foreground">Source readiness</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Data is read only through MCPs attached to providers available in each context.
-        </p>
-        <div className="mt-4 divide-y divide-border/65">
-          {sources.map((source, index) => {
-            return (
-              <div
-                key={source.contextId}
-                className="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
-              >
-                <span className={cn("size-2.5 shrink-0 rounded-full", contextTone(index))} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {source.contextName}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {source.providerCount} provider{source.providerCount === 1 ? "" : "s"} ·{" "}
-                    {source.selectedMcpCount} of {source.availableMcpCount} MCPs selected
-                  </p>
+      <div className="grid gap-8 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.55fr)]">
+        <section className="min-w-0 border-y border-border/70 py-5">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                Daily view
+              </p>
+              <h2 className="mt-1 text-base font-semibold text-foreground">Today</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Meetings, priority messages, and active work across every context.
+              </p>
+            </div>
+            <Badge variant="secondary">{todayItems.length} items</Badge>
+          </div>
+          {todayItems.length === 0 ? (
+            <EmptyCollection>
+              Sync a selected MCP to place today&apos;s meetings and important messages here.
+            </EmptyCollection>
+          ) : (
+            <div className="divide-y divide-border/60 border-y border-border/60">
+              {todayItems.map((item) => (
+                <div key={item.id} className="flex items-start gap-3 px-3 py-2.5">
+                  <Badge variant="outline" className="mt-0.5 shrink-0">
+                    {item.view === "calendar"
+                      ? "Event"
+                      : item.view === "board"
+                        ? "Work item"
+                        : "Message"}
+                  </Badge>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{item.title}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {contextName(catalog.contexts, item.contextId)}
+                    </p>
+                  </div>
                 </div>
-                <Badge variant={source.selectedMcpCount > 0 ? "secondary" : "outline"}>
-                  {source.selectedMcpCount > 0 ? "Ready" : "Select sources"}
-                </Badge>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="min-w-0 border-y border-border/70 py-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                Data coverage
+              </p>
+              <h2 className="mt-1 text-base font-semibold text-foreground">Source readiness</h2>
+            </div>
+            <Button
+              size="icon-xs"
+              variant="ghost-muted"
+              aria-label="Configure Work Hub sources"
+              title="Configure sources"
+              onClick={onConfigureSources}
+            >
+              <Settings2Icon />
+            </Button>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Data is read only through MCPs attached to providers available in each context.
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <Badge variant={sourceStatus === "All ready" ? "success" : "outline"}>
+              {sourceStatus}
+            </Badge>
+            <span className="text-xs text-muted-foreground">
+              {selectedSources} of {availableSources} selected
+            </span>
+          </div>
+          <div className="mt-4 divide-y divide-border/65">
+            {sources.map((source, index) => {
+              return (
+                <div
+                  key={source.contextId}
+                  className="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
+                >
+                  <span className={cn("size-2.5 shrink-0 rounded-full", contextTone(index))} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {source.contextName}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {source.providerCount} provider{source.providerCount === 1 ? "" : "s"} ·{" "}
+                      {source.selectedMcpCount} of {source.availableMcpCount} MCPs selected
+                    </p>
+                  </div>
+                  <Badge
+                    variant={
+                      source.selectedMcpCount === source.availableMcpCount &&
+                      source.availableMcpCount > 0
+                        ? "success"
+                        : source.selectedMcpCount > 0
+                          ? "secondary"
+                          : "outline"
+                    }
+                  >
+                    {source.selectedMcpCount === source.availableMcpCount &&
+                    source.availableMcpCount > 0
+                      ? "Ready"
+                      : source.selectedMcpCount > 0
+                        ? "Partial"
+                        : "Configure"}
+                  </Badge>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
@@ -423,7 +492,7 @@ export function CalendarView({
   })}`;
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-border/70 bg-card/35 shadow-sm/5">
+    <section className="overflow-hidden border-y border-border/70 bg-card/15">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4">
         <div>
           <h2 className="font-medium text-foreground">{weekLabel}</h2>
@@ -628,7 +697,7 @@ function MessagesView({
     (left, right) => Date.parse(right.occurredAt ?? "") - Date.parse(left.occurredAt ?? ""),
   );
   return (
-    <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5">
+    <section className="border-y border-border/70 py-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-medium text-foreground">Important messages</h2>
@@ -805,8 +874,18 @@ function BoardView({
   );
 }
 
-export function WorkHubPage() {
-  const [view, setView] = useState<WorkHubView>("overview");
+export function WorkHubPage({
+  view: controlledView,
+  onViewChange,
+  initialView = "overview",
+}: {
+  readonly view?: WorkHubView | undefined;
+  readonly onViewChange?: ((view: WorkHubView) => void) | undefined;
+  readonly initialView?: WorkHubView | undefined;
+} = {}) {
+  const [localView, setLocalView] = useState<WorkHubView>(initialView);
+  const view = controlledView ?? localView;
+  const changeView = onViewChange ?? setLocalView;
   const [reconnecting, setReconnecting] = useState(false);
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
@@ -869,15 +948,32 @@ export function WorkHubPage() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <WorkspacePageHeader className="border-b border-border/70">
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold text-foreground">Work Hub</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="truncate text-sm font-semibold text-foreground">Work Hub</h1>
+              <Badge variant={isConnected ? "success" : "outline"}>
+                {isConnected ? "Connected" : "Offline"}
+              </Badge>
+            </div>
             <p className="hidden text-xs text-muted-foreground sm:block">
-              One view across Personal and every Company, without crossing their data boundaries.
+              One place for work across every context.
             </p>
           </div>
+          <Button
+            size="sm"
+            variant={view === "sources" ? "secondary" : "outline"}
+            onClick={() => changeView("sources")}
+          >
+            <Settings2Icon />
+            Configure sources
+          </Button>
         </WorkspacePageHeader>
 
         <div className="border-b border-border/70 px-3 sm:px-5">
-          <nav className="flex gap-1 overflow-x-auto py-2" aria-label="Work Hub views">
+          <nav
+            className="flex gap-1 overflow-x-auto py-2"
+            aria-label="Work Hub views"
+            role="tablist"
+          >
             {VIEWS.map((item) => {
               const Icon = item.icon;
               return (
@@ -885,8 +981,9 @@ export function WorkHubPage() {
                   key={item.id}
                   size="sm"
                   variant={view === item.id ? "secondary" : "ghost"}
-                  aria-current={view === item.id ? "page" : undefined}
-                  onClick={() => setView(item.id)}
+                  role="tab"
+                  aria-selected={view === item.id}
+                  onClick={() => changeView(item.id)}
                 >
                   <Icon className="size-4" />
                   {item.label}
@@ -935,7 +1032,11 @@ export function WorkHubPage() {
               ) : null}
             </div>
           ) : view === "overview" ? (
-            <OverviewView catalog={query.data.catalog} items={cachedItems} />
+            <OverviewView
+              catalog={query.data.catalog}
+              items={cachedItems}
+              onConfigureSources={() => changeView("sources")}
+            />
           ) : view === "calendar" ? (
             <CalendarView
               contexts={query.data.catalog.contexts}

@@ -1,9 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { Trash2Icon } from "lucide-react";
+import { CheckIcon, Trash2Icon } from "lucide-react";
 
 import type { AxisCapability, AxisCapabilityKind } from "@t3tools/contracts";
 
 import { ensureLocalApi } from "~/localApi";
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
 import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayout";
@@ -79,7 +80,12 @@ export function CapabilitiesSection({ model }: { readonly model: AxisSettingsLoa
               key={capability.id}
               title={capability.name}
               description={`${CAPABILITY_LABELS[capability.kind]} · ${providerLabel(capability.provider)}`}
-              status={capability.enabled ? "Enabled" : "Disabled"}
+              status={
+                <Badge variant={capability.enabled ? "success" : "outline"}>
+                  {capability.enabled ? <CheckIcon /> : null}
+                  {capability.enabled ? "Enabled" : "Disabled"}
+                </Badge>
+              }
               control={
                 <div className="flex items-center gap-2">
                   <Switch

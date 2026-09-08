@@ -4,6 +4,7 @@ import { PlusIcon, Trash2Icon } from "lucide-react";
 import { AxisContextId } from "@t3tools/contracts";
 
 import { randomUUID } from "~/lib/utils";
+import { ensureLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayout";
@@ -33,6 +34,24 @@ export function ContextsSection({ model }: { readonly model: AxisSettingsLoaded 
     if (saved) setCompanyName("");
   };
 
+  const removeCompany = async (context: (typeof snapshot.catalog.contexts)[number]) => {
+    const projectCount = snapshot.catalog.projectBindings.filter(
+      (binding) => binding.contextId === context.id,
+    ).length;
+    const providerCount = snapshot.catalog.providerOwnerships.filter(
+      (ownership) => ownership.contextId === context.id,
+    ).length;
+    const sourceCount = snapshot.catalog.workHubSources.filter(
+      (source) => source.contextId === context.id,
+    ).length;
+    const confirmed = await ensureLocalApi().dialogs.confirm(
+      `Remove ${context.name}? This removes ${projectCount} project assignment${projectCount === 1 ? "" : "s"}, ${providerCount} provider assignment${providerCount === 1 ? "" : "s"}, and ${sourceCount} Work Hub source${sourceCount === 1 ? "" : "s"}.`,
+      { variant: "destructive" },
+    );
+    if (!confirmed) return;
+    void save(snapshot, removeAxisCompany(snapshot.catalog, context.id), "Company context removed");
+  };
+
   return (
     <SettingsSection
       id="axis-contexts"
@@ -56,13 +75,7 @@ export function ContextsSection({ model }: { readonly model: AxisSettingsLoaded 
                 variant="ghost-muted"
                 disabled={saving}
                 aria-label={`Remove ${context.name}`}
-                onClick={() =>
-                  void save(
-                    snapshot,
-                    removeAxisCompany(snapshot.catalog, context.id),
-                    "Company context removed",
-                  )
-                }
+                onClick={() => void removeCompany(context)}
               >
                 <Trash2Icon />
               </Button>

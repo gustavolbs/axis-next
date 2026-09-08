@@ -8,6 +8,8 @@ import {
 } from "@t3tools/contracts";
 
 import { randomUUID } from "~/lib/utils";
+import { ensureLocalApi } from "~/localApi";
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
   Select,
@@ -75,6 +77,19 @@ export function GrantsSection({ model }: { readonly model: AxisSettingsLoaded })
     if (saved) setGrantProvider("");
   };
 
+  const removeGrant = async (grant: (typeof snapshot.catalog.providerAccessGrants)[number]) => {
+    const confirmed = await ensureLocalApi().dialogs.confirm(
+      `Revoke ${providerLabel(grant.provider)} for ${contextNames.get(grant.targetContextId) ?? "this Company"}? Existing work is not deleted, but new Work Hub collection will stop using this access.`,
+      { variant: "destructive" },
+    );
+    if (!confirmed) return;
+    void save(
+      snapshot,
+      removeAxisProviderAccessGrant(snapshot.catalog, grant.id),
+      "Provider access removed",
+    );
+  };
+
   return (
     <SettingsSection
       id="axis-provider-access"
@@ -86,20 +101,18 @@ export function GrantsSection({ model }: { readonly model: AxisSettingsLoaded })
           key={grant.id}
           title={providerLabel(grant.provider)}
           description={`Available to ${contextNames.get(grant.targetContextId) ?? grant.targetContextId}`}
-          status={grant.status === "active" ? "Active" : "Revoked"}
+          status={
+            <Badge variant={grant.status === "active" ? "success" : "outline"}>
+              {grant.status === "active" ? "Active" : "Revoked"}
+            </Badge>
+          }
           control={
             <Button
               size="icon-sm"
               variant="ghost-muted"
               disabled={saving}
               aria-label={`Remove access to ${providerLabel(grant.provider)}`}
-              onClick={() =>
-                void save(
-                  snapshot,
-                  removeAxisProviderAccessGrant(snapshot.catalog, grant.id),
-                  "Provider access removed",
-                )
-              }
+              onClick={() => void removeGrant(grant)}
             >
               <Trash2Icon />
             </Button>

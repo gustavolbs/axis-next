@@ -5,6 +5,15 @@ import {
   type AxisWorkHubCachedItem,
 } from "@t3tools/contracts";
 
+export type WorkHubView = "overview" | "calendar" | "messages" | "board" | "scheduled" | "sources";
+
+export function isWorkHubView(value: unknown): value is WorkHubView {
+  return (
+    typeof value === "string" &&
+    ["overview", "calendar", "messages", "board", "scheduled", "sources"].includes(value)
+  );
+}
+
 export const WORK_HUB_BOARD_COLUMNS = [
   "To do",
   "Working",

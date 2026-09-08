@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0] - 2026-09-07
+
+### Changed
+
+- Reorganize Axis settings, Learning, Capabilities, and Work Hub into clearer task-focused layouts with persistent views, at-a-glance status, and safer destructive actions.
+
 ## [0.1.0] - 2026-09-07
 
 ### Added
