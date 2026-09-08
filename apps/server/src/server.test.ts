@@ -5536,12 +5536,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               enabled: true,
               cacheTtlSeconds: 28_800,
               collectionPolicy: {
-                calendarLookbackDays: 14,
-                calendarLookaheadDays: 90,
-                assignedWorkItemsOnly: true,
-                directMessages: true,
-                mentions: true,
-                assignedIssueComments: true,
+                prompt: "Find current assigned work and recent direct messages.",
               },
               createdAt: "2026-09-05T00:00:00.000Z",
               updatedAt: "2026-09-05T00:00:00.000Z",

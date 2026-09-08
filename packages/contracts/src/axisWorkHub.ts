@@ -267,7 +267,6 @@ export const AxisWorkHubCollectInput = Schema.Struct({
   collectionPolicy: AxisWorkHubCollectionPolicy,
   cacheTtlSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(8 * 60 * 60)),
   previousCursor: Schema.NullOr(Schema.String),
-  previousRefreshedAt: Schema.NullOr(IsoDateTime),
 });
 export type AxisWorkHubCollectInput = typeof AxisWorkHubCollectInput.Type;
 

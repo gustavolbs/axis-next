@@ -17,6 +17,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  TrimmedString,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -139,22 +140,14 @@ const AxisWorkHubCacheTtlSeconds = PositiveInt.pipe(
 );
 
 export const AxisWorkHubCollectionPolicy = Schema.Struct({
-  calendarLookbackDays: NonNegativeInt,
-  calendarLookaheadDays: PositiveInt,
-  assignedWorkItemsOnly: Schema.Boolean,
-  directMessages: Schema.Boolean,
-  mentions: Schema.Boolean,
-  assignedIssueComments: Schema.Boolean,
+  prompt: TrimmedString.check(Schema.isMaxLength(100_000)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
 });
 export type AxisWorkHubCollectionPolicy = typeof AxisWorkHubCollectionPolicy.Type;
 
 export const DEFAULT_AXIS_WORK_HUB_COLLECTION_POLICY: AxisWorkHubCollectionPolicy = {
-  calendarLookbackDays: 60,
-  calendarLookaheadDays: 90,
-  assignedWorkItemsOnly: true,
-  directMessages: true,
-  mentions: true,
-  assignedIssueComments: true,
+  prompt: "",
 };
 
 /** One context-approved provider/MCP binding queried by Work Hub. */
