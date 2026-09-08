@@ -127,6 +127,9 @@ function OpenContentSearchDialog(props: {
   useEffect(() => {
     setSelectedIndex(0);
     setVisibleCount(VISIBLE_MATCH_WINDOW);
+    // The search hook returns a new result set as the query or filters change.
+    // Resetting the window is intentionally tied to that result identity.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- `matches` is the intentional reset trigger.
   }, [matches]);
 
   useEffect(() => {
