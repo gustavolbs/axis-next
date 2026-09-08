@@ -3,6 +3,7 @@ import {
   BriefcaseBusinessIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
+  MessageSquareIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -10,6 +11,7 @@ import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useNewStandaloneChat } from "../../hooks/useNewStandaloneChat";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -148,7 +150,9 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               ? "work-hub"
               : location.pathname === "/pull-requests"
                 ? "pull-requests"
-                : null,
+                : /^\/scratch(?:\/|$)/.test(location.pathname)
+                  ? "scratch"
+                  : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
@@ -185,6 +189,12 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/work-hub" });
   }, [closeMobileSidebar, navigate]);
 
+  const { start: startStandaloneChat } = useNewStandaloneChat();
+  const handleScratchClick = useCallback(() => {
+    closeMobileSidebar();
+    void startStandaloneChat();
+  }, [closeMobileSidebar, startStandaloneChat]);
+
   const handleBackClick = useCallback(() => {
     closeMobileSidebar();
     if (canGoBack) {
@@ -209,6 +219,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<BriefcaseBusinessIcon />}
             label="Work Hub"
             onClick={handleWorkHubClick}
+          />
+          <SidebarUtilityItem
+            icon={<MessageSquareIcon />}
+            label="New chat"
+            onClick={handleScratchClick}
           />
           <SidebarUtilityItem
             icon={<SettingsIcon />}

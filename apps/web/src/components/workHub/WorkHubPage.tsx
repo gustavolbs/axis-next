@@ -32,6 +32,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarInset } from "../ui/sidebar";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
+  buildWorkHubCalendarDaySegment,
+  buildWorkHubCalendarTimeLabels,
   buildWorkHubSourceReadiness,
   buildWorkHubWeekDays,
   isWorkHubOverviewItem,
@@ -64,6 +66,7 @@ const VIEWS: ReadonlyArray<{
 
 const CALENDAR_HOUR_HEIGHT_PX = 64;
 const CALENDAR_DAY_HEIGHT_PX = 24 * CALENDAR_HOUR_HEIGHT_PX;
+const CALENDAR_ALL_DAY_ROW_HEIGHT_PX = 40;
 const CALENDAR_HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const CONTEXT_TONES = [
   {
@@ -219,25 +222,35 @@ function CalendarEvent({
   item,
   contextLabel,
   contextIndex,
+  viewerTimeZone,
+  allDay = item.allDay,
 }: {
   readonly item: AxisWorkHubCachedItem;
   readonly contextLabel: string;
   readonly contextIndex: number;
+  readonly viewerTimeZone: string;
+  readonly allDay?: boolean;
 }) {
   const startsAt = item.startsAt ? new Date(item.startsAt) : null;
-  const endsAt = item.endsAt ? new Date(item.endsAt) : null;
-  const meetingLink = resolveWorkHubCalendarMeetingLink(item);
-  const timeLabel = startsAt
-    ? `${startsAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}${
-        endsAt
-          ? `–${endsAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
-          : ""
-      }`
+  const meetingLink = item.cancelled ? null : resolveWorkHubCalendarMeetingLink(item);
+  const timeLabels = buildWorkHubCalendarTimeLabels(item, viewerTimeZone);
+  const calendarDateLabel = item.startDate
+    ? `${item.startDate}${item.endDate ? ` – ${item.endDate}` : ""}`
+    : null;
+  const timeLabel = allDay ? "All day" : timeLabels.viewer;
+  const calendarLabel = item.calendar?.name ?? item.calendar?.nativeId;
+  const organizerLabel = item.organizer?.name ?? item.organizer?.email;
+  const responseLabel = item.responseStatus
+    ? item.responseStatus === "needs-action"
+      ? "Needs action"
+      : `${item.responseStatus.charAt(0).toUpperCase()}${item.responseStatus.slice(1)}`
     : null;
   return (
     <div
       className={cn(
-        "group relative h-full min-h-11 overflow-hidden rounded-md border-l-[3px] p-1.5 shadow-xs transition-colors",
+        "group relative h-full overflow-hidden rounded-md border-l-[3px] p-1.5 shadow-xs transition-colors",
+        !allDay && "min-h-11",
+        item.cancelled && "opacity-65",
         contextEventTone(contextIndex),
       )}
     >
@@ -253,22 +266,87 @@ function CalendarEvent({
           {timeLabel ? (
             <p className="truncate text-[10px] font-medium opacity-75">{timeLabel}</p>
           ) : null}
-          <p className="truncate text-left text-xs font-semibold">{item.title}</p>
+          <p
+            className={cn(
+              "truncate text-left text-xs font-semibold",
+              item.cancelled && "line-through",
+            )}
+          >
+            {item.title}
+          </p>
         </TooltipTrigger>
         <TooltipPopup side="right" align="start" className="w-72 max-w-[calc(100vw-2rem)] p-1.5">
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <span className={cn("size-2 shrink-0 rounded-full", contextTone(contextIndex))} />
             {contextLabel}
           </div>
-          <p className="mt-1 font-medium text-foreground">{item.title}</p>
-          {startsAt ? (
+          <div className="mt-1 flex items-start justify-between gap-2">
+            <p className={cn("font-medium text-foreground", item.cancelled && "line-through")}>
+              {item.title}
+            </p>
+            {item.cancelled ? <Badge variant="outline">Cancelled</Badge> : null}
+          </div>
+          {startsAt || calendarDateLabel ? (
             <p className="mt-1 text-xs text-muted-foreground">
-              {startsAt.toLocaleDateString(undefined, {
-                weekday: "long",
-                month: "short",
-                day: "numeric",
-              })}
-              {` · ${timeLabel}`}
+              {startsAt
+                ? startsAt.toLocaleDateString(undefined, {
+                    weekday: "long",
+                    month: "short",
+                    day: "numeric",
+                  })
+                : calendarDateLabel}
+              {timeLabel ? ` · ${timeLabel}` : ""}
+            </p>
+          ) : null}
+          {allDay && item.sourceTimeZone ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Source calendar date · {item.sourceTimeZone}
+            </p>
+          ) : timeLabels.viewer ? (
+            <div className="mt-1 text-xs text-muted-foreground">
+              <p>
+                Viewer ({viewerTimeZone}) · {timeLabels.viewer}
+              </p>
+              {timeLabels.source && item.sourceTimeZone ? (
+                <p>
+                  Source ({item.sourceTimeZone}) · {timeLabels.source}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {calendarLabel ? (
+            <p className="mt-1 break-words text-xs text-muted-foreground">
+              Calendar · {calendarLabel}
+            </p>
+          ) : null}
+          {organizerLabel ? (
+            <p className="mt-1 break-words text-xs text-muted-foreground">
+              Organizer · {organizerLabel}
+            </p>
+          ) : null}
+          {responseLabel ? (
+            <p className="mt-1 text-xs text-muted-foreground">Your response · {responseLabel}</p>
+          ) : null}
+          {item.recurrence ? (
+            <p className="mt-1 break-words text-xs text-muted-foreground">
+              Recurring
+              {item.recurrence.rule ? ` · ${item.recurrence.rule}` : ""}
+              {!item.recurrence.rule && item.recurrence.seriesId
+                ? ` · series ${item.recurrence.seriesId}`
+                : ""}
+            </p>
+          ) : null}
+          {item.participants.length > 0 ? (
+            <p className="mt-1 line-clamp-3 break-words text-xs text-muted-foreground">
+              Participants ·{" "}
+              {item.participants
+                .map((participant) => {
+                  const identity = participant.name ?? participant.email ?? "Unknown";
+                  return participant.responseStatus
+                    ? `${identity} (${participant.responseStatus})`
+                    : identity;
+                })
+                .join(", ")}
             </p>
           ) : null}
           {item.location ? (
@@ -306,7 +384,7 @@ function CalendarEvent({
   );
 }
 
-function CalendarView({
+export function CalendarView({
   contexts,
   items,
 }: {
@@ -315,6 +393,10 @@ function CalendarView({
 }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [now, setNow] = useState(() => new Date());
+  const viewerTimeZone = useMemo(
+    () => new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    [],
+  );
   const calendarScrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
@@ -346,7 +428,7 @@ function CalendarView({
         <div>
           <h2 className="font-medium text-foreground">{weekLabel}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Events remain labeled with their Personal or Company source.
+            Times shown in {viewerTimeZone}. Events retain their source time zone and context.
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
@@ -383,6 +465,14 @@ function CalendarView({
             <div className="sticky top-0 z-30 flex h-16 items-end justify-end border-b border-border/70 bg-card px-2 pb-2 text-[10px] text-muted-foreground">
               Time
             </div>
+            <div
+              className="relative border-b border-border/60"
+              style={{ height: CALENDAR_ALL_DAY_ROW_HEIGHT_PX }}
+            >
+              <span className="absolute right-2 top-2 text-[10px] text-muted-foreground">
+                All day
+              </span>
+            </div>
             <div className="relative" style={{ height: CALENDAR_DAY_HEIGHT_PX }}>
               {CALENDAR_HOURS.map((hour) => (
                 <span
@@ -397,33 +487,30 @@ function CalendarView({
           </div>
           {days.map((day) => {
             const isToday = day.toDateString() === now.toDateString();
+            const daySegments = items.flatMap((item) => {
+              const segment = buildWorkHubCalendarDaySegment(item, day);
+              return segment ? [{ item, segment }] : [];
+            });
+            const allDayItems = layoutWorkHubCalendarEvents(
+              daySegments.flatMap(({ item, segment }) =>
+                segment.allDay
+                  ? [{ value: { item }, startMinute: 0, endMinute: 1440, sortKey: item.id }]
+                  : [],
+              ),
+            );
             const dayItems = layoutWorkHubCalendarEvents(
-              items.flatMap((item) => {
-                if (!item.startsAt) return [];
-                const start = new Date(item.startsAt);
-                if (Number.isNaN(start.getTime()) || start.toDateString() !== day.toDateString()) {
-                  return [];
-                }
-                const end = item.endsAt ? new Date(item.endsAt) : null;
-                const startMinute = start.getHours() * 60 + start.getMinutes();
-                const durationMinutes =
-                  end && !Number.isNaN(end.getTime())
-                    ? Math.max(30, (end.getTime() - start.getTime()) / 60_000)
-                    : 60;
-                const height = Math.max(44, (durationMinutes / 60) * CALENDAR_HOUR_HEIGHT_PX);
-                const visibleHeight = Math.min(
-                  height,
-                  CALENDAR_DAY_HEIGHT_PX - (startMinute / 60) * CALENDAR_HOUR_HEIGHT_PX,
-                );
-                return [
-                  {
-                    value: { item, startMinute, height: visibleHeight },
-                    startMinute,
-                    endMinute: startMinute + (visibleHeight / CALENDAR_HOUR_HEIGHT_PX) * 60,
-                    sortKey: item.id,
-                  },
-                ];
-              }),
+              daySegments.flatMap(({ item, segment }) =>
+                segment.allDay
+                  ? []
+                  : [
+                      {
+                        value: { item, segment },
+                        startMinute: segment.startMinute,
+                        endMinute: segment.endMinute,
+                        sortKey: item.id,
+                      },
+                    ],
+              ),
             );
             return (
               <div
@@ -444,6 +531,35 @@ function CalendarView({
                   </p>
                 </div>
                 <div
+                  className="relative border-b border-border/60"
+                  style={{ height: CALENDAR_ALL_DAY_ROW_HEIGHT_PX }}
+                >
+                  {allDayItems.map(({ value, column, columnCount }) => {
+                    const { item } = value;
+                    const contextIndex = contextIndexes.get(item.contextId) ?? 0;
+                    return (
+                      <div
+                        key={item.id}
+                        className="absolute inset-y-1"
+                        style={{
+                          left: `${(column / columnCount) * 100}%`,
+                          width: `${100 / columnCount}%`,
+                          paddingLeft: column === 0 ? 4 : 2,
+                          paddingRight: column === columnCount - 1 ? 4 : 2,
+                        }}
+                      >
+                        <CalendarEvent
+                          item={item}
+                          allDay
+                          contextLabel={contextName(contexts, item.contextId)}
+                          contextIndex={contextIndex}
+                          viewerTimeZone={viewerTimeZone}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                <div
                   className="relative bg-[linear-gradient(to_bottom,transparent_calc(100%_-_1px),color-mix(in_srgb,var(--foreground)_15%,transparent))]"
                   style={{
                     height: CALENDAR_DAY_HEIGHT_PX,
@@ -461,7 +577,12 @@ function CalendarView({
                     </div>
                   ) : null}
                   {dayItems.map(({ value, column, columnCount }) => {
-                    const { item, startMinute, height } = value;
+                    const { item, segment } = value;
+                    const startMinute = segment.startMinute;
+                    const height = Math.max(
+                      44,
+                      ((segment.endMinute - segment.startMinute) / 60) * CALENDAR_HOUR_HEIGHT_PX,
+                    );
                     const top = (startMinute / 60) * CALENDAR_HOUR_HEIGHT_PX;
                     const contextIndex = contextIndexes.get(item.contextId) ?? 0;
                     return (
@@ -481,6 +602,7 @@ function CalendarView({
                           item={item}
                           contextLabel={contextName(contexts, item.contextId)}
                           contextIndex={contextIndex}
+                          viewerTimeZone={viewerTimeZone}
                         />
                       </div>
                     );
@@ -649,6 +771,28 @@ function BoardView({
                           {item.summary}
                         </p>
                       ) : null}
+                      {item.kind === "assigned-work-item" ? (
+                        <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+                          {item.assignee ? <Badge variant="outline">{item.assignee}</Badge> : null}
+                          {item.priority ? <Badge variant="outline">{item.priority}</Badge> : null}
+                          {item.project ? <Badge variant="outline">{item.project}</Badge> : null}
+                          {item.dueDate ? (
+                            <Badge variant="outline">
+                              Due {new Date(item.dueDate).toLocaleDateString()}
+                            </Badge>
+                          ) : null}
+                          {item.labels.map((label) => (
+                            <Badge key={`${item.id}:${label}`} variant="secondary">
+                              {label}
+                            </Badge>
+                          ))}
+                          {item.sourceUpdatedAt ? (
+                            <span className="basis-full">
+                              Updated {new Date(item.sourceUpdatedAt).toLocaleString()}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </article>
                   ))}
                 </div>
@@ -678,14 +822,20 @@ export function WorkHubPage() {
       ? null
       : serverEnvironment.axisWorkHubCache({ environmentId, input: {} }),
   );
+  const sourceStatusesQuery = useEnvironmentQuery(
+    environmentId === null || !axisSupported || view !== "sources"
+      ? null
+      : serverEnvironment.axisWorkHubSourceStatuses({ environmentId, input: {} }),
+  );
   useLiveRefresh(
     () => {
       query.refresh();
       cacheQuery.refresh();
+      if (view === "sources") sourceStatusesQuery.refresh();
     },
     {
       enabled: environmentId !== null && axisSupported,
-      key: `work-hub:${environmentId ?? "disconnected"}`,
+      key: `work-hub:${environmentId ?? "disconnected"}:${view}`,
     },
   );
   const cachedItems = useMemo(() => {
@@ -708,6 +858,7 @@ export function WorkHubPage() {
     if (result._tag === "Success") {
       query.refresh();
       cacheQuery.refresh();
+      if (view === "sources") sourceStatusesQuery.refresh();
     }
   };
   const isConnected = primaryEnvironment?.connection.phase === "connected";
@@ -801,7 +952,9 @@ export function WorkHubPage() {
             <WorkHubScheduledActivities
               catalog={query.data.catalog}
               environmentId={environmentId}
-              onWorkHubCacheChanged={cacheQuery.refresh}
+              onWorkHubCacheChanged={() => {
+                cacheQuery.refresh();
+              }}
             />
           ) : (
             <BoardView

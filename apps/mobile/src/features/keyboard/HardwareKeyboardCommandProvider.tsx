@@ -42,7 +42,7 @@ export function HardwareKeyboardCommandProvider({
   const activeThread = useThreadShell(activeThreadRef);
   const activeProjectRef = useMemo(
     () =>
-      activeThread === null
+      activeThread === null || activeThread.projectId === null
         ? null
         : {
             environmentId: activeThread.environmentId,

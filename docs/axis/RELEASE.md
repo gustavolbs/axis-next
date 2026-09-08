@@ -29,8 +29,9 @@ credentials instead of stranding them under a new name.
 Axis uses T3's existing `electron-updater` integration rather than a second updater. The chain is:
 
 ```text
-tag v<version>
-  -> release-axis-macos.yml builds arm64 + x64
+merge to main with a new root package.json version and CHANGELOG.md entry
+  -> release-axis-macos.yml validates metadata and runs the reusable CI workflow
+  -> builds arm64 + x64 after all checks pass
   -> artifacts are signed with the stable self-signed "Axis Code Signing" certificate
   -> the workflow rejects any ad-hoc (cdhash-pinned) signature
   -> the per-arch latest-mac.yml manifests are merged into one
@@ -80,12 +81,27 @@ reinstalled by hand. No Apple ID, Team ID, or notarization secret is involved.
 
 ## Cutting a release
 
-1. Bump `version` in `apps/desktop/package.json`.
-2. Merge that to `main`.
-3. Tag and push: `git tag v<version> && git push origin v<version>`.
+1. Bump `version` in the root `package.json` to a new stable `MAJOR.MINOR.PATCH` version.
+2. Run `node scripts/update-release-package-versions.ts <version>` to align desktop, server, web,
+   and contracts. Mobile store releases remain independent.
+3. Add a matching top entry to `CHANGELOG.md`: `## [<version>] - YYYY-MM-DD`, with concise release
+   notes under Added, Changed, Fixed, Removed, or Security.
+4. Run `vp run release:validate` and focused checks, then merge to `main`.
 
-`release-axis-macos.yml` takes it from there. `workflow_dispatch` with an explicit version input
-runs the same pipeline without a tag push.
+Every PR, including maintenance and documentation, requires a bump greater than its base branch.
+Use one bump per PR: patch for maintenance/fixes, minor for capabilities, major for breaking changes.
+Update conflicting versions before merging; published versions and notes are immutable.
+
+`release-axis-macos.yml` runs the CI workflow on main, then creates the tag and GitHub Release
+automatically using the committed version and changelog notes. It publishes `SHA256SUMS.txt` for
+the installers and updater assets. No tag push or separate release commit is needed.
+The upstream `release.yml` publisher is restricted to `pingdotgg/t3code`; Axis does not publish
+upstream's npm package or hosted web deployments.
+
+For a failed run that has not created a tag or release, rerun it or dispatch the Axis workflow on
+main. Dispatch reads the committed metadata and runs the same CI gates. Existing tags/releases
+are rejected. Recovery of a partially published release requires explicit maintainer direction;
+ordinary runs never overwrite published artifacts. Keep the original signing certificate.
 
 The workflow fails the build rather than publishing when the icons are stale, a signing secret is
 missing, the signature is not certificate-pinned, or `latest-mac.yml` is absent — each of those

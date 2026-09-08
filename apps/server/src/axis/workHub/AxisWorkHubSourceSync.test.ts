@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   AxisContextCatalogSnapshot,
+  AxisWorkHubCachePersistenceError,
   AxisWorkHubCacheSnapshot,
   EnvironmentId,
   ProviderInstanceId,
@@ -16,9 +17,14 @@ import { vi } from "vite-plus/test";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderDriverError } from "../../provider/Errors.ts";
 import { AxisContextCatalogStore } from "../contexts/AxisContextCatalogStore.ts";
 import { AxisWorkHubCacheStore } from "./AxisWorkHubCacheStore.ts";
-import { AxisWorkHubSourceSync, layer as sourceSyncLayer } from "./AxisWorkHubSourceSync.ts";
+import {
+  AxisWorkHubSourceSync,
+  classifyAxisWorkHubCollectionFailure,
+  layer as sourceSyncLayer,
+} from "./AxisWorkHubSourceSync.ts";
 
 const sourceId = "personal_calendar";
 const provider = { environmentId: "env", instanceId: "codex" };
@@ -81,6 +87,7 @@ const makeLayer = (
   cache: {
     get: AxisWorkHubCacheStore["Service"]["get"];
     replace: AxisWorkHubCacheStore["Service"]["replace"];
+    recordFailure?: AxisWorkHubCacheStore["Service"]["recordFailure"];
   },
   catalogSnapshot = catalog,
 ) =>
@@ -92,6 +99,7 @@ const makeLayer = (
           get: cache.get,
           list: Effect.succeed([]),
           replace: cache.replace,
+          recordFailure: cache.recordFailure ?? (() => Effect.void),
           remove: () => Effect.void,
         }),
         Layer.mock(ProviderInstanceRegistry)({
@@ -212,6 +220,96 @@ it.effect("rejects a disabled MCP source before invoking its provider", () => {
         { get: () => Effect.succeed(null), replace: () => Effect.void },
         disabledCatalog,
       ),
+    ),
+  );
+});
+
+it.effect("classifies only explicit authorization failures as authorization-required", () =>
+  Effect.sync(() => {
+    assert.equal(
+      classifyAxisWorkHubCollectionFailure("MCP returned HTTP 401 Unauthorized"),
+      "authorization",
+    );
+    assert.equal(classifyAxisWorkHubCollectionFailure("connector timed out"), "transient");
+  }),
+);
+
+it.effect("records an authorization failure without replacing the last good cache", () => {
+  const recordFailure = vi.fn<AxisWorkHubCacheStore["Service"]["recordFailure"]>(() => Effect.void);
+  const collect = vi.fn<NonNullable<ProviderInstance["collectWorkHubSource"]>>(() =>
+    Effect.fail(
+      new ProviderDriverError({
+        driver: "codex",
+        instanceId: "codex",
+        detail: "HTTP 403 Forbidden",
+      }),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* AxisWorkHubSourceSync;
+    const failure = yield* service.sync(snapshot.sourceId, "manual").pipe(Effect.flip);
+    assert.equal(failure._tag, "AxisWorkHubSyncError");
+    assert.equal(recordFailure.mock.calls.length, 1);
+    assert.equal(recordFailure.mock.calls[0]?.[1]?.kind, "authorization");
+    assert.equal(recordFailure.mock.calls[0]?.[1]?.message, "HTTP 403 Forbidden");
+  }).pipe(
+    Effect.provide(
+      makeLayer(collect, {
+        get: () => Effect.succeed(snapshot),
+        replace: () => Effect.void,
+        recordFailure,
+      }),
+    ),
+  );
+});
+
+it.effect("records an invalid provider binding as a transient failure", () => {
+  const recordFailure = vi.fn<AxisWorkHubCacheStore["Service"]["recordFailure"]>(() => Effect.void);
+  const invalidSnapshot = decodeCacheSnapshot({ ...snapshot, sourceId: "another_source" });
+  const replace = vi.fn<AxisWorkHubCacheStore["Service"]["replace"]>(() => Effect.void);
+  return Effect.gen(function* () {
+    const service = yield* AxisWorkHubSourceSync;
+    const failure = yield* service.sync(snapshot.sourceId, "manual").pipe(Effect.flip);
+    assert.equal(failure._tag, "AxisWorkHubSourceValidationError");
+    assert.equal(recordFailure.mock.calls.length, 1);
+    assert.equal(recordFailure.mock.calls[0]?.[1]?.kind, "transient");
+    assert.equal(replace.mock.calls.length, 0);
+  }).pipe(
+    Effect.provide(
+      makeLayer(() => Effect.succeed(invalidSnapshot), {
+        get: () => Effect.succeed(snapshot),
+        replace,
+        recordFailure,
+      }),
+    ),
+  );
+});
+
+it.effect("keeps the provider failure when recording its diagnostic fails", () => {
+  const collect = vi.fn<NonNullable<ProviderInstance["collectWorkHubSource"]>>(() =>
+    Effect.fail(
+      new ProviderDriverError({
+        driver: "codex",
+        instanceId: "codex",
+        detail: "connector timed out",
+      }),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* AxisWorkHubSourceSync;
+    const failure = yield* service.sync(snapshot.sourceId, "manual").pipe(Effect.flip);
+    assert.equal(failure._tag, "AxisWorkHubSyncError");
+    assert.equal(failure.message, "connector timed out");
+  }).pipe(
+    Effect.provide(
+      makeLayer(collect, {
+        get: () => Effect.succeed(snapshot),
+        replace: () => Effect.void,
+        recordFailure: () =>
+          Effect.fail(
+            new AxisWorkHubCachePersistenceError({ operation: "record test diagnostic" }),
+          ),
+      }),
     ),
   );
 });

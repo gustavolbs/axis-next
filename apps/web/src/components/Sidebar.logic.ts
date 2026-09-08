@@ -96,7 +96,7 @@ type ScopedSidebarProject = SidebarProject & {
 
 type ScopedSidebarThread = ThreadSortInput & {
   environmentId: string;
-  projectId: string;
+  projectId: string | null;
   archivedAt: string | null;
 };
 
@@ -959,6 +959,7 @@ export function sortProjectsForSidebar<
 ): TProject[] {
   const threadsByProjectId = new Map<string, TThread[]>();
   for (const thread of threads) {
+    if (thread.projectId === null) continue;
     const existing = threadsByProjectId.get(thread.projectId) ?? [];
     existing.push(thread);
     threadsByProjectId.set(thread.projectId, existing);
@@ -1023,7 +1024,7 @@ export function sortScopedProjectsForSidebar<
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
 ): TProject[] {
-  const scopedKey = (environmentId: string, projectId: string) =>
+  const scopedKey = (environmentId: string, projectId: string | null) =>
     `${environmentId}\u0000${projectId}`;
   const threadsByProject = new Map<string, TThread[]>();
   for (const thread of threads) {

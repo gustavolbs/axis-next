@@ -10,6 +10,9 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
+import Migration0055 from "./Migrations/055_ProjectlessThreads.ts";
+import Migration0057 from "./Migrations/057_ImportStandaloneChats.ts";
+import Migration0056 from "./Migrations/056_AxisContextCleanup.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -63,6 +66,9 @@ import Migration0048 from "./Migrations/048_AxisContextCatalog.ts";
 import Migration0049 from "./Migrations/049_AxisWorkHubCache.ts";
 import Migration0050 from "./Migrations/050_AxisScheduledActivities.ts";
 import Migration0051 from "./Migrations/051_AxisLearningLayer.ts";
+import Migration0052 from "./Migrations/052_AxisScratchChats.ts";
+import Migration0053 from "./Migrations/053_AxisStandaloneChats.ts";
+import Migration0054 from "./Migrations/054_AxisWorkHubSourceStatus.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -126,6 +132,12 @@ export const migrationEntries = [
   [49, "AxisWorkHubCache", Migration0049],
   [50, "AxisScheduledActivities", Migration0050],
   [51, "AxisLearningLayer", Migration0051],
+  [52, "AxisScratchChats", Migration0052],
+  [53, "AxisStandaloneChats", Migration0053],
+  [54, "AxisWorkHubSourceStatus", Migration0054],
+  [55, "ProjectlessThreads", Migration0055],
+  [56, "AxisContextCleanup", Migration0056],
+  [57, "ImportStandaloneChats", Migration0057],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -37,6 +37,18 @@ export type AxisWorkHubSourceSyncOutcome =
       readonly snapshot: AxisWorkHubCacheSnapshot;
     };
 
+// Provider CLIs do not yet expose a common typed collection failure. Keep the
+// boundary deterministic: only explicit authorization signals are auth state;
+// every other collection failure remains retryable/transient.
+const AUTHORIZATION_FAILURE =
+  /\b(?:401|403)\b|unauthori[sz]ed|forbidden|authentication\s+(?:is\s+)?required|not\s+authenticated|login\s+required|sign[ -]?in\s+required|(?:token|credential)s?\s+(?:has\s+)?(?:expired|invalid)/iu;
+
+export function classifyAxisWorkHubCollectionFailure(
+  message: string,
+): "authorization" | "transient" {
+  return AUTHORIZATION_FAILURE.test(message) ? "authorization" : "transient";
+}
+
 export class AxisWorkHubSourceSync extends Context.Service<
   AxisWorkHubSourceSync,
   {
@@ -57,6 +69,22 @@ export const make = Effect.gen(function* () {
     string,
     Deferred.Deferred<AxisWorkHubSourceSyncOutcome, AxisWorkHubSourceSyncError>
   >();
+  const recordCollectionFailure = (
+    sourceId: AxisWorkHubSourceId,
+    kind: "authorization" | "transient",
+    message: string,
+  ) =>
+    DateTime.now.pipe(
+      Effect.flatMap((now) =>
+        cacheStore
+          .recordFailure(sourceId, {
+            occurredAt: DateTime.formatIso(now),
+            kind,
+            message,
+          })
+          .pipe(Effect.catch(() => Effect.void)),
+      ),
+    );
 
   const validateSource = Effect.fn("AxisWorkHubSourceSync.validateSource")(function* (
     sourceId: AxisWorkHubSourceId,
@@ -172,6 +200,13 @@ export const make = Effect.gen(function* () {
             message: cause.detail || "The provider could not sync this MCP.",
           }),
       ),
+      Effect.tapError((error) =>
+        recordCollectionFailure(
+          source.id,
+          classifyAxisWorkHubCollectionFailure(error.message),
+          error.message,
+        ),
+      ),
     );
     const snapshotMatchesSource =
       snapshot.sourceId === source.id &&
@@ -179,6 +214,11 @@ export const make = Effect.gen(function* () {
       snapshot.capabilityId === source.capabilityId &&
       axisProviderInstanceLocatorKey(snapshot.provider) === providerKey;
     if (!snapshotMatchesSource) {
+      yield* recordCollectionFailure(
+        source.id,
+        "transient",
+        "The provider returned a Work Hub snapshot for a different source binding.",
+      );
       return yield* new AxisWorkHubSourceValidationError({
         sourceId: source.id,
         message: "The provider returned a Work Hub snapshot for a different source binding.",

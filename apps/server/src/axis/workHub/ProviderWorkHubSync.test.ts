@@ -17,6 +17,12 @@ const baseItem = {
   startsAt: null,
   endsAt: null,
   status: null,
+  assignee: null,
+  priority: null,
+  dueDate: null,
+  labels: [],
+  project: null,
+  sourceUpdatedAt: null,
   deepLink: null,
   meetingLink: null,
   location: null,
@@ -54,6 +60,39 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
           startsAt: "2026-09-06T12:00:00.000Z",
           endsAt: "2026-09-06T13:00:00.000Z",
           meetingLink: "https://meet.example.com/planning",
+          sourceTimeZone: "America/Los_Angeles",
+          calendar: { nativeId: "primary", name: "Work" },
+          organizer: { name: "Grace Hopper", email: "grace@example.com" },
+          participants: [
+            {
+              name: "Ada Lovelace",
+              email: "ada@example.com",
+              responseStatus: "accepted",
+            },
+          ],
+          responseStatus: "tentative",
+          recurrence: { seriesId: "planning-series", rule: "FREQ=WEEKLY" },
+          cancelled: false,
+        },
+        {
+          ...baseItem,
+          kind: "calendar-event",
+          view: "calendar",
+          nativeId: "continuing-event",
+          title: "Continuing event",
+          startsAt: "2026-08-20T12:00:00.000Z",
+          endsAt: "2026-09-06T13:00:00.000Z",
+          allDay: false,
+        },
+        {
+          ...baseItem,
+          kind: "calendar-event",
+          view: "calendar",
+          nativeId: "all-day-event",
+          title: "Company holiday",
+          allDay: true,
+          startDate: "2026-08-20",
+          endDate: "2026-09-06",
         },
         {
           ...baseItem,
@@ -70,6 +109,12 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
           nativeId: "AXIS-42",
           title: "Assigned ticket",
           status: "In Progress",
+          assignee: "Ada Lovelace",
+          priority: "High",
+          dueDate: "2026-09-12T00:00:00.000Z",
+          labels: ["frontend", "urgent"],
+          project: "Axis",
+          sourceUpdatedAt: "2026-09-05T11:00:00.000Z",
           deepLink: "javascript:alert(1)",
         },
         {
@@ -103,14 +148,104 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
 
     expect(snapshot.items.map((item) => item.nativeId)).toEqual([
       "recent-event",
+      "continuing-event",
+      "all-day-event",
       "AXIS-42",
       "new-mention",
     ]);
     expect(snapshot.items[0]?.meetingLink).toBe("https://meet.example.com/planning");
+    expect(snapshot.items[0]).toMatchObject({
+      sourceTimeZone: "America/Los_Angeles",
+      calendar: { nativeId: "primary", name: "Work" },
+      organizer: { name: "Grace Hopper", email: "grace@example.com" },
+      participants: [
+        { name: "Ada Lovelace", email: "ada@example.com", responseStatus: "accepted" },
+      ],
+      responseStatus: "tentative",
+      recurrence: { seriesId: "planning-series", rule: "FREQ=WEEKLY" },
+      cancelled: false,
+    });
     expect(snapshot.items[1]?.deepLink).toBeNull();
+    expect(snapshot.items[3]).toMatchObject({
+      assignee: "Ada Lovelace",
+      priority: "High",
+      dueDate: "2026-09-12T00:00:00.000Z",
+      labels: ["frontend", "urgent"],
+      project: "Axis",
+      sourceUpdatedAt: "2026-09-05T11:00:00.000Z",
+    });
     expect(snapshot.cursor).toBe("next-page");
     expect(snapshot.refreshedAt).toBe("2026-09-05T12:00:00.000Z");
     expect(snapshot.expiresAt).toBe("2026-09-05T20:00:00.000Z");
+  });
+
+  it("keeps only non-empty calendar intervals that intersect the half-open window", () => {
+    const request = decodeInput({
+      sourceId: "personal_connector",
+      contextId: "personal",
+      provider: { environmentId: "env", instanceId: "codex" },
+      capabilityId: "connector",
+      mcpName: "Work tools",
+      collectionPolicy: {
+        calendarLookbackDays: 1,
+        calendarLookaheadDays: 1,
+        assignedWorkItemsOnly: false,
+        directMessages: false,
+        mentions: false,
+        assignedIssueComments: false,
+      },
+      cacheTtlSeconds: 28_800,
+      previousCursor: null,
+      previousRefreshedAt: null,
+    });
+    const result = decodeResult({
+      cursor: null,
+      items: [
+        {
+          ...baseItem,
+          kind: "calendar-event",
+          view: "calendar",
+          nativeId: "at-upper-bound",
+          title: "Outside",
+          startsAt: "2026-09-06T12:00:00.000Z",
+          endsAt: "2026-09-06T13:00:00.000Z",
+        },
+        {
+          ...baseItem,
+          kind: "calendar-event",
+          view: "calendar",
+          nativeId: "inverted",
+          title: "Invalid",
+          startsAt: "2026-09-05T13:00:00.000Z",
+          endsAt: "2026-09-05T12:00:00.000Z",
+        },
+        {
+          ...baseItem,
+          kind: "calendar-event",
+          view: "calendar",
+          nativeId: "malformed-all-day",
+          title: "Missing civil range",
+          allDay: true,
+        },
+        {
+          ...baseItem,
+          kind: "calendar-event",
+          view: "calendar",
+          nativeId: "all-day-no-time",
+          title: "Today",
+          allDay: true,
+          startDate: "2026-09-05",
+          endDate: "2026-09-06",
+        },
+      ],
+    });
+
+    expect(buildAxisWorkHubCacheSnapshot({ request, result, nowEpochMs: now }).items).toHaveLength(
+      1,
+    );
+    expect(
+      buildAxisWorkHubCacheSnapshot({ request, result, nowEpochMs: now }).items[0]?.nativeId,
+    ).toBe("all-day-no-time");
   });
 });
 
@@ -154,6 +289,11 @@ describe("buildCollectionPrompt", () => {
     expect(prompt).toContain("outlook_calendar_search");
     expect(prompt).toContain("slack_search_public_and_private");
     expect(prompt).toContain("after:2026-09-04");
+    expect(prompt).toContain("sourceUpdatedAt");
+    expect(prompt).toContain("assignee");
+    expect(prompt).toContain("sourceTimeZone");
+    expect(prompt).toContain("every participant");
+    expect(prompt).toContain("cancelled=true");
   });
 });
 

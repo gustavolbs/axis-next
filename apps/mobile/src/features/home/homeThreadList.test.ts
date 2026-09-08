@@ -486,7 +486,7 @@ describe("buildHomeThreadGroups", () => {
       projectGroupingMode: "separate",
     });
 
-    expect(groups.map((group) => group.representative.id)).toEqual([
+    expect(groups.map((group) => group.representative?.id)).toEqual([
       "project-newer",
       "project-older",
     ]);
@@ -520,7 +520,7 @@ describe("buildHomeThreadGroups", () => {
     const groups = buildGroups(projects, threads, { environmentId: remoteEnvironmentId });
 
     expect(groups).toHaveLength(1);
-    expect(groups[0]?.representative.environmentId).toBe(remoteEnvironmentId);
+    expect(groups[0]?.representative?.environmentId).toBe(remoteEnvironmentId);
     expect(groups[0]?.threads.map((thread) => thread.environmentId)).toEqual([remoteEnvironmentId]);
   });
 
@@ -743,4 +743,21 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.newThreadTarget?.environmentId).toBe(desktopEnv);
     expect(groups[0]?.newThreadTarget?.id).toBe(desktopProject.id);
   });
+});
+it("groups standalone conversations without a project record", () => {
+  const thread = makeThread({
+    environmentId: EnvironmentId.make("environment-standalone"),
+    id: ThreadId.make("thread-standalone"),
+    projectId: null,
+    title: "Standalone conversation",
+  });
+  const groups = buildGroups([], [thread]);
+  expect(groups).toHaveLength(1);
+  expect(groups[0]).toMatchObject({
+    title: "Chats",
+    representative: null,
+    projects: [],
+    newThreadTarget: null,
+  });
+  expect(groups[0]?.threads.map((entry) => entry.id)).toEqual([thread.id]);
 });

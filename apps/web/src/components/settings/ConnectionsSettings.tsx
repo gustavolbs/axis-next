@@ -106,6 +106,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Textarea } from "../ui/textarea";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import { buildMobilePairingDeepLink } from "@t3tools/shared/pairingDeepLink";
 import {
   createServerPairingCredential,
   revokeOtherServerClientSessions,
@@ -906,14 +907,37 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             </Button>
           </div>
           {canRenderQrForSelection ? (
-            <div className="w-fit shrink-0 self-center rounded-xl bg-white p-3 sm:self-start">
-              <QRCodeSvg
-                value={qrPairingUrl}
-                size={168}
-                level="M"
-                marginSize={1}
-                title="Pairing link — scan to open on another device"
-              />
+            <div className="flex shrink-0 flex-col items-stretch gap-3 self-center sm:self-start">
+              <div className="flex flex-col items-center gap-1.5">
+                <p className="text-[11px] font-medium text-foreground">
+                  Scan with the T3 mobile app
+                </p>
+                <div className="w-fit rounded-xl bg-white p-3">
+                  <QRCodeSvg
+                    value={buildMobilePairingDeepLink(qrPairingUrl)}
+                    size={168}
+                    level="M"
+                    marginSize={1}
+                    title="Pairing deep link — opens the T3 mobile app"
+                  />
+                </div>
+              </div>
+              {qrPairingUrl !== buildMobilePairingDeepLink(qrPairingUrl) ? (
+                <div className="flex flex-col items-center gap-1.5 border-t border-border/40 pt-3">
+                  <p className="text-[11px] text-muted-foreground">
+                    Don&apos;t have the app? Scan the web link
+                  </p>
+                  <div className="w-fit rounded-lg bg-white p-2">
+                    <QRCodeSvg
+                      value={qrPairingUrl}
+                      size={112}
+                      level="M"
+                      marginSize={1}
+                      title="Pairing link — opens in a browser"
+                    />
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="flex size-[192px] shrink-0 items-center justify-center self-center rounded-xl border border-border/50 p-4 sm:self-start">

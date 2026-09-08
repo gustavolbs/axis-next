@@ -12,9 +12,11 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkHubRouteImport } from './routes/work-hub'
 import { Route as UsageRouteImport } from './routes/usage'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ScratchRouteImport } from './routes/scratch'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
+import { Route as ScratchIndexRouteImport } from './routes/scratch.index'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
@@ -26,6 +28,7 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsAxisRouteImport } from './routes/settings.axis'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as ScratchChatIdRouteImport } from './routes/scratch.$chatId'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
@@ -47,6 +50,11 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ScratchRoute = ScratchRouteImport.update({
+  id: '/scratch',
+  path: '/scratch',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PairRoute = PairRouteImport.update({
   id: '/pair',
   path: '/pair',
@@ -60,6 +68,11 @@ const ConnectRoute = ConnectRouteImport.update({
 const ChatRoute = ChatRouteImport.update({
   id: '/_chat',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ScratchIndexRoute = ScratchIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ScratchRoute,
 } as any)
 const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
@@ -116,6 +129,11 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
+const ScratchChatIdRoute = ScratchChatIdRouteImport.update({
+  id: '/$chatId',
+  path: '/$chatId',
+  getParentRoute: () => ScratchRoute,
+} as any)
 const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   id: '/projects/$projectKey',
   path: '/projects/$projectKey',
@@ -147,12 +165,14 @@ export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
+  '/scratch': typeof ScratchRouteWithChildren
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/work-hub': typeof WorkHubRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/scratch/$chatId': typeof ScratchChatIdRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/axis': typeof SettingsAxisRoute
@@ -163,6 +183,7 @@ export interface FileRoutesByFullPath {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/scratch/': typeof ScratchIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -175,6 +196,7 @@ export interface FileRoutesByTo {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/scratch/$chatId': typeof ScratchChatIdRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/axis': typeof SettingsAxisRoute
@@ -186,6 +208,7 @@ export interface FileRoutesByTo {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/': typeof ChatIndexRoute
+  '/scratch': typeof ScratchIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -194,12 +217,14 @@ export interface FileRoutesById {
   '/_chat': typeof ChatRouteWithChildren
   '/connect': typeof ConnectRoute
   '/pair': typeof PairRoute
+  '/scratch': typeof ScratchRouteWithChildren
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/work-hub': typeof WorkHubRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/scratch/$chatId': typeof ScratchChatIdRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/axis': typeof SettingsAxisRoute
@@ -211,6 +236,7 @@ export interface FileRoutesById {
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/_chat/': typeof ChatIndexRoute
+  '/scratch/': typeof ScratchIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -220,12 +246,14 @@ export interface FileRouteTypes {
     | '/'
     | '/connect'
     | '/pair'
+    | '/scratch'
     | '/settings'
     | '/usage'
     | '/work-hub'
     | '/pull-requests'
     | '/connect/callback'
     | '/projects/$projectKey'
+    | '/scratch/$chatId'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/axis'
@@ -236,6 +264,7 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/scratch/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   fileRoutesByTo: FileRoutesByTo
@@ -248,6 +277,7 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/connect/callback'
     | '/projects/$projectKey'
+    | '/scratch/$chatId'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/axis'
@@ -259,6 +289,7 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/source-control'
     | '/'
+    | '/scratch'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   id:
@@ -266,12 +297,14 @@ export interface FileRouteTypes {
     | '/_chat'
     | '/connect'
     | '/pair'
+    | '/scratch'
     | '/settings'
     | '/usage'
     | '/work-hub'
     | '/_chat/pull-requests'
     | '/connect_/callback'
     | '/projects/$projectKey'
+    | '/scratch/$chatId'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/axis'
@@ -283,6 +316,7 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/source-control'
     | '/_chat/'
+    | '/scratch/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
   fileRoutesById: FileRoutesById
@@ -291,6 +325,7 @@ export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   ConnectRoute: typeof ConnectRoute
   PairRoute: typeof PairRoute
+  ScratchRoute: typeof ScratchRouteWithChildren
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
   WorkHubRoute: typeof WorkHubRoute
@@ -321,6 +356,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/scratch': {
+      id: '/scratch'
+      path: '/scratch'
+      fullPath: '/scratch'
+      preLoaderRoute: typeof ScratchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pair': {
       id: '/pair'
       path: '/pair'
@@ -341,6 +383,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/scratch/': {
+      id: '/scratch/'
+      path: '/'
+      fullPath: '/scratch/'
+      preLoaderRoute: typeof ScratchIndexRouteImport
+      parentRoute: typeof ScratchRoute
     }
     '/_chat/': {
       id: '/_chat/'
@@ -419,6 +468,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/scratch/$chatId': {
+      id: '/scratch/$chatId'
+      path: '/$chatId'
+      fullPath: '/scratch/$chatId'
+      preLoaderRoute: typeof ScratchChatIdRouteImport
+      parentRoute: typeof ScratchRoute
+    }
     '/projects/$projectKey': {
       id: '/projects/$projectKey'
       path: '/projects/$projectKey'
@@ -473,6 +529,19 @@ const ChatRouteChildren: ChatRouteChildren = {
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
+interface ScratchRouteChildren {
+  ScratchChatIdRoute: typeof ScratchChatIdRoute
+  ScratchIndexRoute: typeof ScratchIndexRoute
+}
+
+const ScratchRouteChildren: ScratchRouteChildren = {
+  ScratchChatIdRoute: ScratchChatIdRoute,
+  ScratchIndexRoute: ScratchIndexRoute,
+}
+
+const ScratchRouteWithChildren =
+  ScratchRoute._addFileChildren(ScratchRouteChildren)
+
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
@@ -507,6 +576,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   ConnectRoute: ConnectRoute,
   PairRoute: PairRoute,
+  ScratchRoute: ScratchRouteWithChildren,
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
   WorkHubRoute: WorkHubRoute,

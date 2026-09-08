@@ -146,7 +146,7 @@ const RECENT_THREAD_FALLBACK_COUNT = 3;
 export interface HomeThreadGroup {
   readonly key: string;
   readonly title: string;
-  readonly representative: EnvironmentProject;
+  readonly representative: EnvironmentProject | null;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   /** Full sorted thread history for the group (revealed when expanded / searching). */
@@ -215,6 +215,12 @@ export function buildHomeThreadGroups(input: {
 }): ReadonlyArray<HomeThreadGroup> {
   const now = input.now ?? Date.now();
   const groups = new Map<string, MutableHomeThreadGroup>();
+  groups.set("standalone-chats", {
+    key: "standalone-chats",
+    projects: [],
+    pendingTasks: [],
+    threads: [],
+  });
   const groupTitleByKey = new Map<string, string>();
   const groupKeyByProjectKey = new Map<string, string>();
 
@@ -281,6 +287,10 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
+    if (thread.projectId === null) {
+      groups.get("standalone-chats")?.threads.push(thread);
+      continue;
+    }
     const physicalKey = scopedProjectKey(thread.environmentId, thread.projectId);
     const groupKey = groupKeyByProjectKey.get(physicalKey);
     if (!groupKey) {
@@ -293,14 +303,16 @@ export function buildHomeThreadGroups(input: {
   const result: HomeThreadGroup[] = [];
 
   for (const group of groups.values()) {
-    const representative = group.projects[0];
-    if (!representative || (group.threads.length === 0 && group.pendingTasks.length === 0)) {
+    const representative = group.projects[0] ?? null;
+    if (group.threads.length === 0 && group.pendingTasks.length === 0) {
       continue;
     }
 
     const title =
       groupTitleByKey.get(group.key) ??
-      deriveProjectGroupLabel({ representative, members: group.projects });
+      (representative === null
+        ? "Chats"
+        : deriveProjectGroupLabel({ representative, members: group.projects }));
     const groupMatches =
       query.length === 0 ||
       title.toLocaleLowerCase().includes(query) ||

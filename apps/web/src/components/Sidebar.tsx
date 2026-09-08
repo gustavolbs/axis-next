@@ -198,6 +198,7 @@ import {
   useComboboxFilter,
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
+import { StandaloneChats } from "./sidebar/StandaloneChats";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -2078,7 +2079,7 @@ export default function Sidebar() {
   );
   const projectDisplayNameByKey = useMemo(
     () =>
-      new Map(
+      new Map<string, string>(
         projectGroups.flatMap((group) =>
           group.memberProjects.map(
             (project) => [`${project.environmentId}:${project.id}`, group.displayName] as const,
@@ -2243,6 +2244,7 @@ export default function Sidebar() {
     const preciseNow = new Date().toISOString();
     const visible = threads.filter(
       (thread) =>
+        thread.projectId !== null &&
         thread.archivedAt === null &&
         (scopedProjectKeys === null ||
           scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
@@ -2661,11 +2663,11 @@ export default function Sidebar() {
               (key) => !settledKeys.has(key) && !snoozedKeys.has(key) && !coParkingKeys?.has(key),
             ) ?? null);
       const nextThread = nextCardKey ? threadByKeyRef.current.get(nextCardKey) : null;
+      const shellProjectRef = shell ? scopeProjectRef(shell.environmentId, shell.projectId) : null;
       return nextThread
         ? () => navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id))
-        : shell
-          ? () =>
-              void handleNewThreadRef.current(scopeProjectRef(shell.environmentId, shell.projectId))
+        : shellProjectRef
+          ? () => void handleNewThreadRef.current(shellProjectRef)
           : () => void router.navigate({ to: "/" });
     },
     [navigateToThread, router],
@@ -3319,10 +3321,12 @@ export default function Sidebar() {
             return;
           }
           case "new-thread-on-branch": {
+            const projectRef = scopeProjectRef(thread.environmentId, thread.projectId);
+            if (projectRef === null) return;
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
             const result = await settlePromise(() =>
-              handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId), {
+              handleNewThreadRef.current(projectRef, {
                 branch: thread.branch,
                 worktreePath: thread.worktreePath,
                 envMode: thread.worktreePath ? "worktree" : "local",
@@ -3847,6 +3851,7 @@ export default function Sidebar() {
         }
       >
         <SidebarGroup className="ps-[calc(var(--sidebar-content-inset)+1px)] pe-[var(--sidebar-content-inset)] pb-1 pt-0">
+          {!isSearchingThreads && <StandaloneChats />}
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
               <TooltipProvider

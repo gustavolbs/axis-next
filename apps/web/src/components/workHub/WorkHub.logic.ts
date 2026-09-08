@@ -36,6 +36,7 @@ export function resolveWorkHubBoardColumn(status: string | null): WorkHubBoardCo
 
 export function isWorkHubOverviewItem(item: AxisWorkHubCachedItem, now: Date): boolean {
   if (item.view === "board") return resolveWorkHubBoardColumn(item.status) !== "Done";
+  if (item.kind === "calendar-event") return buildWorkHubCalendarDaySegment(item, now) !== null;
   const timestamp = item.startsAt ?? item.occurredAt;
   return timestamp !== null && new Date(timestamp).toDateString() === now.toDateString();
 }
@@ -65,6 +66,123 @@ export interface WorkHubCalendarInterval<T> {
 export interface WorkHubCalendarLayout<T> extends WorkHubCalendarInterval<T> {
   readonly column: number;
   readonly columnCount: number;
+}
+
+export interface WorkHubCalendarDaySegment {
+  readonly startMinute: number;
+  readonly endMinute: number;
+  readonly allDay: boolean;
+}
+
+export interface WorkHubCalendarTimeLabels {
+  readonly viewer: string | null;
+  readonly source: string | null;
+}
+
+function formatCalendarTimeRange(
+  startsAt: Date,
+  endsAt: Date | null,
+  timeZone: string,
+  locale?: string,
+): string | null {
+  try {
+    const formatter = new Intl.DateTimeFormat(locale, {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone,
+    });
+    const start = formatter.format(startsAt);
+    return endsAt ? `${start}–${formatter.format(endsAt)}` : start;
+  } catch {
+    return null;
+  }
+}
+
+/** Formats the same instant in the viewer zone and, when different, its source zone. */
+export function buildWorkHubCalendarTimeLabels(
+  item: AxisWorkHubCachedItem,
+  viewerTimeZone: string,
+  locale?: string,
+): WorkHubCalendarTimeLabels {
+  if (item.allDay || item.startsAt === null) return { viewer: null, source: null };
+  const startsAt = new Date(item.startsAt);
+  const endsAt = item.endsAt === null ? null : new Date(item.endsAt);
+  if (Number.isNaN(startsAt.getTime()) || (endsAt !== null && Number.isNaN(endsAt.getTime()))) {
+    return { viewer: null, source: null };
+  }
+  const viewer = formatCalendarTimeRange(startsAt, endsAt, viewerTimeZone, locale);
+  const sourceTimeZone = item.sourceTimeZone;
+  const source =
+    sourceTimeZone !== null && sourceTimeZone !== viewerTimeZone
+      ? formatCalendarTimeRange(startsAt, endsAt, sourceTimeZone, locale)
+      : null;
+  return { viewer, source };
+}
+
+function calendarDateKey(date: Date): string {
+  return `${date.getFullYear().toString().padStart(4, "0")}-${(date.getMonth() + 1)
+    .toString()
+    .padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`;
+}
+
+function nextCalendarDateKey(dateKey: string): string {
+  const [yearPart, monthPart, dayPart] = dateKey.split("-");
+  const year = Number(yearPart);
+  const month = Number(monthPart);
+  const day = Number(dayPart);
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return `${next.getUTCFullYear().toString().padStart(4, "0")}-${(next.getUTCMonth() + 1)
+    .toString()
+    .padStart(2, "0")}-${next.getUTCDate().toString().padStart(2, "0")}`;
+}
+
+function localWallMinute(date: Date): number {
+  return (
+    date.getHours() * 60 +
+    date.getMinutes() +
+    date.getSeconds() / 60 +
+    date.getMilliseconds() / 60_000
+  );
+}
+
+/** Clips an event to one viewer-local calendar day, including cross-midnight events. */
+export function buildWorkHubCalendarDaySegment(
+  item: AxisWorkHubCachedItem,
+  day: Date,
+): WorkHubCalendarDaySegment | null {
+  const dayStart = new Date(day);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+  if (item.allDay) {
+    const startDate = item.startDate;
+    if (startDate === null) return null;
+    const endDate = item.endDate ?? nextCalendarDateKey(startDate);
+    if (endDate <= startDate) return null;
+    const dayKey = calendarDateKey(dayStart);
+    if (dayKey < startDate || dayKey >= endDate) return null;
+    return { startMinute: 0, endMinute: 24 * 60, allDay: true };
+  }
+  if (item.startsAt === null) return null;
+  const startsAt = new Date(item.startsAt);
+  if (Number.isNaN(startsAt.getTime())) return null;
+  const parsedEnd = item.endsAt === null ? null : new Date(item.endsAt);
+  if (parsedEnd !== null && Number.isNaN(parsedEnd.getTime())) return null;
+  const end = parsedEnd !== null ? parsedEnd : new Date(startsAt.getTime() + 60 * 60_000);
+  const effectiveEnd = end.getTime() > startsAt.getTime() ? end : null;
+  if (effectiveEnd === null) return null;
+  if (startsAt >= dayEnd || effectiveEnd <= dayStart) return null;
+  const visibleStart = Math.max(startsAt.getTime(), dayStart.getTime());
+  const visibleEnd = Math.min(effectiveEnd.getTime(), dayEnd.getTime());
+  const startMinute =
+    visibleStart <= dayStart.getTime() ? 0 : localWallMinute(new Date(visibleStart));
+  const endMinute =
+    visibleEnd >= dayEnd.getTime() ? 24 * 60 : localWallMinute(new Date(visibleEnd));
+  return {
+    startMinute: Math.max(0, Math.min(24 * 60, startMinute)),
+    endMinute: Math.max(0, Math.min(24 * 60, endMinute)),
+    allDay: false,
+  };
 }
 
 interface ActiveCalendarColumn {

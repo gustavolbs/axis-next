@@ -14,7 +14,7 @@ type ComposerModelSelectionState = Pick<
 
 interface ThreadContextLike {
   environmentId: EnvironmentId;
-  projectId: ProjectId;
+  projectId: ProjectId | null;
 }
 
 interface NewThreadHandler {

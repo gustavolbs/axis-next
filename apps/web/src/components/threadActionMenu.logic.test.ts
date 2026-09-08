@@ -27,6 +27,14 @@ function allIds(state: ThreadActionMenuState): string[] {
 }
 
 describe("buildThreadActionMenuItems", () => {
+  it("keeps conversation actions without offering project actions for standalone chats", () => {
+    const items = allIds({ ...baseState, hasProject: false });
+    expect(items).not.toContain("project-settings");
+    expect(items).not.toContain("copy-path");
+    expect(items).toContain("rename");
+    expect(items).toContain("archive");
+    expect(items).toContain("copy-thread-id");
+  });
   it("hides lifecycle items when the environment lacks the capabilities", () => {
     expect(
       ids({

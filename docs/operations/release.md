@@ -2,6 +2,9 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
+For this Axis fork, follow [Axis releases](../axis/RELEASE.md). The workflow below is retained for
+upstream reference and its publisher only runs in `pingdotgg/t3code`.
+
 This document covers the unified release workflow for stable and nightly desktop releases.
 
 ## What the workflow does

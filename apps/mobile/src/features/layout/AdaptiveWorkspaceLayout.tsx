@@ -48,6 +48,7 @@ import {
 import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
+import { useNewStandaloneThread } from "../threads/use-new-standalone-thread";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
 
@@ -439,6 +440,7 @@ function AdaptiveWorkspaceLayoutContent(
   const handleStartNewTask = useCallback(() => {
     navigation.navigate("NewTaskSheet", { screen: "NewTask" });
   }, [navigation]);
+  const createStandaloneThread = useNewStandaloneThread();
 
   // Minted here (root stack navigation) so the sidebar pane stays free of
   // navigation hooks — on iOS it renders inside an independent nav tree.
@@ -461,6 +463,18 @@ function AdaptiveWorkspaceLayoutContent(
       });
     },
     [navigation],
+  );
+  const handleNewStandaloneThread = useCallback(
+    (environmentId: EnvironmentId | null) => {
+      void createStandaloneThread(environmentId).then((thread) => {
+        if (!thread) return;
+        navigation.navigate("Thread", {
+          environmentId: String(thread.environmentId),
+          threadId: String(thread.threadId),
+        });
+      });
+    },
+    [createStandaloneThread, navigation],
   );
 
   const renderedSidebarWidth = useSharedValue(
@@ -543,6 +557,7 @@ function AdaptiveWorkspaceLayoutContent(
                     onOpenSettings={handleOpenSettings}
                     onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
                     onNewThreadInProject={handleNewThreadInProject}
+                    onNewStandaloneThread={handleNewStandaloneThread}
                     onSelectThread={handleSelectThread}
                     onSearchQueryChange={setPrimarySidebarSearchQuery}
                     searchQuery={primarySidebarSearchQuery}

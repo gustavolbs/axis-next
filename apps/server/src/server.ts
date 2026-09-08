@@ -16,6 +16,9 @@ import * as AxisWorkHubSourceSync from "./axis/workHub/AxisWorkHubSourceSync.ts"
 import * as AxisScheduledActivityStore from "./axis/scheduled/AxisScheduledActivityStore.ts";
 import * as AxisScheduledActivityRunner from "./axis/scheduled/AxisScheduledActivityRunner.ts";
 import * as AxisLearningStore from "./axis/learning/AxisLearningStore.ts";
+import * as AxisScratchChatRunner from "./axis/scratch/AxisScratchChatRunner.ts";
+import * as AxisScratchChatMessageLog from "./axis/scratch/AxisScratchChatMessageLog.ts";
+import * as AxisScratchChatStore from "./axis/scratch/AxisScratchChatStore.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import {
@@ -438,6 +441,18 @@ const AxisScheduledActivitySchedulerLayerLive = AxisScheduledActivityRunner.sche
   Layer.provide(AxisScheduledActivityRunnerLayerLive),
 );
 
+const AxisScratchChatStoreLayerLive = AxisScratchChatStore.layer.pipe(
+  Layer.provide(SqlitePersistenceLayerLive),
+);
+const AxisScratchChatMessageLogLayerLive = AxisScratchChatMessageLog.layer.pipe(
+  Layer.provide(PlatformServicesLive),
+  Layer.provide(ServerEnvironmentLayerLive),
+);
+const AxisScratchChatRunnerLayerLive = AxisScratchChatRunner.layer.pipe(
+  Layer.provide(AxisScratchChatStoreLayerLive),
+  Layer.provide(AxisScratchChatMessageLogLayerLive),
+);
+
 const AuthLayerLive = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provide(ServerEnvironmentLayerLive),
@@ -507,7 +522,14 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(AxisScheduledActivityStoreLayerLive),
   Layer.provideMerge(AxisScheduledActivityRunnerLayerLive),
   Layer.provideMerge(AxisScheduledActivitySchedulerLayerLive),
-  Layer.provideMerge(AxisLearningStoreLayerLive),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      AxisLearningStoreLayerLive,
+      AxisScratchChatStoreLayerLive,
+      AxisScratchChatMessageLogLayerLive,
+      AxisScratchChatRunnerLayerLive,
+    ),
+  ),
   // Both read a user-owned file out of the state directory and stream changes
   // to clients; neither depends on the other.
   Layer.provideMerge(

@@ -9,41 +9,54 @@ name: Release Axis (macOS)
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version (for example 1.2.3 or v1.2.3)"
-        required: true
-        type: string
 
 concurrency:
   group: axis-macos-release
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  quality:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   preflight:
     name: Preflight
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
       - id: meta
-        name: Resolve release version
+        name: Validate release metadata and require an unreleased version
         env:
-          DISPATCH_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          raw="${DISPATCH_VERSION:-$GITHUB_REF_NAME}"
-          version="${raw#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Invalid release version: $raw"
+          node scripts/release-metadata.mjs validate
+          version="$(node scripts/release-metadata.mjs version)"
+          if git show-ref --verify --quiet "refs/tags/v$version"; then
+            echo "::error::Tag v$version already exists. Bump package.json and CHANGELOG.md."
+            exit 1
+          fi
+          # Fetching the list must succeed, including when there are no releases.
+          releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name')"
+          if grep -Fxq "v$version" <<< "$releases"; then
+            echo "::error::Release v$version already exists."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -51,7 +64,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.arch }}
-    needs: [preflight]
+    needs: [preflight, quality]
     runs-on: macos-latest
     timeout-minutes: 90
     strategy:
@@ -97,8 +110,8 @@ jobs:
       - name: Verify the Axis icons match their source mark
         run: vp run icons:check:axis
 
-      - name: Align package versions to release version
-        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+      - name: Validate package versions
+        run: node scripts/release-metadata.mjs validate
 
       # Squirrel.Mac validates an update against the designated requirement of
       # the running app, so releases must carry a stable certificate-pinned
@@ -257,18 +270,27 @@ jobs:
           done
           test -f release-assets/latest-mac.yml || { echo "::error::No latest-mac.yml to publish; the updater would find nothing."; exit 1; }
 
+      - name: Prepare release notes and checksums
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/release-metadata.mjs notes > "$RUNNER_TEMP/axis-release-notes.md"
+          cd release-assets
+          for arch in arm64 x64; do
+            test -s "Axis-$VERSION-$arch.dmg"
+            test -s "Axis-$VERSION-$arch.zip"
+          done
+          sha256sum *.dmg *.zip *.blockmap *.yml > SHA256SUMS.txt
+
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.preflight.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          name: Axis ${{ needs.preflight.outputs.tag }}
-          generate_release_notes: true
-          make_latest: true
-          files: |
-            release-assets/*.dmg
-            release-assets/*.zip
-            release-assets/*.blockmap
-            release-assets/*.yml
-          fail_on_unmatched_files: true
-          token: ${{ github.token }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --target "$GITHUB_SHA" \
+            --title "Axis $RELEASE_TAG" \
+            --notes-file "$RUNNER_TEMP/axis-release-notes.md" \
+            --latest

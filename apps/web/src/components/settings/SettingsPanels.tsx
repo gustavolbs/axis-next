@@ -2907,11 +2907,11 @@ export function GeneralSettingsPanel() {
 }
 
 export function ArchivedThreadsPanel() {
-  const projects = useProjects();
+  const { environments } = useEnvironments();
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const environmentIds = useMemo(
-    () => [...new Set(projects.map((project) => project.environmentId))],
-    [projects],
+    () => environments.map((environment) => environment.environmentId),
+    [environments],
   );
   const {
     snapshots: archivedSnapshots,
@@ -2946,7 +2946,17 @@ export function ArchivedThreadsPanel() {
       })),
     );
 
-    const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
+    const archivedProjects = [
+      ...Array.from(projectsByEnvironmentAndId.values()),
+      ...archivedSnapshots.map(({ environmentId }) => ({
+        id: null,
+        environmentId,
+        name: "Chats",
+        cwd: "",
+        faviconPath: null,
+        projectIcon: null,
+      })),
+    ];
     const groups: Array<{
       readonly project: (typeof archivedProjects)[number];
       readonly threads: Array<(typeof threads)[number]>;
@@ -3052,17 +3062,21 @@ export function ArchivedThreadsPanel() {
       ) : (
         archivedGroups.map(({ project, threads: projectThreads }, index) => (
           <SettingsSection
-            key={project.id}
+            key={`${project.environmentId}:${project.id}`}
             id={index === 0 ? searchableSetting("archive").id : undefined}
             title={project.name}
             icon={
-              <ProjectFavicon
-                environmentId={project.environmentId}
-                cwd={project.cwd}
-                projectName={project.name}
-                faviconPath={project.faviconPath}
-                projectIcon={project.projectIcon}
-              />
+              project.id === null ? (
+                <MessageSquareIcon />
+              ) : (
+                <ProjectFavicon
+                  environmentId={project.environmentId}
+                  cwd={project.cwd}
+                  projectName={project.name}
+                  faviconPath={project.faviconPath}
+                  projectIcon={project.projectIcon}
+                />
+              )
             }
           >
             {projectThreads.map((thread) => (
@@ -3142,3 +3156,5 @@ export function ArchivedThreadsPanel() {
     </SettingsPageContainer>
   );
 }
+import { useEnvironments } from "../../state/environments";
+import { MessageSquareIcon } from "lucide-react";

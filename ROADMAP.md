@@ -130,7 +130,7 @@ context-isolation rules as API-key providers.
       snapshots transactionally after context/source/capability removal.
 - [ ] Aggregate sources across multiple environments; preserve cached data and report partial
       offline status when one environment is unavailable.
-- [ ] Show per-source fresh/stale/error/authorization status and last confirmed success.
+- [x] Show per-source fresh/stale/error/authorization status and last confirmed success.
 - [ ] Add retention limits and cleanup for old cache items, cursors, and sync diagnostics.
 
 ## Connector acquisition and relevance
@@ -166,11 +166,11 @@ context-isolation rules as API-key providers.
 - [x] Color events by Personal/Company context and show a context legend.
 - [x] Provide meeting **Join** actions and event-detail tooltips.
 - [x] Lay out overlapping events in deterministic side-by-side columns.
-- [ ] Model and render all-day and multi-day events.
-- [ ] Preserve source timezone and clearly convert it to the viewer timezone.
-- [ ] Add participants, calendar identity, organizer, response status, recurrence, and cancellation to
+- [x] Model and render all-day and multi-day events.
+- [x] Preserve source timezone and clearly convert it to the viewer timezone.
+- [x] Add participants, calendar identity, organizer, response status, recurrence, and cancellation to
       the normalized contract.
-- [ ] Add integrated component tests for event positioning, overlaps, week boundaries, DST, join
+- [x] Add integrated component tests for event positioning, overlaps, week boundaries, DST, join
       links, tooltips, and context colors.
 - [ ] Add source-confirmed accept/decline/tentative actions.
 
@@ -180,7 +180,7 @@ context-isolation rules as API-key providers.
 - [x] Keep unknown statuses visible in an Unmapped lane instead of silently treating them as To do.
 - [x] Preserve context color, source status, summary, and deep link.
 - [ ] Add explicit per-connector status mappings with a mapping-management UI.
-- [ ] Extend normalized cards with assignee, priority, due date, labels, project, and update time.
+- [x] Extend normalized cards with assignee, priority, due date, labels, project, and update time.
 - [ ] Move cards through source-confirmed Jira/work-management mutations with approval and
       idempotency.
 - [ ] Add board filtering, ordering, search, pagination/virtualization, and mobile presentation.
@@ -337,7 +337,7 @@ and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
 - [x] Complete source-level single-flight/monotonic cache writes and test races without sleeps.
 - [x] Ship the desktop app as Axis (name, bundle identity, icons) at packaging time only, and publish
       signed macOS releases that the in-app updater can consume.
-- [ ] Make catalog updates and dependent cache/schedule cleanup transactional or reconciled.
+- [x] Make catalog updates and dependent cache/schedule cleanup transactional or reconciled.
 - [ ] Add scheduler retention for old run history and bounded diagnostics.
 - [ ] Add metrics/logging for connector duration, cache hit/skip, failures, scheduled drift, dispatch,
       and learning lifecycle without logging secrets or Company data.

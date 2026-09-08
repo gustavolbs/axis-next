@@ -6,6 +6,13 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
+## Chats without a project
+
+Start a new chat from Chats in the sidebar when your conversation does not need a
+project. It uses the same messages, attachments, provider controls, and approvals
+as a project conversation. Chats have no project workspace or Git checkpoints.
+Archived chats can be restored from Settings > Archived threads.
+
 ## Attach files
 
 Attach up to eight files per message. Images can be up to 10 MB; other files can
