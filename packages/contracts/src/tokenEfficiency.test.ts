@@ -151,6 +151,16 @@ describe("token efficiency baselines and statistics", () => {
       latencyMs: 0,
       retries: 0,
       billedCostUsd: null,
+      availability: {
+        inputTokens: false,
+        cachedInputTokens: false,
+        outputTokens: false,
+        reasoningTokens: false,
+        toolResultTokens: false,
+        latencyMs: false,
+        retries: false,
+        billedCostUsd: false,
+      },
     });
     expect(decodeCounters({})).toEqual({
       attempts: 0,
@@ -178,6 +188,16 @@ describe("token efficiency baselines and statistics", () => {
       latencyMs: 12_500,
       retries: 2,
       billedCostUsd: 0.37,
+      availability: {
+        inputTokens: true,
+        cachedInputTokens: true,
+        outputTokens: true,
+        reasoningTokens: true,
+        toolResultTokens: true,
+        latencyMs: true,
+        retries: true,
+        billedCostUsd: true,
+      },
     };
     const baseline = decodeBaseline({ scope, sampleCount: 4, metrics });
     const aggregate = decodeAggregate({

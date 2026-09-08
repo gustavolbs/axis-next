@@ -285,43 +285,47 @@ and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
       learning lifecycle.
 - [x] Record the adoption rule: no compressor ships enabled by default until an Axis/T3 A/B proves
       lower provider-billed tokens with equivalent task quality and acceptable latency.
-- [~] Establish per-provider/instance/model baselines for input, cached input, output, reasoning,
-  tool-result, latency, retries, and billed cost where the provider exposes them. The server
-  keeps aggregate baselines per provider instance/model/context and records currently exposed
-  usage fields; explicit availability for unsupported tool-result/retry fields remains.
-- [~] Add an optional provider-owned **Concise output** profile with explicit verbosity limits;
-  preserve normal human-facing language instead of forcing “caveman speak” into every reply.
-  The profile is wired to all six adapters; Claude's SDK binds its system prompt when a session
-  starts, so a setting change requires a new Claude session to take effect.
+- [x] Establish per-provider/instance/model baselines for input, cached input, output, reasoning,
+      tool-result, latency, retries, and billed cost where the provider exposes them. The server
+      keeps aggregate baselines per provider instance/model/context and reports per-field availability
+      so an observed zero cannot be mistaken for an unsupported provider field.
+- [x] Add an optional provider-owned **Concise output** profile with explicit verbosity limits;
+      preserve normal human-facing language instead of forcing “caveman speak” into every reply.
+      The profile is wired to all six adapters; Claude's SDK binds its system prompt when a session
+      starts, so a setting change requires a new Claude session to take effect.
 - [x] Define a replaceable `TokenEfficiencyEngine` boundary with `off`, `record`, and `compress`
       modes so Caveman Engine, LLMLingua-2, or deterministic compactors can be evaluated without
       changing orchestration.
 - [~] Start with deterministic compaction of repeated logs, terminal output, search results,
   accessibility trees, and MCP/tool payloads before applying lossy natural-language
-  compression. The compactor and its payload kinds ship; `preview_evaluate`, textual
-  `preview_snapshot` fields, and the optional ACP `terminal/output` hook feed it. Native
-  provider search and structured accessibility-tree payloads still need adapters.
+  compression. The compactor and its payload kinds ship; `preview_evaluate`, textual and
+  structured `preview_snapshot` fields, and the optional ACP `terminal/output` hook feed it.
+  Native provider search still needs adapter-specific coverage.
 - [x] Store the original payload locally before any lossy transform and expose a context-scoped,
       expiring recovery handle; pass the original through if storage, parsing, compression, or token
       estimation fails.
 - [x] Never compress code, diffs, commands, paths, URLs, identifiers, numbers, JSON/schema fields,
       errors, approvals, security policy, secrets, or the user's current request unless a
       format-aware lossless transform proves byte-safe.
-- [ ] Preserve stable prompt prefixes and provider-native prompt caching; do not trade cache hits for
-      a smaller but constantly changing prefix.
-- [ ] Integrate Caveman Engine first in `record` mode behind an optional adapter, after dependency,
-      license, privacy, remote-environment, and recovery-store review.
-- [ ] Keep Caveman externally installable rather than bundled unless its BSL 1.1 terms are confirmed
-      compatible with T3's open-core distribution; disable third-party telemetry by default.
-- [ ] Benchmark Caveman Engine against no compression, deterministic shape-aware compaction, and
-      LLMLingua-2 on representative Codex, Claude, Work Hub, remote-dispatch, and scheduled-agent
-      tasks in English and Portuguese.
+- [x] Preserve stable prompt prefixes and provider-native prompt caching; do not trade cache hits for
+      a smaller but constantly changing prefix. Runtime metadata and concise-output instructions
+      are appended after the stable provider prefix.
+- [x] Integrate Caveman Engine first in `record` mode behind an optional external adapter, after
+      dependency, license, privacy, remote-environment, and recovery-store review.
+- [x] Keep Caveman externally installable rather than bundled unless its BSL 1.1 terms are confirmed
+      compatible with T3's open-core distribution; disable third-party telemetry by default. The
+      adapter invokes an explicitly configured executable, ignores stderr, and remains record-only.
+- [~] Benchmark Caveman Engine against no compression, deterministic shape-aware compaction, and
+  LLMLingua-2 on representative Codex, Claude, Work Hub, remote-dispatch, and scheduled-agent
+  tasks in English and Portuguese. The offline harness and bilingual fixtures ship; runs with
+  the externally installed engines and reviewed task-quality scores remain.
 - [~] Gate rollout per provider instance and Axis context with a kill switch, visible savings/
   accuracy/latency statistics, and automatic pass-through when compression is net-negative.
   Per-instance gating, the `off` kill switch, net-negative pass-through, aggregate savings/latency
   metrics, and the Settings diagnostics surface ship; task-quality accuracy evaluation remains.
-- [ ] Feed only aggregate, non-sensitive efficiency outcomes into Hermes; Hermes may propose a
-      compression policy change but cannot activate it.
+- [~] Feed only aggregate, non-sensitive efficiency outcomes into Hermes; Hermes may propose a
+  compression policy change but cannot activate it. An aggregate-only contract and context-
+  scoped evidence bridge ship; the concrete Hermes engine feed and proposal evaluator remain.
 
 ## Multi-surface and remote environments
 

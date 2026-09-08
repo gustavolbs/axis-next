@@ -7,7 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildRuntimeInstructions, resolveConciseOutputProfile } from "./RuntimeInstructions.ts";
+import {
+  buildRuntimeInstructions,
+  buildStableRuntimePromptPrefix,
+  resolveConciseOutputProfile,
+} from "./RuntimeInstructions.ts";
 
 const enabledProfile: TokenEfficiencyConciseOutputProfile = {
   enabled: true,
@@ -34,7 +38,21 @@ describe("buildRuntimeInstructions", () => {
         model: "  custom\nmodel  ",
         reasoningEffort: " high\n",
       }),
-    ).toContain("through the Codex harness, as custom model with high reasoning effort.");
+    ).toContain("Current turn settings, as custom model with high reasoning effort.");
+  });
+
+  it("keeps the provider-cache prefix independent from turn settings", () => {
+    const prefix = buildStableRuntimePromptPrefix("Codex");
+    expect(
+      buildRuntimeInstructions({
+        harness: "Codex",
+        model: "custom-model",
+        reasoningEffort: "high",
+        conciseOutputProfile: enabledProfile,
+      }),
+    ).toContain(prefix);
+    expect(buildStableRuntimePromptPrefix("Codex")).toBe(prefix);
+    expect(buildStableRuntimePromptPrefix("Codex")).not.toContain("custom-model");
   });
 
   it.each([undefined, "", "auto", "default"])("omits unresolved model %s", (model) => {

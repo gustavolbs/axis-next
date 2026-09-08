@@ -80,6 +80,16 @@ describe("TokenEfficiencyMetrics", () => {
         latencyMs: 1500,
         retries: 3,
         billedCostUsd: 0.35,
+        availability: {
+          inputTokens: true,
+          cachedInputTokens: true,
+          outputTokens: true,
+          reasoningTokens: true,
+          toolResultTokens: true,
+          latencyMs: true,
+          retries: true,
+          billedCostUsd: true,
+        },
       });
     }),
   );
@@ -120,6 +130,25 @@ describe("TokenEfficiencyMetrics", () => {
         failures: 1,
       });
       expect(aggregate.savings).toEqual({ estimatedTokensBefore: 100, estimatedTokensAfter: 40 });
+    }),
+  );
+
+  it.effect("keeps unsupported fields distinguishable from observed zeroes", () =>
+    Effect.gen(function* () {
+      const metrics = make();
+      yield* metrics.recordTurn(turn({ usage: { inputTokens: 0, outputTokens: 0 }, latencyMs: 0 }));
+      const aggregate = (yield* metrics.getSnapshot).aggregates[0];
+      if (!aggregate) throw new Error("expected aggregate");
+      expect(aggregate.metrics.availability).toEqual({
+        inputTokens: true,
+        cachedInputTokens: false,
+        outputTokens: true,
+        reasoningTokens: false,
+        toolResultTokens: false,
+        latencyMs: true,
+        retries: false,
+        billedCostUsd: false,
+      });
     }),
   );
 

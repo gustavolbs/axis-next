@@ -10,8 +10,9 @@ The roadmap requires benchmarking several compressors — a deterministic
 compactor, Caveman Engine, LLMLingua-2 — against no compression at all. If
 each engine wired itself into orchestration, that comparison would be a
 refactor per candidate and the results would not be comparable. So engines are
-pure `string -> string` transforms behind one registry, and switching or
-disabling one is a settings change.
+pure transforms behind one registry, and switching or disabling one is a
+settings change. External engines may return a promise, but the registry still
+owns the same safety invariants.
 
 The registry, not the engine, enforces the three properties that make a
 compressor safe to run in production. Engines are third-party or experimental
@@ -84,15 +85,24 @@ created, so changing the profile while a Claude session is active takes effect
 on the next session; the other adapters read the profile at turn dispatch.
 
 Provider turn completion events feed aggregate, in-memory baselines and
-rollout metrics per provider instance/model/context. The first call sites are
-`preview_evaluate` and textual `preview_snapshot` fields: MCP results may be
-compacted when the instance is explicitly opted in, and each original is
+rollout metrics per provider instance/model/context. Each metric carries
+availability metadata, so an observed zero is distinct from a provider field
+that was not exposed. The first call sites are `preview_evaluate` and
+`preview_snapshot`: textual fields and structured accessibility-tree leaves may
+be compacted when the instance is explicitly opted in, and each original is
 recoverable with a context-scoped, expiring handle. ACP runtimes also expose an
-optional fail-open `terminal/output` transform hook for provider adapters;
-current adapters do not advertise ACP terminal capabilities yet. Native
-provider search and structured accessibility-tree payloads still need
-adapter-specific call sites. Caveman/LLMLingua evaluation,
-provider-native prompt caching, task-quality benchmarks, and Hermes promotion
+optional fail-open `terminal/output` transform hook for provider adapters.
+
+An externally installed Caveman executable can be configured with
+`T3_CAVEMAN_ENGINE_COMMAND`; it is record-only, never bundled, and its stderr
+is not forwarded. `TokenEfficiencyBenchmark` provides bilingual fixtures for
+Codex, Claude, Work Hub, remote-dispatch, and scheduled-agent comparisons, but
+does not claim task-quality equivalence without a caller-supplied evaluator.
+Runtime instructions keep a stable provider prompt prefix and append changing
+model/effort/profile metadata afterward. The Hermes bridge accepts only
+context-scoped aggregate observations and emits evidence; it cannot activate a
+compression policy. Native provider search adapters, real Caveman/LLMLingua
+benchmark runs, reviewed task-quality scores, and Hermes proposal evaluation
 remain future roadmap work.
 
 Source: `apps/server/src/tokenEfficiency/`, contracts in

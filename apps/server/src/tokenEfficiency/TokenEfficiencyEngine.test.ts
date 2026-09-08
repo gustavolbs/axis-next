@@ -62,6 +62,35 @@ describe("modes", () => {
       ),
   );
 
+  it.effect("awaits an optional external transform while preserving record mode", () =>
+    makeTokenEfficiencyEngine({
+      transforms: new Map([[DETERMINISTIC_ENGINE_ID, async () => "tiny external summary"]]),
+    })
+      .compact(request({ mode: "record" }))
+      .pipe(
+        Effect.map((outcome) => {
+          expect(outcome.text).toBe(REPEATED);
+          expect(outcome.skippedReason).toBe("record-mode");
+          expect(outcome.estimatedTokensAfter).toBeLessThan(outcome.estimatedTokensBefore);
+        }),
+      ),
+  );
+
+  it.effect("does not allow a record-only external engine to mutate payloads", () =>
+    makeTokenEfficiencyEngine({
+      transforms: new Map([[DETERMINISTIC_ENGINE_ID, () => "tiny external summary"]]),
+      recordOnlyEngines: new Set([DETERMINISTIC_ENGINE_ID]),
+    })
+      .compact(request())
+      .pipe(
+        Effect.map((outcome) => {
+          expect(outcome.text).toBe(REPEATED);
+          expect(outcome.applied).toBe(false);
+          expect(outcome.skippedReason).toBe(`record-only-engine:${DETERMINISTIC_ENGINE_ID}`);
+        }),
+      ),
+  );
+
   it.effect("transforms and reports a saving in compress mode", () =>
     makeTokenEfficiencyEngine()
       .compact(request())

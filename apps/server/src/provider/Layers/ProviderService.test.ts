@@ -4105,6 +4105,16 @@ tokenEfficiencyProvider.layer("ProviderServiceLive token efficiency", (it) => {
         latencyMs: 40,
         retries: 0,
         billedCostUsd: 1.25,
+        availability: {
+          inputTokens: true,
+          cachedInputTokens: true,
+          outputTokens: true,
+          reasoningTokens: true,
+          toolResultTokens: false,
+          latencyMs: true,
+          retries: false,
+          billedCostUsd: true,
+        },
       });
     }),
   );

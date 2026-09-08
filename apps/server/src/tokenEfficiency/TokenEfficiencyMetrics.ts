@@ -16,6 +16,7 @@ import {
   type TokenEfficiencyBaseline,
   type TokenEfficiencyCounters,
   type TokenEfficiencyMetrics as TokenEfficiencyMetricValues,
+  type TokenEfficiencyMetricAvailability,
   type TokenEfficiencyMode,
   type TokenEfficiencyOutcome,
   type TokenEfficiencyPayloadKind,
@@ -78,6 +79,16 @@ const emptyMetrics = (): TokenEfficiencyMetricValues => ({
   latencyMs: 0,
   retries: 0,
   billedCostUsd: null,
+  availability: {
+    inputTokens: false,
+    cachedInputTokens: false,
+    outputTokens: false,
+    reasoningTokens: false,
+    toolResultTokens: false,
+    latencyMs: false,
+    retries: false,
+    billedCostUsd: false,
+  },
 });
 
 const emptyCounters = (): TokenEfficiencyCounters => ({
@@ -95,6 +106,9 @@ const emptySavings = (): TokenEfficiencySavings => ({
 
 const nonNegativeInt = (value: number | undefined): number =>
   value !== undefined && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+
+const isNonNegativeFinite = (value: number | undefined): value is number =>
+  value !== undefined && Number.isFinite(value) && value >= 0;
 
 const normalizedModel = (model: string | undefined): string => {
   const value = model?.trim() ?? "";
@@ -119,8 +133,8 @@ const makeScope = (input: {
 const addMetricValues = (
   current: TokenEfficiencyMetricValues,
   input: TokenEfficiencyTurnUsage,
-  latencyMs: number,
-  retries: number,
+  latencyMs: number | undefined,
+  retries: number | undefined,
 ): TokenEfficiencyMetricValues => ({
   inputTokens: current.inputTokens + nonNegativeInt(input.inputTokens),
   cachedInputTokens: current.cachedInputTokens + nonNegativeInt(input.cachedInputTokens),
@@ -136,6 +150,28 @@ const addMetricValues = (
     input.billedCostUsd >= 0
       ? (current.billedCostUsd ?? 0) + input.billedCostUsd
       : current.billedCostUsd,
+  availability: addAvailability(current.availability, input, latencyMs, retries),
+});
+
+const addAvailability = (
+  current: TokenEfficiencyMetricAvailability,
+  input: TokenEfficiencyTurnUsage,
+  latencyMs: number | undefined,
+  retries: number | undefined,
+): TokenEfficiencyMetricAvailability => ({
+  inputTokens: current.inputTokens || isNonNegativeFinite(input.inputTokens),
+  cachedInputTokens: current.cachedInputTokens || isNonNegativeFinite(input.cachedInputTokens),
+  outputTokens: current.outputTokens || isNonNegativeFinite(input.outputTokens),
+  reasoningTokens: current.reasoningTokens || isNonNegativeFinite(input.reasoningTokens),
+  toolResultTokens: current.toolResultTokens || isNonNegativeFinite(input.toolResultTokens),
+  latencyMs: current.latencyMs || isNonNegativeFinite(latencyMs),
+  retries: current.retries || isNonNegativeFinite(retries),
+  billedCostUsd:
+    current.billedCostUsd ||
+    (input.billedCostUsd !== undefined &&
+      input.billedCostUsd !== null &&
+      Number.isFinite(input.billedCostUsd) &&
+      input.billedCostUsd >= 0),
 });
 
 const addCounters = (
@@ -228,8 +264,8 @@ export const make = (options: TokenEfficiencyMetricsOptions = {}): TokenEfficien
     Effect.sync(() => {
       const scope = makeScope(input);
       const usage = input.usage ?? {};
-      const latencyMs = input.latencyMs ?? 0;
-      const retries = input.retries ?? 0;
+      const latencyMs = input.latencyMs;
+      const retries = input.retries;
       const aggregate = getAggregate(scope);
       aggregate.metrics = addMetricValues(aggregate.metrics, usage, latencyMs, retries);
 

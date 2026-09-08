@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.2] - 2026-09-08
+
+### Added
+
+- Add explicit provider metric availability, stable prompt-prefix handling, an optional external Caveman record adapter, bilingual benchmark fixtures, and an aggregate-only Hermes evidence bridge.
+- Compact structured accessibility-tree text leaves with context-scoped recovery metadata.
+
+### Changed
+
+- Keep external token-efficiency engines fail-open and record-only until reviewed task-quality and provider-billed A/B results justify rollout.
+
 ## [0.2.1] - 2026-09-07
 
 ### Added

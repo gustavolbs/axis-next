@@ -121,7 +121,15 @@ it.effect("compacts textual snapshot fields with field-scoped recovery handles",
                 loading: false,
                 visibleText: repeated,
                 interactiveElements: [],
-                accessibilityTree: { nodes: [{ nodeId: "1" }] },
+                accessibilityTree: {
+                  root: {
+                    role: "button",
+                    nodeId: "stable-node-id",
+                    name: repeated,
+                    text: repeated,
+                    value: repeated,
+                  },
+                },
                 consoleEntries: [{ level: "info", text: repeated, timestamp: "now" }],
                 networkEntries: [],
                 actionTimeline: [],
@@ -145,9 +153,22 @@ it.effect("compacts textual snapshot fields with field-scoped recovery handles",
     expect(result.isError).toBe(false);
     expect(result.structuredContent).toMatchObject({
       visibleText: expect.stringContaining("previous line repeated"),
-      accessibilityTree: { nodes: [{ nodeId: "1" }] },
+      accessibilityTree: {
+        root: {
+          role: "button",
+          nodeId: "stable-node-id",
+          name: expect.stringContaining("previous line repeated"),
+          text: expect.stringContaining("previous line repeated"),
+          value: repeated,
+        },
+      },
       tokenEfficiency: {
-        fields: [{ field: "visibleText" }, { field: "consoleEntries[0].text" }],
+        fields: [
+          { field: "visibleText" },
+          { field: "accessibilityTree.root.name" },
+          { field: "accessibilityTree.root.text" },
+          { field: "consoleEntries[0].text" },
+        ],
       },
     });
 

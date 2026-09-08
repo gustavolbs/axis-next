@@ -32,6 +32,11 @@ import {
 import * as Effect from "effect/Effect";
 
 import { isCompressiblePayloadKind } from "./contentSafety.ts";
+import {
+  CAVEMAN_ENGINE_ID,
+  makeCavemanTransform,
+  type CavemanEngineAdapterOptions,
+} from "./CavemanEngineAdapter.ts";
 import { compactDeterministically, estimateTokens } from "./deterministicCompaction.ts";
 import { makeRecoveryStore, type RecoveryStore } from "./recoveryStore.ts";
 
@@ -48,7 +53,7 @@ export interface CompactionRequest {
 }
 
 /** A pure transform. Runtime validation keeps third-party engines fail-open. */
-export type TokenEfficiencyTransform = (text: string) => unknown;
+export type TokenEfficiencyTransform = (text: string) => unknown | PromiseLike<unknown>;
 
 export interface TokenEfficiencyEngineRegistry {
   readonly compact: (request: CompactionRequest) => Effect.Effect<TokenEfficiencyOutcome>;
@@ -74,9 +79,19 @@ const BUILT_IN_TRANSFORMS: ReadonlyMap<string, TokenEfficiencyTransform> = new M
 
 export const makeTokenEfficiencyEngine = (input?: {
   readonly transforms?: ReadonlyMap<string, TokenEfficiencyTransform>;
+  /** Engines that may be measured but are not allowed to mutate a Turn yet. */
+  readonly recordOnlyEngines?: ReadonlySet<string>;
+  /** An externally installed Caveman executable; never bundled by Axis. */
+  readonly caveman?: CavemanEngineAdapterOptions;
   readonly recoveryStore?: RecoveryStore;
 }): TokenEfficiencyEngineRegistry => {
-  const transforms = input?.transforms ?? BUILT_IN_TRANSFORMS;
+  const configuredTransforms = new Map(input?.transforms ?? BUILT_IN_TRANSFORMS);
+  const recordOnlyEngines = new Set(input?.recordOnlyEngines ?? []);
+  if (input?.caveman !== undefined) {
+    configuredTransforms.set(CAVEMAN_ENGINE_ID, makeCavemanTransform(input.caveman));
+    recordOnlyEngines.add(CAVEMAN_ENGINE_ID);
+  }
+  const transforms = configuredTransforms;
   const store = input?.recoveryStore ?? makeRecoveryStore();
 
   const compact = (request: CompactionRequest): Effect.Effect<TokenEfficiencyOutcome> =>
@@ -96,6 +111,9 @@ export const makeTokenEfficiencyEngine = (input?: {
         // break the Turn; it degrades to no compression.
         return passThrough(request.text, `unknown-engine:${engineId}`);
       }
+      if (request.mode === "compress" && recordOnlyEngines.has(engineId)) {
+        return passThrough(request.text, `record-only-engine:${engineId}`);
+      }
 
       const before = estimateTokens(request.text);
       let recoveryHandle: string | undefined;
@@ -111,9 +129,9 @@ export const makeTokenEfficiencyEngine = (input?: {
       }
 
       // Invariant 1: a throwing engine is a declining engine.
-      const transformed = yield* Effect.try(() => transform(request.text)).pipe(
-        Effect.catchCause(() => Effect.succeed(undefined)),
-      );
+      const transformed = yield* Effect.tryPromise(() =>
+        Promise.resolve(transform(request.text)),
+      ).pipe(Effect.catchCause(() => Effect.succeed(undefined)));
       if (typeof transformed !== "string") {
         if (recoveryHandle !== undefined && store.release !== undefined) {
           yield* store.release(recoveryHandle).pipe(Effect.catchCause(() => Effect.void));
@@ -162,4 +180,16 @@ export const makeTokenEfficiencyEngine = (input?: {
     });
 
   return { compact, recover: store.recover };
+};
+
+/**
+ * Server wiring for the optional external adapter. The environment variable is
+ * an executable path, never a shell command, and the adapter remains
+ * record-only until a reviewed rollout explicitly changes this policy.
+ */
+export const makeConfiguredTokenEfficiencyEngine = (): TokenEfficiencyEngineRegistry => {
+  const command = process.env.T3_CAVEMAN_ENGINE_COMMAND?.trim();
+  return command === undefined || command.length === 0
+    ? makeTokenEfficiencyEngine()
+    : makeTokenEfficiencyEngine({ caveman: { command } });
 };

@@ -155,6 +155,23 @@ const NonNegativeFiniteNumber = Schema.Number.check(
 );
 
 /**
+ * Distinguishes an observed zero from a provider field that was not exposed.
+ * This is intentionally per metric: providers commonly expose input/output
+ * counts while omitting retries, tool-result counts, or billing.
+ */
+export const TokenEfficiencyMetricAvailability = Schema.Struct({
+  inputTokens: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  cachedInputTokens: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  outputTokens: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  reasoningTokens: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  toolResultTokens: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  latencyMs: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  retries: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  billedCostUsd: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type TokenEfficiencyMetricAvailability = typeof TokenEfficiencyMetricAvailability.Type;
+
+/**
  * Additive observations for one scope. Token and latency fields default to
  * zero so a provider can report only the measurements it exposes. A null
  * billed cost means that no provider-reported cost was available.
@@ -171,6 +188,20 @@ export const TokenEfficiencyMetrics = Schema.Struct({
   retries: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   billedCostUsd: Schema.NullOr(NonNegativeFiniteNumber).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  availability: TokenEfficiencyMetricAvailability.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        inputTokens: false,
+        cachedInputTokens: false,
+        outputTokens: false,
+        reasoningTokens: false,
+        toolResultTokens: false,
+        latencyMs: false,
+        retries: false,
+        billedCostUsd: false,
+      }),
+    ),
   ),
 });
 export type TokenEfficiencyMetrics = typeof TokenEfficiencyMetrics.Type;
@@ -235,6 +266,26 @@ export const TokenEfficiencySnapshot = Schema.Struct({
   ),
 });
 export type TokenEfficiencySnapshot = typeof TokenEfficiencySnapshot.Type;
+
+/**
+ * Aggregate-only input accepted by the optional Hermes learning bridge. Raw
+ * prompts, payloads, recovery handles, and provider messages cannot fit this
+ * schema, so learning receives measurements rather than user content.
+ */
+export const TokenEfficiencyHermesObservation = Schema.Struct({
+  contractVersion: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(TOKEN_EFFICIENCY_CONTRACT_VERSION)),
+  ),
+  contextId: AxisContextId,
+  generatedAt: IsoDateTime,
+  baselines: Schema.Array(TokenEfficiencyBaseline).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  aggregates: Schema.Array(TokenEfficiencyAggregate).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+});
+export type TokenEfficiencyHermesObservation = typeof TokenEfficiencyHermesObservation.Type;
 
 /**
  * Outcome of one compaction attempt, reported in every mode.

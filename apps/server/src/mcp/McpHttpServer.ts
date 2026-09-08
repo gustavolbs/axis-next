@@ -10,7 +10,7 @@ import { McpProtocol, McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
-import type { PreviewAutomationSnapshot } from "@t3tools/contracts";
+import type { PreviewAutomationSnapshot, TokenEfficiencyApplied } from "@t3tools/contracts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -177,10 +177,83 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                     Effect.catchCause(() => Effect.succeed({ text, tokenEfficiency: undefined })),
                     Effect.catchDefect(() => Effect.succeed({ text, tokenEfficiency: undefined })),
                   );
+                const compactAccessibilityTree = (tree: unknown) => {
+                  // Control values may contain the user's current input or a
+                  // secret. Descriptive leaves are safe candidates; values
+                  // remain byte-for-byte protected.
+                  const textualLeafKeys = new Set(["description", "label", "name", "text"]);
+                  const walk = (
+                    value: unknown,
+                    path: string,
+                  ): Effect.Effect<{
+                    readonly value: unknown;
+                    readonly fields: ReadonlyArray<{
+                      readonly field: string;
+                      readonly applied: NonNullable<TokenEfficiencyApplied>;
+                    }>;
+                  }> => {
+                    if (Array.isArray(value)) {
+                      return Effect.gen(function* () {
+                        const entries = yield* Effect.forEach(value, (entry, index) =>
+                          walk(entry, `${path}[${index}]`),
+                        );
+                        return {
+                          value: entries.map((entry) => entry.value),
+                          fields: entries.flatMap((entry) => entry.fields),
+                        };
+                      });
+                    }
+                    if (value === null || typeof value !== "object") {
+                      return Effect.succeed({ value, fields: [] });
+                    }
+                    return Effect.gen(function* () {
+                      const output: Record<string, unknown> = {};
+                      const fields: Array<{
+                        readonly field: string;
+                        readonly applied: NonNullable<TokenEfficiencyApplied>;
+                      }> = [];
+                      for (const [key, child] of Object.entries(value)) {
+                        const childPath = `${path}.${key}`;
+                        if (textualLeafKeys.has(key) && typeof child === "string") {
+                          const compacted = yield* compactSnapshotText(child, "accessibility-tree");
+                          output[key] = compacted.text;
+                          if (compacted.tokenEfficiency !== undefined) {
+                            fields.push({ field: childPath, applied: compacted.tokenEfficiency });
+                          }
+                        } else {
+                          const compacted = yield* walk(child, childPath);
+                          output[key] = compacted.value;
+                          fields.push(...compacted.fields);
+                        }
+                      }
+                      return { value: output, fields };
+                    });
+                  };
+                  return walk(tree, "accessibilityTree").pipe(
+                    Effect.catchCause(() => Effect.succeed({ value: tree, fields: [] })),
+                    Effect.catchDefect(() => Effect.succeed({ value: tree, fields: [] })),
+                  );
+                };
                 const compactedVisibleText = yield* compactSnapshotText(
                   page.visibleText,
                   "accessibility-tree",
                 );
+                const compactedAccessibilityTree = yield* Effect.gen(function* () {
+                  if (typeof page.accessibilityTree !== "string") {
+                    return yield* compactAccessibilityTree(page.accessibilityTree);
+                  }
+                  const compacted = yield* compactSnapshotText(
+                    page.accessibilityTree,
+                    "accessibility-tree",
+                  );
+                  return {
+                    value: compacted.text,
+                    fields:
+                      compacted.tokenEfficiency === undefined
+                        ? []
+                        : [{ field: "accessibilityTree", applied: compacted.tokenEfficiency }],
+                  };
+                });
                 const compactedConsoleEntries = yield* Effect.forEach(
                   page.consoleEntries,
                   (entry) => compactSnapshotText(entry.text, "log"),
@@ -189,6 +262,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                   ...(compactedVisibleText.tokenEfficiency === undefined
                     ? []
                     : [{ field: "visibleText", applied: compactedVisibleText.tokenEfficiency }]),
+                  ...compactedAccessibilityTree.fields,
                   ...compactedConsoleEntries.flatMap((entry, index) =>
                     entry.tokenEfficiency === undefined
                       ? []
@@ -203,6 +277,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                 const metadata = {
                   ...page,
                   visibleText: compactedVisibleText.text,
+                  accessibilityTree: compactedAccessibilityTree.value,
                   consoleEntries: page.consoleEntries.map((entry, index) => ({
                     ...entry,
                     text: compactedConsoleEntries[index]?.text ?? entry.text,

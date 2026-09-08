@@ -17,7 +17,7 @@ import type {
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
-import { makeTokenEfficiencyEngine } from "../../../tokenEfficiency/TokenEfficiencyEngine.ts";
+import { makeConfiguredTokenEfficiencyEngine } from "../../../tokenEfficiency/TokenEfficiencyEngine.ts";
 import { resolveTokenEfficiency } from "@t3tools/contracts";
 import * as TokenEfficiencyMetrics from "../../../tokenEfficiency/TokenEfficiencyMetrics.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
@@ -74,7 +74,7 @@ const invokeTargeted = <A>(
   return invoke<A>(operation, operationInput, timeoutMs, tabId);
 };
 
-const tokenEfficiencyEngine = makeTokenEfficiencyEngine();
+const tokenEfficiencyEngine = makeConfiguredTokenEfficiencyEngine();
 
 const previewTokenEfficiencyMetadata = (
   outcome: TokenEfficiencyMetrics.TokenEfficiencyCompactionObservation["outcome"],
