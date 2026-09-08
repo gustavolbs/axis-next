@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1] - 2026-09-07
+
+### Added
+
+- Add opt-in token-efficiency controls, aggregate provider baselines, deterministic MCP result compaction with recovery handles, and diagnostics in Settings.
+- Add an optional concise-output profile across Codex, Claude Code, Cursor, Grok, OpenCode, and Antigravity.
+
 ## [0.2.0] - 2026-09-07
 
 ### Changed

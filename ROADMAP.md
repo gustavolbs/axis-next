@@ -285,16 +285,21 @@ and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
       learning lifecycle.
 - [x] Record the adoption rule: no compressor ships enabled by default until an Axis/T3 A/B proves
       lower provider-billed tokens with equivalent task quality and acceptable latency.
-- [ ] Establish per-provider/instance/model baselines for input, cached input, output, reasoning,
-      tool-result, latency, retries, and billed cost where the provider exposes them.
-- [ ] Add an optional provider-owned **Concise output** profile with explicit verbosity limits;
-      preserve normal human-facing language instead of forcing “caveman speak” into every reply.
+- [~] Establish per-provider/instance/model baselines for input, cached input, output, reasoning,
+  tool-result, latency, retries, and billed cost where the provider exposes them. The server
+  keeps aggregate baselines per provider instance/model/context and records currently exposed
+  usage fields; explicit availability for unsupported tool-result/retry fields remains.
+- [~] Add an optional provider-owned **Concise output** profile with explicit verbosity limits;
+  preserve normal human-facing language instead of forcing “caveman speak” into every reply.
+  The profile is wired to all six adapters; Claude's SDK binds its system prompt when a session
+  starts, so a setting change requires a new Claude session to take effect.
 - [x] Define a replaceable `TokenEfficiencyEngine` boundary with `off`, `record`, and `compress`
       modes so Caveman Engine, LLMLingua-2, or deterministic compactors can be evaluated without
       changing orchestration.
 - [~] Start with deterministic compaction of repeated logs, terminal output, search results,
   accessibility trees, and MCP/tool payloads before applying lossy natural-language
-  compression. The compactor and its payload kinds ship; no call site feeds it yet.
+  compression. The compactor and its payload kinds ship, and `preview_evaluate` feeds it for
+  textual MCP results; provider-owned terminal/search/accessibility payloads still need adapters.
 - [x] Store the original payload locally before any lossy transform and expose a context-scoped,
       expiring recovery handle; pass the original through if storage, parsing, compression, or token
       estimation fails.
@@ -312,8 +317,8 @@ and [Microsoft LLMLingua](https://github.com/microsoft/LLMLingua).
       tasks in English and Portuguese.
 - [~] Gate rollout per provider instance and Axis context with a kill switch, visible savings/
   accuracy/latency statistics, and automatic pass-through when compression is net-negative.
-  Per-instance gating, the `off` kill switch, and net-negative pass-through ship; the
-  statistics surface waits on the baselines.
+  Per-instance gating, the `off` kill switch, net-negative pass-through, aggregate savings/latency
+  metrics, and the Settings diagnostics surface ship; task-quality accuracy evaluation remains.
 - [ ] Feed only aggregate, non-sensitive efficiency outcomes into Hermes; Hermes may propose a
       compression policy change but cannot activate it.
 

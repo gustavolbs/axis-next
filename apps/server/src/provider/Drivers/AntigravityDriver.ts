@@ -39,6 +39,7 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { removeAntigravitySessionFiles } from "../acp/AntigravitySessionFiles.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
+import { resolveConciseOutputProfile } from "../RuntimeInstructions.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -83,6 +84,13 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const loggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const settings = { ...config, enabled } satisfies AntigravitySettings;
+      const serverSettings = yield* ServerSettingsService;
+      const resolveConciseOutputProfileForInstance = serverSettings.getSettings.pipe(
+        Effect.map(({ tokenEfficiency }) =>
+          resolveConciseOutputProfile(tokenEfficiency, instanceId),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
       const auth: AntigravityAuthConfig = {
         authMethod: settings.authMethod,
         apiKey: settings.apiKey,
@@ -299,6 +307,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       );
       const adapter = yield* makeAntigravityAdapter(settings, {
         instanceId,
+        resolveConciseOutputProfile: resolveConciseOutputProfileForInstance,
         makeRuntime,
         withProcess: authFlow.withProcess,
         defaultModel,

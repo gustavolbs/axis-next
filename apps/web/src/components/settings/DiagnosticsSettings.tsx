@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
+  EnvironmentId,
   ServerProcessDiagnosticsEntry,
   ServerProcessResourceHistorySummary,
   ServerProcessSignal,
@@ -43,6 +44,10 @@ import { ExpandableText } from "./ExpandableText";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  summarizeTokenEfficiency,
+  tokenEfficiencyDiagnosticRows,
+} from "./TokenEfficiencyDiagnostics.logic";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 
@@ -53,6 +58,18 @@ function formatCount(value: number): string {
 function formatDuration(value: number): string {
   if (value < 1_000) return `${Math.round(value)} ms`;
   return `${(value / 1_000).toFixed(value >= 10_000 ? 1 : 2)} s`;
+}
+
+function formatCurrency(value: number | null): string {
+  return value === null
+    ? "Unavailable"
+    : new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(value);
+}
+
+function formatTokenSaving(before: number, after: number): string {
+  const saved = Math.max(0, before - after);
+  if (before <= 0 || saved <= 0) return "No saving";
+  return `${formatCount(saved)} (${Math.round((saved / before) * 100)}%)`;
 }
 
 function formatBytes(value: number): string {
@@ -775,6 +792,138 @@ function DiagnosticsRefreshButton({
   );
 }
 
+function TokenEfficiencyDiagnosticsSection({
+  environmentId,
+}: {
+  environmentId: EnvironmentId | null;
+}) {
+  const { data, error, isPending, refresh } = useEnvironmentQuery(
+    environmentId === null ? null : serverEnvironment.tokenEfficiency({ environmentId, input: {} }),
+  );
+  const summary = useMemo(() => summarizeTokenEfficiency(data), [data]);
+  const rows = useMemo(() => tokenEfficiencyDiagnosticRows(data), [data]);
+  const isInitialLoading = isPending && data === null;
+
+  return (
+    <SettingsSection
+      title="Token Efficiency"
+      headerAction={
+        <div className="flex items-center gap-1.5">
+          <DiagnosticsLastChecked checkedAt={data ? DateTime.makeUnsafe(data.generatedAt) : null} />
+          <DiagnosticsRefreshButton
+            isPending={isPending}
+            label="Refresh token efficiency"
+            onClick={refresh}
+          />
+        </div>
+      }
+    >
+      <StatsGrid>
+        <StatBlock
+          label="Turns"
+          value={data ? formatCount(summary.sampleCount) : "..."}
+          tooltip="Provider turns included in the no-compression baseline."
+        />
+        <StatBlock
+          label="Input Tokens"
+          value={data ? formatCount(summary.inputTokens) : "..."}
+          tooltip="Provider-reported input tokens, including cached input when available."
+        />
+        <StatBlock
+          label="Estimated Saved"
+          value={
+            data
+              ? formatTokenSaving(summary.estimatedTokensBefore, summary.estimatedTokensAfter)
+              : "..."
+          }
+          tooltip="Estimated savings from compaction candidates. These are not provider-billed counts."
+          tone={
+            summary.estimatedTokensAfter < summary.estimatedTokensBefore ? "default" : "warning"
+          }
+        />
+        <StatBlock
+          label="Average Latency"
+          value={
+            data && summary.sampleCount > 0
+              ? formatDuration(summary.latencyMs / summary.sampleCount)
+              : data
+                ? "Unavailable"
+                : "..."
+          }
+          tooltip="Average wall-clock duration of baseline turns where both start and completion timestamps were available."
+        />
+      </StatsGrid>
+      {error ? (
+        <div className="flex items-start gap-2 border-t border-border/60 px-4 py-3 text-xs text-destructive sm:px-5">
+          <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      ) : null}
+      {data && rows.length > 0 ? (
+        <DiagnosticsTable
+          headers={["Provider / model", "Turns", "Input / output", "Saving", "Latency", "Outcomes"]}
+          minTableWidth="min-w-[920px]"
+        >
+          {rows.map(({ aggregate, sampleCount, averageLatencyMs }) => (
+            <tr
+              key={`${aggregate.scope.provider}\u0000${aggregate.scope.providerInstanceId}\u0000${aggregate.scope.model}\u0000${aggregate.scope.contextId ?? ""}`}
+            >
+              <td className="max-w-[280px] px-4 py-3 align-top first:sm:pl-5">
+                <div className="truncate font-medium text-foreground">
+                  {aggregate.scope.provider}
+                </div>
+                <div className="truncate text-[11px] text-muted-foreground">
+                  {aggregate.scope.providerInstanceId} / {aggregate.scope.model}
+                </div>
+              </td>
+              <td className="px-4 py-3 align-top font-mono tabular-nums">
+                {formatCount(sampleCount)}
+              </td>
+              <td className="px-4 py-3 align-top font-mono tabular-nums text-muted-foreground">
+                {formatCount(aggregate.metrics.inputTokens)} /{" "}
+                {formatCount(aggregate.metrics.outputTokens)}
+              </td>
+              <td className="px-4 py-3 align-top font-mono tabular-nums">
+                {formatTokenSaving(
+                  aggregate.savings.estimatedTokensBefore,
+                  aggregate.savings.estimatedTokensAfter,
+                )}
+              </td>
+              <td className="px-4 py-3 align-top font-mono tabular-nums text-muted-foreground">
+                {averageLatencyMs === null ? "Unavailable" : formatDuration(averageLatencyMs)}
+              </td>
+              <td className="px-4 py-3 align-top text-muted-foreground last:sm:pr-5">
+                {formatCount(aggregate.counters.compressionsApplied)} applied /{" "}
+                {formatCount(aggregate.counters.passThrough)} pass-through /{" "}
+                {formatCount(aggregate.counters.failures)} failed
+              </td>
+            </tr>
+          ))}
+        </DiagnosticsTable>
+      ) : (
+        <EmptyRows
+          label={
+            isInitialLoading
+              ? "Loading token efficiency..."
+              : "No token efficiency observations yet."
+          }
+        />
+      )}
+      {data ? (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border/60 px-4 py-3 text-[11px] text-muted-foreground sm:px-5">
+          <span>Output {formatCount(summary.outputTokens)}</span>
+          <span>Reasoning {formatCount(summary.reasoningTokens)}</span>
+          <span>Tool results {formatCount(summary.toolResultTokens)}</span>
+          <span>Retries {formatCount(summary.retries)}</span>
+          <span>Cost {formatCurrency(summary.billedCostUsd)}</span>
+          <span>Attempts {formatCount(summary.attempts)}</span>
+          <span>Net-negative {formatCount(summary.netNegative)}</span>
+        </div>
+      ) : null}
+    </SettingsSection>
+  );
+}
+
 export function DiagnosticsSettingsPanel() {
   const observability = useAtomValue(primaryServerObservabilityAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
@@ -961,6 +1110,7 @@ export function DiagnosticsSettingsPanel() {
   return (
     <SettingsPageContainer width="expanded" className="gap-10">
       <ResourceTelemetryDiagnostics />
+      <TokenEfficiencyDiagnosticsSection environmentId={environmentId} />
 
       <SettingsSection
         title="Live Processes"

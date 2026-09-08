@@ -27,6 +27,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
+import { resolveConciseOutputProfile } from "../RuntimeInstructions.ts";
 import {
   checkOpenCodeProviderStatus,
   makePendingOpenCodeProvider,
@@ -123,9 +124,16 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
       });
+      const resolveConciseOutputProfileForInstance = serverSettings.getSettings.pipe(
+        Effect.map(({ tokenEfficiency }) =>
+          resolveConciseOutputProfile(tokenEfficiency, instanceId),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
 
       const adapter = yield* makeOpenCodeAdapter(effectiveConfig, {
         instanceId,
+        resolveConciseOutputProfile: resolveConciseOutputProfileForInstance,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });

@@ -1,6 +1,8 @@
 import {
+  type AxisContextId,
   type EnvironmentId,
   PreviewAutomationUnavailableError,
+  type ProviderDriverKind,
   type ProviderInstanceId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -14,6 +16,11 @@ export interface McpInvocationScope {
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
+  /** Model selected when the provider-scoped credential was issued. */
+  readonly model?: string;
+  readonly contextId?: AxisContextId;
+  /** Present for credentials issued by current provider sessions. */
+  readonly provider?: ProviderDriverKind;
   readonly capabilities: ReadonlySet<McpCapability>;
   readonly issuedAt: number;
 }

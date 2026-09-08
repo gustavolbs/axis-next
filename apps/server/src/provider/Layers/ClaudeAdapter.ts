@@ -40,6 +40,7 @@ import {
   type ProviderSession,
   type ThreadTokenUsageSnapshot,
   type TurnTokenUsage,
+  type TokenEfficiencyConciseOutputProfile,
   type ProviderUserInputAnswers,
   type RuntimeContentStreamKind,
   RuntimeItemId,
@@ -339,6 +340,10 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
 
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
+  readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
+  readonly resolveConciseOutputProfile?: Effect.Effect<
+    TokenEfficiencyConciseOutputProfile | undefined
+  >;
   readonly environment?: NodeJS.ProcessEnv;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
@@ -1908,6 +1913,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+  const readConciseOutputProfile =
+    options?.resolveConciseOutputProfile ?? Effect.succeed(options?.conciseOutputProfile);
 
   const createQuery =
     options?.createQuery ??
@@ -4572,7 +4579,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           type: "preset",
           preset: "claude_code",
           // Model and effort can change after this session-level prompt is set.
-          append: buildRuntimeInstructions({ harness: "Claude Code" }),
+          append: buildRuntimeInstructions({
+            harness: "Claude Code",
+            conciseOutputProfile: yield* readConciseOutputProfile,
+          }),
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is

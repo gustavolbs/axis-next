@@ -40,6 +40,8 @@ describe("modes", () => {
             applied: false,
             skippedReason: "mode-off",
           });
+          expect(outcome.estimatedTokensBefore).toBe(0);
+          expect(outcome.estimatedTokensAfter).toBe(0);
         }),
       ),
   );
@@ -107,6 +109,18 @@ describe("invariants", () => {
     withTransform(() => {
       throw new Error("engine exploded");
     })
+      .compact(request())
+      .pipe(
+        Effect.map((outcome) => {
+          expect(outcome.text).toBe(REPEATED);
+          expect(outcome.applied).toBe(false);
+          expect(outcome.skippedReason).toBe(`engine-failed:${DETERMINISTIC_ENGINE_ID}`);
+        }),
+      ),
+  );
+
+  it.effect("passes the original through when the engine returns malformed data", () =>
+    withTransform(() => null)
       .compact(request())
       .pipe(
         Effect.map((outcome) => {

@@ -16,6 +16,7 @@ import {
   type ProviderUserInputAnswers,
   ProviderDriverKind,
   ProviderInstanceId,
+  type TokenEfficiencyConciseOutputProfile,
   RuntimeRequestId,
   type RuntimeMode,
   type ThreadId,
@@ -97,6 +98,10 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
 }
 
 export interface CursorAdapterLiveOptions {
+  readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
+  readonly resolveConciseOutputProfile?: Effect.Effect<
+    TokenEfficiencyConciseOutputProfile | undefined
+  >;
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -337,6 +342,8 @@ export function makeCursorAdapter(
         : undefined);
     const managedNativeEventLogger =
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+    const readConciseOutputProfile =
+      options?.resolveConciseOutputProfile ?? Effect.succeed(options?.conciseOutputProfile);
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
 
     const sessions = new Map<ThreadId, CursorSessionContext>();
@@ -1051,7 +1058,11 @@ export function makeCursorAdapter(
                 ...promptParts,
                 {
                   type: "text",
-                  text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
+                  text: buildRuntimeInstructions({
+                    harness: "Cursor",
+                    model: resolvedModel,
+                    conciseOutputProfile: yield* readConciseOutputProfile,
+                  }),
                 },
               ],
             })

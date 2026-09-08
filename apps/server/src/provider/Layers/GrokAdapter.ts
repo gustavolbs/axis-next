@@ -8,6 +8,7 @@ import {
   type ProviderUserInputAnswers,
   ProviderDriverKind,
   ProviderInstanceId,
+  type TokenEfficiencyConciseOutputProfile,
   RuntimeRequestId,
   type ThreadId,
   TurnId,
@@ -102,6 +103,10 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
 }
 
 export interface GrokAdapterLiveOptions {
+  readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
+  readonly resolveConciseOutputProfile?: Effect.Effect<
+    TokenEfficiencyConciseOutputProfile | undefined
+  >;
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -352,6 +357,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         : undefined);
     const managedNativeEventLogger =
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+    const readConciseOutputProfile =
+      options?.resolveConciseOutputProfile ?? Effect.succeed(options?.conciseOutputProfile);
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
     const hostPlatform = yield* HostProcessPlatform;
     const hostEnvironment = yield* HostProcessEnvironment;
@@ -1588,6 +1595,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 harness: "Grok",
                 model: displayModel,
                 reasoningEffort: normalizeGrokReasoningEffort(requestedTurnReasoningEffort),
+                conciseOutputProfile: yield* readConciseOutputProfile,
               });
               for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
                 yield* Effect.yieldNow;

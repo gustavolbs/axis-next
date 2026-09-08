@@ -7,6 +7,7 @@ import {
   type ProviderSession,
   RuntimeItemId,
   RuntimeRequestId,
+  type TokenEfficiencyConciseOutputProfile,
   ThreadId,
   type ToolLifecycleItemType,
   type TurnTokenUsage,
@@ -441,6 +442,10 @@ function takeOpenCodeTurnTokenUsage(
 
 export interface OpenCodeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
+  readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
+  readonly resolveConciseOutputProfile?: Effect.Effect<
+    TokenEfficiencyConciseOutputProfile | undefined
+  >;
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -920,6 +925,8 @@ export function makeOpenCodeAdapter(
     const crypto = yield* Crypto.Crypto;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const readConciseOutputProfile =
+      options?.resolveConciseOutputProfile ?? Effect.succeed(options?.conciseOutputProfile);
     const sameDirectory = (left: string, right: string) =>
       isSameOpenCodeDirectory(fileSystem, path, left, right);
     const nativeEventLogger =
@@ -3183,6 +3190,7 @@ export function makeOpenCodeAdapter(
             return yield* Effect.interrupt;
           }
 
+          const conciseOutputProfile = yield* readConciseOutputProfile;
           let promptTimedOut = false;
           const promptEffect = runOpenCodeSdk("session.promptAsync", (signal) =>
             context.client.session.promptAsync(
@@ -3196,6 +3204,7 @@ export function makeOpenCodeAdapter(
                 system: buildRuntimeInstructions({
                   harness: "OpenCode",
                   model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+                  conciseOutputProfile,
                 }),
                 parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
               },

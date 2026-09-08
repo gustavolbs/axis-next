@@ -30,6 +30,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
 import { makeClaudeScopedLimitNames } from "../Layers/claudeUsageLimits.ts";
+import { resolveConciseOutputProfile } from "../RuntimeInstructions.ts";
 import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
@@ -201,8 +202,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       // One per instance: the status probe writes the model-scoped bucket
       // names it saw, the adapter reads them to place turn-driven events.
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+      const resolveConciseOutputProfileForInstance = serverSettings.getSettings.pipe(
+        Effect.map(({ tokenEfficiency }) =>
+          resolveConciseOutputProfile(tokenEfficiency, instanceId),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
       const adapterOptions = {
         instanceId,
+        resolveConciseOutputProfile: resolveConciseOutputProfileForInstance,
         environment: processEnv,
         modelCatalog,
         scopedLimitNames,

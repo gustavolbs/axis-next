@@ -24,12 +24,16 @@ describe("classifyLine", () => {
     ["structured-data", "  }"],
     ["error", "Error: connection refused"],
     ["error", "  the request failed after 3 attempts"],
+    ["error", "Erro: disco cheio"],
     ["stack-frame", "    at Object.<anonymous> (/app/index.js:12:9)"],
+    ["approval", "Aprovação necessária antes de continuar"],
+    ["approval", "Política de segurança bloqueou a operação"],
     ["identifier", "commit 7570472d829549e33056927476576445f76052bb"],
     ["identifier", "port 58231 already in use"],
     ["secret", "ANTHROPIC_AUTH_TOKEN=sk-routemux-abcdefgh"],
     ["secret", "authorization: Bearer abc123"],
     ["secret", "  password: hunter2"],
+    ["secret", "senha: não-compartilhar"],
   ];
 
   for (const [why, line] of protectedLines) {

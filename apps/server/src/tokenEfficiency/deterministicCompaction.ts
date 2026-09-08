@@ -63,7 +63,7 @@ function collapseRuns(lines: ReadonlyArray<string>, options: CompactionOptions):
     if (isBlank) {
       const keep = Math.min(runLength, options.maxConsecutiveBlankLines);
       for (let i = 0; i < keep; i += 1) out.push(line);
-    } else if (runLength >= options.repeatThreshold && !classifyLine(line).protected) {
+    } else if (runLength >= options.repeatThreshold && isSafeToCollapse(line)) {
       const marker = repeatMarker(runLength);
       // The marker has a fixed cost. Collapsing four short lines can spend
       // more characters than it saves, so a run only collapses when it
@@ -83,6 +83,33 @@ function collapseRuns(lines: ReadonlyArray<string>, options: CompactionOptions):
 }
 
 /**
+ * Keep the transform conservative for payloads whose repetition may carry
+ * executable or structured meaning. `classifyLine` covers the common cases;
+ * these syntax checks cover code and commands that do not have a distinctive
+ * prefix on every line.
+ */
+function isSafeToCollapse(line: string): boolean {
+  if (classifyLine(line).protected) return false;
+  if (
+    /^\s*(?:const|let|var|function|class|interface|type|import|export|return|throw|async|await)\b/u.test(
+      line,
+    ) ||
+    /^\s*(?:if|for|while|switch|catch)\s*\(/u.test(line) ||
+    /^\s*(?:try|case)\b.*[:{]/u.test(line)
+  ) {
+    return false;
+  }
+  if (
+    /[;{}]|=>|\b(?:npm|pnpm|yarn|bun|git|node|curl|docker|make|python|python3|go|cargo)\s+(?:run|exec|install|add|remove|build|test|commit|push|pull|clone|diff|checkout|config|--?[A-Za-z])/u.test(
+      line,
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Elide the middle of output that is too long to be worth sending whole.
  *
  * Declines whenever the region that would be dropped contains anything
@@ -95,7 +122,16 @@ function elideMiddle(lines: ReadonlyArray<string>, options: CompactionOptions): 
   const head = lines.slice(0, options.edgeLines);
   const tail = lines.slice(lines.length - options.edgeLines);
   const middle = lines.slice(options.edgeLines, lines.length - options.edgeLines);
-  if (middle.some((line) => classifyLine(line).protected)) return [...lines];
+  const repeatedLine = middle[0];
+  // A long payload is not evidence of redundancy. Only remove a middle that
+  // is an exact repeated run, and never remove a protected repeated payload.
+  if (
+    repeatedLine === undefined ||
+    middle.some((line) => line !== repeatedLine) ||
+    !isSafeToCollapse(repeatedLine)
+  ) {
+    return [...lines];
+  }
   return [...head, `… ${middle.length} lines omitted from the middle of this output`, ...tail];
 }
 

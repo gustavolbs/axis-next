@@ -77,11 +77,20 @@ never compressed either.
 until an A/B proves lower provider-billed tokens at equivalent task quality
 and acceptable latency. `record` is the mode that A/B runs in — it measures
 the saving and sends the original, so it is indistinguishable from `off` on
-the wire.
+the wire. An opt-in provider-owned concise-output profile is available across
+the six provider adapters, with per-instance settings taking precedence over
+the server default. Claude's SDK binds the system prompt when its session is
+created, so changing the profile while a Claude session is active takes effect
+on the next session; the other adapters read the profile at turn dispatch.
 
-Nothing calls the registry yet. Wiring it to tool results and terminal output,
-and establishing the per-provider baselines an A/B compares against, are the
-next roadmap items.
+Provider turn completion events feed aggregate, in-memory baselines and
+rollout metrics per provider instance/model/context. The first call site is
+`preview_evaluate`: textual MCP results may be compacted when the instance is
+explicitly opted in, and the original is recoverable with a context-scoped,
+expiring handle. Provider-owned terminal, search, and accessibility payloads
+still need adapter-specific call sites. Caveman/LLMLingua evaluation,
+provider-native prompt caching, task-quality benchmarks, and Hermes promotion
+remain future roadmap work.
 
 Source: `apps/server/src/tokenEfficiency/`, contracts in
 `packages/contracts/src/tokenEfficiency.ts`.

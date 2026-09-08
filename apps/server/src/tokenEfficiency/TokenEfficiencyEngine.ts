@@ -47,8 +47,8 @@ export interface CompactionRequest {
   readonly engine?: TokenEfficiencyEngineId | undefined;
 }
 
-/** A pure text-to-text transform. Engines do no I/O and no classification. */
-export type TokenEfficiencyTransform = (text: string) => string;
+/** A pure transform. Runtime validation keeps third-party engines fail-open. */
+export type TokenEfficiencyTransform = (text: string) => unknown;
 
 export interface TokenEfficiencyEngineRegistry {
   readonly compact: (request: CompactionRequest) => Effect.Effect<TokenEfficiencyOutcome>;
@@ -58,11 +58,7 @@ export interface TokenEfficiencyEngineRegistry {
   }) => Effect.Effect<string | undefined>;
 }
 
-const passThrough = (
-  text: string,
-  reason: string,
-  tokens = estimateTokens(text),
-): TokenEfficiencyOutcome => ({
+const passThrough = (text: string, reason: string, tokens = 0): TokenEfficiencyOutcome => ({
   text,
   applied: false,
   engine: undefined,
@@ -102,11 +98,26 @@ export const makeTokenEfficiencyEngine = (input?: {
       }
 
       const before = estimateTokens(request.text);
+      let recoveryHandle: string | undefined;
+      if (request.mode === "compress") {
+        // Retain before invoking an untrusted engine. If it throws or returns
+        // malformed data, the original is still available for diagnostics.
+        recoveryHandle = yield* store
+          .retain({ contextKey: request.contextKey, original: request.text })
+          .pipe(Effect.catchCause(() => Effect.succeed(undefined)));
+        if (recoveryHandle === undefined) {
+          return passThrough(request.text, "not-recoverable", before);
+        }
+      }
+
       // Invariant 1: a throwing engine is a declining engine.
       const transformed = yield* Effect.try(() => transform(request.text)).pipe(
-        Effect.catch(() => Effect.succeed(undefined)),
+        Effect.catchCause(() => Effect.succeed(undefined)),
       );
-      if (transformed === undefined) {
+      if (typeof transformed !== "string") {
+        if (recoveryHandle !== undefined && store.release !== undefined) {
+          yield* store.release(recoveryHandle).pipe(Effect.catchCause(() => Effect.void));
+        }
         return passThrough(request.text, `engine-failed:${engineId}`, before);
       }
 
@@ -114,6 +125,9 @@ export const makeTokenEfficiencyEngine = (input?: {
       // Invariant 2. Also catches an engine that "compressed" into something
       // longer, which is a real failure mode for template-based rewriters.
       if (transformed === request.text || after >= before) {
+        if (recoveryHandle !== undefined && store.release !== undefined) {
+          yield* store.release(recoveryHandle).pipe(Effect.catchCause(() => Effect.void));
+        }
         return {
           ...passThrough(request.text, "no-saving", before),
           engine: engineId,
@@ -134,14 +148,6 @@ export const makeTokenEfficiencyEngine = (input?: {
           recoveryHandle: undefined,
           skippedReason: "record-mode",
         };
-      }
-
-      // Invariant 3: no transform without a way back.
-      const recoveryHandle = yield* store
-        .retain({ contextKey: request.contextKey, original: request.text })
-        .pipe(Effect.catch(() => Effect.succeed(undefined)));
-      if (recoveryHandle === undefined) {
-        return passThrough(request.text, "not-recoverable", before);
       }
 
       return {
