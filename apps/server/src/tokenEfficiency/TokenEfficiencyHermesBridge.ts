@@ -142,7 +142,21 @@ export const evaluateTokenEfficiencyHermesProposal = (
   observation: TokenEfficiencyHermesObservation,
   policy: TokenEfficiencyHermesProposalPolicy,
 ): TokenEfficiencyHermesProposalDecision => {
-  const resolved = { ...DEFAULT_HERMES_PROPOSAL_POLICY, ...policy };
+  const resolved = {
+    minimumBaselineSamples:
+      policy.minimumBaselineSamples ?? DEFAULT_HERMES_PROPOSAL_POLICY.minimumBaselineSamples,
+    minimumAppliedCompressions:
+      policy.minimumAppliedCompressions ??
+      DEFAULT_HERMES_PROPOSAL_POLICY.minimumAppliedCompressions,
+    minimumSavingsRate:
+      policy.minimumSavingsRate ?? DEFAULT_HERMES_PROPOSAL_POLICY.minimumSavingsRate,
+    maximumFailureRate:
+      policy.maximumFailureRate ?? DEFAULT_HERMES_PROPOSAL_POLICY.maximumFailureRate,
+    minimumQualityScore:
+      policy.minimumQualityScore ?? DEFAULT_HERMES_PROPOSAL_POLICY.minimumQualityScore,
+    maximumQualityRegression:
+      policy.maximumQualityRegression ?? DEFAULT_HERMES_PROPOSAL_POLICY.maximumQualityRegression,
+  };
   const matchingAggregates = observation.aggregates.filter(
     (aggregate) =>
       aggregate.scope.contextId === observation.contextId &&

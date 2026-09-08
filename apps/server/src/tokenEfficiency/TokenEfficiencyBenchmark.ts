@@ -110,7 +110,16 @@ export const evaluateTokenEfficiencyBenchmark = (
   results: ReadonlyArray<TokenEfficiencyBenchmarkResult>,
   policy: TokenEfficiencyBenchmarkAcceptancePolicy = {},
 ): ReadonlyArray<TokenEfficiencyBenchmarkVerdict> => {
-  const resolved = { ...DEFAULT_ACCEPTANCE_POLICY, ...policy };
+  const resolved = {
+    minimumQualityScore:
+      policy.minimumQualityScore ?? DEFAULT_ACCEPTANCE_POLICY.minimumQualityScore,
+    maximumQualityRegression:
+      policy.maximumQualityRegression ?? DEFAULT_ACCEPTANCE_POLICY.maximumQualityRegression,
+    maximumLatencyMultiplier:
+      policy.maximumLatencyMultiplier ?? DEFAULT_ACCEPTANCE_POLICY.maximumLatencyMultiplier,
+    maximumLatencyOverheadMs:
+      policy.maximumLatencyOverheadMs ?? DEFAULT_ACCEPTANCE_POLICY.maximumLatencyOverheadMs,
+  };
   const fixtureIds = [...new Set(results.map((result) => result.fixtureId))];
   const controls = new Map(
     results
