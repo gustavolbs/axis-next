@@ -98,6 +98,7 @@ const SETTINGS_PAGE_SECTIONS: Partial<
         label: string;
         targetId: string;
         search?: Readonly<Record<string, string>> | undefined;
+        icon?: ComponentType<{ className?: string }>;
       }>
     >
   >
@@ -392,6 +393,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                 handlePageSectionClick(item.to, section.targetId, section.search)
                               }
                             >
+                              {section.icon ? <section.icon className="size-3.5" /> : null}
                               <span className="ms-0.5">{section.label}</span>
                             </SidebarMenuSubButton>
                           </SidebarMenuSubItem>

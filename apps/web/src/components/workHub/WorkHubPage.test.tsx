@@ -41,6 +41,7 @@ vi.mock("../ui/tooltip", async () => {
 });
 
 import { CalendarView } from "./WorkHubPage";
+import { isWorkHubView } from "./WorkHub.logic";
 
 const contexts = [
   {
@@ -264,5 +265,14 @@ describe("Work Hub calendar component", () => {
       if (previousTimezone === undefined) delete process.env.TZ;
       else process.env.TZ = previousTimezone;
     }
+  });
+});
+
+describe("Work Hub views", () => {
+  it("accepts shareable work views and rejects unknown values", () => {
+    expect(isWorkHubView("calendar")).toBe(true);
+    expect(isWorkHubView("sources")).toBe(true);
+    expect(isWorkHubView("unknown")).toBe(false);
+    expect(isWorkHubView(undefined)).toBe(false);
   });
 });

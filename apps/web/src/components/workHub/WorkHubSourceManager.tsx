@@ -313,16 +313,45 @@ export function WorkHubSourceManager() {
       []
     ).map((status) => [status.sourceId, status] as const),
   );
+  const availableSourceCount = groups.reduce(
+    (total, group) =>
+      total +
+      group.providers.reduce((groupTotal, provider) => groupTotal + provider.mcps.length, 0),
+    0,
+  );
+  const selectedSourceCount = groups.reduce(
+    (total, group) =>
+      total +
+      group.providers.reduce(
+        (providerTotal, provider) => providerTotal + provider.selectedCapabilityIds.size,
+        0,
+      ),
+    0,
+  );
+  const attentionSourceCount = [...sourceStatuses.values()].filter(
+    (status) => status.status === "error" || status.status === "authorization-required",
+  ).length;
   return (
-    <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5 xl:col-span-2">
-      <div className="mb-4 flex items-start justify-between gap-3">
+    <section className="border-y border-border/70 py-5 xl:col-span-2">
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="font-medium text-foreground">Work Hub sources</h2>
+          <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+            Work Hub setup
+          </p>
+          <h2 className="mt-1 text-base font-semibold text-foreground">Source selection</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Choose the providers and MCPs Work Hub may query inside each isolated context.
+            Choose what Work Hub may query inside each isolated context. Every source keeps its own
+            cache and sync policy.
           </p>
         </div>
-        <Badge variant="secondary">8 hour cache</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline">
+            {selectedSourceCount} / {availableSourceCount} selected
+          </Badge>
+          {attentionSourceCount > 0 ? (
+            <Badge variant="warning">{attentionSourceCount} need attention</Badge>
+          ) : null}
+        </div>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         {groups.map((group, contextIndex) => (
@@ -345,13 +374,27 @@ export function WorkHubSourceManager() {
                   const providerKey = axisProviderInstanceLocatorKey(provider);
                   const providerSelected =
                     mcps.length > 0 && mcps.every((mcp) => selectedCapabilityIds.has(mcp.id));
+                  const selectedMcpCount = mcps.filter((mcp) =>
+                    selectedCapabilityIds.has(mcp.id),
+                  ).length;
+                  const providerPartial = selectedMcpCount > 0 && !providerSelected;
                   const providerLabel = providerLabels.get(providerKey) ?? provider.instanceId;
+                  const providerHasSyncingSource = mcps.some((mcp) => {
+                    const source = catalog.workHubSources.find(
+                      (candidate) =>
+                        candidate.contextId === group.context.id &&
+                        candidate.capabilityId === mcp.id,
+                    );
+                    return source !== undefined && syncingSourceIds.has(source.id);
+                  });
                   return (
                     <div key={providerKey} className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <Switch
                           checked={providerSelected}
-                          disabled={saving || syncingSourceIds.size > 0 || mcps.length === 0}
+                          aria-checked={providerPartial ? "mixed" : providerSelected}
+                          className={providerPartial ? "bg-warning/70" : undefined}
+                          disabled={saving || providerHasSyncingSource || mcps.length === 0}
                           aria-label={`Use ${providerLabel} in ${group.context.name}`}
                           onCheckedChange={(selected) =>
                             toggleProvider(
@@ -367,7 +410,8 @@ export function WorkHubSourceManager() {
                             {providerLabel}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {mcps.length} enabled MCP{mcps.length === 1 ? "" : "s"}
+                            {selectedMcpCount} of {mcps.length} MCP{mcps.length === 1 ? "" : "s"}{" "}
+                            selected
                           </p>
                         </div>
                       </div>
@@ -387,7 +431,10 @@ export function WorkHubSourceManager() {
                               >
                                 <Switch
                                   checked={selectedCapabilityIds.has(mcp.id)}
-                                  disabled={saving || syncingSourceIds.size > 0}
+                                  disabled={
+                                    saving ||
+                                    (source !== undefined && syncingSourceIds.has(source.id))
+                                  }
                                   aria-label={`Use ${mcp.name} from ${providerLabel} in ${group.context.name}`}
                                   onCheckedChange={(selected) =>
                                     toggleMcp(group.context.id, mcp.id, selected)
