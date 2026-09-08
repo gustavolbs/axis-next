@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.3] - 2026-09-08
+
+### Fixed
+
+- Run the mobile fingerprint PR check on the standard Ubuntu runner so it is not blocked by the unavailable Blacksmith queue.
+
 ## [0.2.2] - 2026-09-08
 
 ### Added
