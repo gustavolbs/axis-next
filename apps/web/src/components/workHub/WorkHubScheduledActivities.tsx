@@ -822,7 +822,7 @@ export function WorkHubScheduledActivities({
   };
 
   return (
-    <section className="rounded-2xl border border-border/70 bg-card/35 p-5 shadow-sm/5">
+    <section className="border-y border-border/70 py-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-medium text-foreground">Scheduled activities</h2>
