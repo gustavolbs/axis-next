@@ -52,6 +52,8 @@ export type ProviderSession = typeof ProviderSession.Type;
 
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
+  /** Server-owned policy for managed Axis conversations; never required from clients. */
+  axisChat: Schema.optional(Schema.Boolean),
   provider: Schema.optional(ProviderDriverKind),
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),

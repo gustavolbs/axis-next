@@ -999,7 +999,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
-            runtimeMode: input.runtimeMode,
+            runtimeMode: input.axisChat === true ? "approval-required" : input.runtimeMode,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...(mcpSession
@@ -1140,6 +1140,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               mapAcpCallbackFailure(
                 Effect.gen(function* () {
                   yield* logNative(input.threadId, "session/request_permission", params);
+                  if (input.axisChat === true) {
+                    return { outcome: { outcome: "cancelled" as const } };
+                  }
                   const permissionRequest = parsePermissionRequest(params);
                   const command = permissionRequest.toolCall?.command;
                   const { kind, title, rawInput, locations } = params.toolCall;
@@ -1265,7 +1268,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             provider: PROVIDER,
             providerInstanceId: boundInstanceId,
             status: "ready",
-            runtimeMode: input.runtimeMode,
+            runtimeMode: input.axisChat === true ? "approval-required" : input.runtimeMode,
             cwd,
             ...(boundModelId ? { model: resolveGrokAcpBaseModelId(boundModelId) } : {}),
             threadId: input.threadId,

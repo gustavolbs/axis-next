@@ -1,3 +1,4 @@
+import { isAxisChatsProject } from "../axis/chats/AxisChats.ts";
 import * as Encoding from "effect/Encoding";
 import { CheckpointRef, ProjectId, type ThreadId } from "@t3tools/contracts";
 
@@ -19,7 +20,8 @@ export function resolveThreadWorkspaceCwd(input: {
     readonly workspaceRoot: string;
   }>;
 }): string | undefined {
-  if (input.thread.projectId === null) return undefined;
+  if (input.thread.projectId === null || isAxisChatsProject(input.thread.projectId))
+    return undefined;
   const worktreeCwd = input.thread.worktreePath ?? undefined;
   if (worktreeCwd) {
     return worktreeCwd;

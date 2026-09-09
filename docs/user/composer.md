@@ -9,9 +9,13 @@ so you can shorten them or split them into several messages.
 ## Chats without a project
 
 Start a new chat from Chats in the sidebar when your conversation does not need a
-project. It uses the same messages, attachments, provider controls, and approvals
-as a project conversation. Chats have no project workspace or Git checkpoints.
-Archived chats can be restored from Settings > Archived threads.
+code workspace. Conversations are grouped in the managed Chats project. Connect
+the official T3 mobile app to the same environment and open that project to
+continue existing chats or start new ones.
+
+Chats support messages and attachments, with file editing, terminal sessions,
+worktrees and Git checkpoints unavailable. Each environment has its own Chats
+project. Archived conversations can be restored from Settings > Archived threads.
 
 ## Attach files
 

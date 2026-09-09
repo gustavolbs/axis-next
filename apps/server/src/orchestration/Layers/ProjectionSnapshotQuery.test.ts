@@ -24,6 +24,8 @@ import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
 import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
 
+import { AXIS_CHATS_PROJECT_ID } from "../../axis/chats/AxisChats.ts";
+
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -2104,9 +2106,16 @@ it.effect(
           )
       `;
 
+      yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES (${AXIS_CHATS_PROJECT_ID}, 'Chats', '/tmp/shared-root/.t3/userdata/chats', '[]', '2026-04-05T00:00:00.000Z', '2026-04-05T00:00:00.000Z')`;
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.deepStrictEqual(resolveCalls.toSorted(), ["/tmp/shared-root"]);
-      assert.equal(shellSnapshot.projects.length, 2);
+      assert.equal(shellSnapshot.projects.length, 3);
+      assert.equal(
+        shellSnapshot.projects.find((project) => project.id === AXIS_CHATS_PROJECT_ID)
+          ?.repositoryIdentity,
+        null,
+      );
       assert.equal(shellSnapshot.projects[0]?.repositoryIdentity?.rootPath, "/tmp/shared-root");
       assert.equal(shellSnapshot.projects[1]?.repositoryIdentity?.rootPath, "/tmp/shared-root");
 
@@ -2114,7 +2123,22 @@ it.effect(
 
       const fullSnapshot = yield* snapshotQuery.getSnapshot();
       assert.deepStrictEqual(resolveCalls.toSorted(), ["/tmp/deleted-root", "/tmp/shared-root"]);
-      assert.equal(fullSnapshot.projects.length, 3);
+      assert.equal(fullSnapshot.projects.length, 4);
+      assert.equal(
+        fullSnapshot.projects.find((project) => project.id === AXIS_CHATS_PROJECT_ID)
+          ?.repositoryIdentity,
+        null,
+      );
+      resolveCalls.length = 0;
+      const chat = yield* snapshotQuery.getProjectShellById(AXIS_CHATS_PROJECT_ID);
+      const byPath = yield* snapshotQuery.getActiveProjectByWorkspaceRoot(
+        "/tmp/shared-root/.t3/userdata/chats",
+      );
+      assert.equal(chat._tag, "Some");
+      assert.equal(byPath._tag, "Some");
+      if (chat._tag === "Some") assert.equal(chat.value.repositoryIdentity, null);
+      if (byPath._tag === "Some") assert.equal(byPath.value.repositoryIdentity, null);
+      assert.deepEqual(resolveCalls, []);
       assert.equal(fullSnapshot.projects[2]?.repositoryIdentity?.rootPath, "/tmp/deleted-root");
     }).pipe(Effect.provide(layer));
   },

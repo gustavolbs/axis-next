@@ -487,6 +487,36 @@ it.layer(layer)("AntigravityAdapter", (it) => {
     }),
   );
 
+  it.effect("denies native file writes and tool approvals in Chats", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped();
+      const target = path.join(cwd, "keep.txt");
+      yield* fs.writeFileString(target, "original");
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({ threadId, cwd, runtimeMode: "full-access", axisChat: true });
+      const write = h.fileHandlers.write;
+      expect(write).toBeDefined();
+      if (!write) return yield* Effect.die("Missing write handler");
+      const result = yield* write({
+        sessionId: nativeSessionId,
+        path: target,
+        content: "changed",
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(yield* fs.readFileString(target)).toBe("original");
+      expect(
+        yield* h.invokePermission({
+          sessionId: nativeSessionId,
+          toolCall: { toolCallId: "edit", kind: "edit", title: "Write file" },
+          options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+        }),
+      ).toEqual({ outcome: { outcome: "cancelled" } });
+      expect(h.calls).toContain("mode:default");
+    }),
+  );
+
   it.effect("does not auto-approve a remaining native request in full access", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

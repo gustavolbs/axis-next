@@ -1,3 +1,4 @@
+import { isAxisChatsProject } from "../../axis/chats/AxisChats.ts";
 import {
   CommandId,
   type CheckpointRef,
@@ -191,7 +192,8 @@ const make = Effect.gen(function* () {
     readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
     readonly preferSessionRuntime: boolean;
   }): Effect.fn.Return<string | undefined, CheckpointStoreError> {
-    if (input.thread.projectId === null) return undefined;
+    if (input.thread.projectId === null || isAxisChatsProject(input.thread.projectId))
+      return undefined;
     const fromSession = yield* resolveSessionRuntimeForThread(input.threadId);
     const fromThread = resolveThreadWorkspaceCwd({
       thread: input.thread,

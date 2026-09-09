@@ -4383,6 +4383,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           } satisfies PermissionResult;
         }
 
+        if (input.axisChat === true) {
+          return ["Read", "Glob", "Grep", "WebSearch", "WebFetch"].includes(toolName)
+            ? ({ behavior: "allow", updatedInput: toolInput } satisfies PermissionResult)
+            : ({
+                behavior: "deny",
+                message: "Chats cannot execute commands or change files.",
+              } satisfies PermissionResult);
+        }
         const runtimeMode = input.runtimeMode ?? "full-access";
         if (runtimeMode === "full-access") {
           return {
@@ -4553,7 +4561,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         auto: "auto",
         "full-access": "bypassPermissions",
       };
-      const permissionMode = runtimeModeToPermission[input.runtimeMode];
+      const permissionMode =
+        input.axisChat === true ? "default" : runtimeModeToPermission[input.runtimeMode];
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
@@ -4584,7 +4593,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             conciseOutputProfile: yield* readConciseOutputProfile,
           }),
         },
-        settingSources: [...CLAUDE_SETTING_SOURCES],
+        settingSources: input.axisChat === true ? [] : [...CLAUDE_SETTING_SOURCES],
+        ...(input.axisChat === true
+          ? {
+              tools: ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "AskUserQuestion"],
+            }
+          : {}),
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.
         ...(effectiveEffort

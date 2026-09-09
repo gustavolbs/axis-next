@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 
 import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapterRegistry.ts";
 import { makeAdapterRegistryMock } from "../src/provider/testUtils/providerAdapterRegistryMock.ts";
+import { ProviderSessionDirectory } from "../src/provider/Services/ProviderSessionDirectory.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
 import {
   NoOpProviderEventLoggers,
@@ -100,7 +101,10 @@ const makeIntegrationFixture = (options?: { readonly analytics?: Layer.Layer<Ana
       Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
     ).pipe(Layer.provide(SqlitePersistenceMemory));
 
-    const layer = makeProviderServiceLive().pipe(Layer.provide(shared));
+    const layer = makeProviderServiceLive().pipe(
+      Layer.provideMerge(shared),
+      Layer.provide(NodeServices.layer),
+    );
 
     return {
       cwd,
@@ -149,6 +153,52 @@ const runTurn = (input: {
       }),
     );
   });
+
+it.live("retains Chats restrictions through provider recovery and client restarts", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeIntegrationFixture();
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = ThreadId.make("chat-recovery");
+      const session = yield* provider.startSession(threadId, {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        cwd: fixture.cwd,
+        runtimeMode: "full-access",
+        axisChat: true,
+      });
+      assert.equal(session.runtimeMode, "approval-required");
+      assert.notEqual(session.cwd, fixture.cwd);
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(binding._tag, "Some");
+      if (binding._tag === "Some")
+        assert.propertyVal(binding.value.runtimePayload, "axisChat", true);
+      yield* fixture.harness.adapter.stopSession(threadId);
+      yield* fixture.harness.queueTurnResponseForNextSession({
+        events: codexTurnTextFixture,
+      });
+      yield* collectEventsDuring(
+        provider.streamEvents,
+        codexTurnTextFixture.length,
+        provider.sendTurn({ threadId, input: "Continue our conversation" }),
+      );
+      const recovered = (yield* provider.listSessions()).find(
+        (entry) => entry.threadId === threadId,
+      );
+      assert.equal(recovered?.runtimeMode, "approval-required");
+      assert.equal(recovered?.cwd, session.cwd);
+      const restarted = yield* provider.startSession(threadId, {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        cwd: fixture.cwd,
+        runtimeMode: "full-access",
+      });
+      assert.equal(restarted.cwd, session.cwd);
+      assert.equal(restarted.runtimeMode, "approval-required");
+    }).pipe(Effect.provide(fixture.layer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.live("replays typed runtime fixture events", () =>
   Effect.gen(function* () {

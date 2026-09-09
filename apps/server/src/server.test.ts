@@ -104,6 +104,7 @@ const decodeAxisWorkHubSourceStatus = Schema.decodeUnknownEffect(AxisWorkHubSour
 const decodeAxisLearningSnapshot = Schema.decodeUnknownEffect(AxisLearningSnapshot);
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import { AXIS_CHATS_PROJECT_ID } from "./axis/chats/AxisChats.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
 import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActivityRunner.ts";
@@ -11175,6 +11176,142 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         dispatchedCommands.map((command) => command.type),
         ["thread.create", "thread.delete"],
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects workspace writes, repository creation and terminals for Chats over RPC", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped();
+      const cwd = path.join(stateDir, "chats");
+      yield* fs.makeDirectory(cwd);
+      const target = path.join(cwd, "keep.txt");
+      yield* fs.writeFileString(target, "original");
+      yield* buildAppUnderTest({
+        config: { stateDir },
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.succeed(
+                Option.some(
+                  makeDefaultOrchestrationThreadShell({ projectId: AXIS_CHATS_PROJECT_ID }),
+                ),
+              ),
+          },
+          terminalManager: { open: () => Effect.die("Chats must never start a terminal") },
+          vcsDriver: {
+            initRepository: () => Effect.die("Chats must never initialize a repository"),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const projectError = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "project.meta.update",
+              commandId: CommandId.make("move-chats"),
+              projectId: AXIS_CHATS_PROJECT_ID,
+              workspaceRoot: stateDir,
+            }).pipe(Effect.flip);
+            assert.equal(projectError._tag, "OrchestrationDispatchCommandError");
+            const fileError = yield* client[WS_METHODS.projectsWriteFile]({
+              cwd,
+              relativePath: "keep.txt",
+              contents: "changed",
+            }).pipe(Effect.flip);
+            assert.equal(fileError._tag, "ProjectWriteFileError");
+            assert.equal((yield* client[WS_METHODS.vcsRefreshStatus]({ cwd })).isRepo, false);
+            assert.equal((yield* client[WS_METHODS.vcsListRefs]({ cwd })).isRepo, false);
+            const status = yield* client[WS_METHODS.subscribeVcsStatus]({ cwd }).pipe(
+              Stream.runHead,
+            );
+            assert.equal(status._tag, "Some");
+            if (status._tag === "Some") {
+              assert.equal(status.value._tag, "snapshot");
+              if (status.value._tag === "snapshot") assert.equal(status.value.local.isRepo, false);
+            }
+            const gitError = yield* client[WS_METHODS.vcsInit]({ cwd }).pipe(Effect.flip);
+            assert.equal(gitError._tag, "VcsUnsupportedOperationError");
+            const terminalError = yield* client[WS_METHODS.terminalOpen]({
+              threadId: String(defaultThreadId),
+              terminalId: "default",
+              cwd: "/tmp",
+            }).pipe(Effect.flip);
+            assert.equal(terminalError._tag, "TerminalSessionLookupError");
+          }),
+        ),
+      );
+      assert.equal(yield* fs.readFileString(target), "original");
+      assert.equal(yield* fs.exists(path.join(cwd, ".git")), false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("ignores mobile worktree and setup preferences when bootstrapping Chats", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationCommand[] = [];
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return { sequence: commands.length };
+              }),
+          },
+          gitVcsDriver: { createWorktree: () => Effect.die("Chats must never create a worktree") },
+          projectSetupScriptRunner: {
+            runForThread: () => Effect.die("Chats must never run project setup"),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("mobile-chat"),
+            threadId: defaultThreadId,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: "2026-09-09T00:00:00.000Z",
+            message: {
+              messageId: MessageId.make("mobile-message"),
+              role: "user",
+              text: "Hello",
+              attachments: [],
+            },
+            bootstrap: {
+              createThread: {
+                projectId: AXIS_CHATS_PROJECT_ID,
+                title: "Mobile chat",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: "main",
+                worktreePath: null,
+                createdAt: "2026-09-09T00:00:00.000Z",
+              },
+              prepareWorktree: {
+                projectCwd: "/user/project",
+                baseBranch: "main",
+                branch: "mobile-worktree",
+              },
+              runSetupScript: true,
+            },
+          }),
+        ),
+      );
+      assert.deepEqual(
+        commands.map((command) => command.type),
+        ["thread.create", "thread.turn.start"],
+      );
+      const created = commands[0];
+      assert(created?.type === "thread.create");
+      assert.equal(created.projectId, AXIS_CHATS_PROJECT_ID);
+      assert.equal(created.branch, null);
+      assert.equal(created.worktreePath, null);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

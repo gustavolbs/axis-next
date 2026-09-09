@@ -1925,57 +1925,62 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
-  it.effect("responds to ACP approvals using provider-supplied option ids", () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("grok-custom-approval-option-id");
-      const tempDir = yield* Effect.promise(() =>
-        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-")),
-      );
-      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-          T3_ACP_EMIT_TOOL_CALLS: "1",
-          T3_ACP_ALLOW_ONCE_OPTION_ID: "agent-defined-approval-id",
-        }),
-      );
-      const adapter = yield* makeTestAdapter(wrapperPath);
-      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        event.type === "request.opened"
-          ? adapter.respondToRequest(
-              threadId,
-              ApprovalRequestId.make(String(event.requestId)),
-              "accept",
-            )
-          : Effect.void,
-      ).pipe(Effect.forkChild);
+  it.effect.each([false, true])(
+    "handles native permissions with Chats restrictions (%s)",
+    (axisChat) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("grok-custom-approval-option-id");
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockGrokWrapper({
+            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+            T3_ACP_EMIT_TOOL_CALLS: "1",
+            T3_ACP_ALLOW_ONCE_OPTION_ID: "agent-defined-approval-id",
+          }),
+        );
+        const adapter = yield* makeTestAdapter(wrapperPath);
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          event.type === "request.opened"
+            ? adapter.respondToRequest(
+                threadId,
+                ApprovalRequestId.make(String(event.requestId)),
+                "accept",
+              )
+            : Effect.void,
+        ).pipe(Effect.forkChild);
 
-      yield* adapter.startSession({
-        threadId,
-        provider: ProviderDriverKind.make("grok"),
-        cwd: process.cwd(),
-        runtimeMode: "approval-required",
-      });
-      yield* adapter.sendTurn({ threadId, input: "approve this", attachments: [] });
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("grok"),
+          cwd: process.cwd(),
+          runtimeMode: axisChat ? "full-access" : "approval-required",
+          axisChat,
+        });
+        yield* adapter.sendTurn({ threadId, input: "approve this", attachments: [] });
 
-      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
-      assert.isTrue(
-        requests.some(
-          (entry) =>
-            !("method" in entry) &&
-            typeof entry.result === "object" &&
-            entry.result !== null &&
-            "outcome" in entry.result &&
-            typeof entry.result.outcome === "object" &&
-            entry.result.outcome !== null &&
-            "optionId" in entry.result.outcome &&
-            entry.result.outcome.optionId === "agent-defined-approval-id",
-        ),
-      );
+        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+        assert.isTrue(
+          requests.some(
+            (entry) =>
+              !("method" in entry) &&
+              typeof entry.result === "object" &&
+              entry.result !== null &&
+              "outcome" in entry.result &&
+              typeof entry.result.outcome === "object" &&
+              entry.result.outcome !== null &&
+              (axisChat
+                ? "outcome" in entry.result.outcome && entry.result.outcome.outcome === "cancelled"
+                : "optionId" in entry.result.outcome &&
+                  entry.result.outcome.optionId === "agent-defined-approval-id"),
+          ),
+        );
 
-      yield* Fiber.interrupt(eventsFiber);
-      yield* adapter.stopSession(threadId);
-    }),
+        yield* Fiber.interrupt(eventsFiber);
+        yield* adapter.stopSession(threadId);
+      }),
   );
 
   it.effect("captures xAI exit_plan_mode as a proposed plan and unblocks the turn", () =>

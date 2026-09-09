@@ -26,6 +26,33 @@ import {
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
+it.effect.each([undefined, "native-chat"])(
+  "starts and resumes Chats with a read-only sandbox (%s)",
+  (resumeThreadId) =>
+    Effect.gen(function* () {
+      const requests: Array<{ method: string; params: unknown }> = [];
+      yield* openCodexThread({
+        client: {
+          request: (method, params) => {
+            requests.push({ method, params });
+            return Effect.succeed(makeThreadOpenResponse("native-chat"));
+          },
+        },
+        threadId: ThreadId.make("chat"),
+        cwd: "/state/chats/chat",
+        runtimeMode: "full-access",
+        chatOnly: true,
+        requestedModel: undefined,
+        serviceTier: undefined,
+        resumeThreadId,
+      });
+      NodeAssert.equal(requests[0]?.method, resumeThreadId ? "thread/resume" : "thread/start");
+      const params = requests[0]?.params as { sandbox: string; approvalPolicy: string };
+      NodeAssert.equal(params.sandbox, "read-only");
+      NodeAssert.equal(params.approvalPolicy, "never");
+    }),
+);
+
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {
     const cause = new Error("random source unavailable");
@@ -67,6 +94,19 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
+  it.effect("keeps Chats read-only even when a client requests full access", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "chat",
+        runtimeMode: "full-access",
+        chatOnly: true,
+        prompt: "Hello",
+      });
+      NodeAssert.equal(params.approvalPolicy, "never");
+      NodeAssert.deepEqual(params.sandboxPolicy, { type: "readOnly" });
+    }),
+  );
+
   it("keeps invalid turn values only in the schema cause", () => {
     const secret = "codex-turn-input-secret-sentinel";
     const error = Effect.runSync(

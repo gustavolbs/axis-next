@@ -36,6 +36,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -45,6 +46,7 @@ import * as SchemaIssue from "effect/SchemaIssue";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { isAxisChatCwd, isAxisChatBinding, axisChatDirectory } from "../../axis/chats/AxisChats.ts";
 import * as ServerConfig from "../../config.ts";
 import {
   increment,
@@ -234,6 +236,7 @@ function toRuntimePayloadFromSession(
   session: ProviderSession,
   extra?: {
     readonly modelSelection?: unknown;
+    readonly axisChat?: boolean;
     readonly continueAfterServerUpdate?: TurnId;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
@@ -241,6 +244,7 @@ function toRuntimePayloadFromSession(
 ): Record<string, unknown> {
   return {
     cwd: session.cwd ?? null,
+    ...(extra?.axisChat ? { axisChat: true } : {}),
     model: session.model ?? null,
     activeTurnId: session.activeTurnId ?? null,
     lastError: session.lastError ?? null,
@@ -319,6 +323,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 ) {
   const analytics = yield* Effect.service(AnalyticsService.AnalyticsService);
   const serverConfig = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
   const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
   // Options-provided logger wins (test overrides); otherwise we take whatever
   // the `ProviderEventLoggers` tag exposes — `undefined` means "no canonical
@@ -859,9 +864,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     providerInstanceId: ProviderInstanceId,
     provider?: ProviderDriverKind,
     model?: string,
+    cwd?: string,
+    chatOnly = false,
   ) =>
     Effect.gen(function* () {
-      if (!(yield* agentBrowserAccessEnabled)) {
+      if (
+        chatOnly ||
+        isAxisChatCwd(serverConfig.stateDir, cwd) ||
+        !(yield* agentBrowserAccessEnabled)
+      ) {
         // Revoke as well as clear. Every other prepare path reaches
         // `issueActiveMcpCredential`, which revokes the thread first, so
         // skipping it here would leave a previously issued bearer token valid
@@ -981,6 +992,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
     extra?: {
       readonly modelSelection?: unknown;
+      readonly axisChat?: boolean;
       readonly continueAfterServerUpdate?: TurnId;
       readonly lastRuntimeEvent?: string;
       readonly lastRuntimeEventAt?: string;
@@ -1170,7 +1182,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         );
       }
 
-      const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
+      const chatOnly = isAxisChatBinding(input.binding.runtimePayload);
+      const persistedCwd = chatOnly
+        ? axisChatDirectory(serverConfig.stateDir, input.binding.threadId)
+        : readPersistedCwd(input.binding.runtimePayload);
+      if (chatOnly && persistedCwd)
+        yield* fileSystem
+          .makeDirectory(persistedCwd, { recursive: true })
+          .pipe(
+            Effect.mapError((cause) =>
+              toValidationError(input.operation, "Cannot prepare chat directory", cause),
+            ),
+          );
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
       yield* prepareMcpSession(
@@ -1178,6 +1201,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         bindingInstanceId,
         input.binding.provider,
         persistedModelSelection?.model,
+        persistedCwd,
+        chatOnly,
       );
       const resumed = yield* adapter
         .startSession({
@@ -1187,7 +1212,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(persistedCwd ? { cwd: persistedCwd } : {}),
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
-          runtimeMode: input.binding.runtimeMode ?? "full-access",
+          ...(chatOnly ? { axisChat: true as const } : {}),
+          runtimeMode:
+            chatOnly || isAxisChatCwd(serverConfig.stateDir, persistedCwd)
+              ? "approval-required"
+              : (input.binding.runtimeMode ?? "full-access"),
         })
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
       if (resumed.provider !== adapter.provider) {
@@ -1374,11 +1403,28 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           (persistedBinding?.providerInstanceId === resolvedInstanceId
             ? persistedBinding.resumeCursor
             : undefined);
-        const effectiveCwd =
-          input.cwd ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? readPersistedCwd(persistedBinding.runtimePayload)
-            : undefined);
+        const chatOnly =
+          input.axisChat === true ||
+          isAxisChatBinding(persistedBinding?.runtimePayload) ||
+          isAxisChatCwd(serverConfig.stateDir, input.cwd);
+        const effectiveCwd = chatOnly
+          ? axisChatDirectory(serverConfig.stateDir, threadId)
+          : (input.cwd ??
+            (persistedBinding?.providerInstanceId === resolvedInstanceId
+              ? readPersistedCwd(persistedBinding.runtimePayload)
+              : undefined));
+        if (chatOnly && effectiveCwd)
+          yield* fileSystem
+            .makeDirectory(effectiveCwd, { recursive: true })
+            .pipe(
+              Effect.mapError((cause) =>
+                toValidationError(
+                  "ProviderService.startSession",
+                  "Cannot prepare chat directory",
+                  cause,
+                ),
+              ),
+            );
         yield* Effect.annotateCurrentSpan({
           "provider.kind": resolvedProvider,
           "provider.resume_cursor.source":
@@ -1405,11 +1451,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           resolvedInstanceId,
           adapter.provider,
           input.modelSelection?.model,
+          effectiveCwd,
+          chatOnly,
         );
         const session = yield* adapter
           .startSession({
             ...input,
             providerInstanceId: resolvedInstanceId,
+            ...(chatOnly ? { axisChat: true as const } : {}),
+            runtimeMode: chatOnly ? "approval-required" : input.runtimeMode,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
           })
@@ -1438,6 +1488,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         yield* upsertSessionBinding(sessionWithInstance, threadId, {
           modelSelection: input.modelSelection,
+          axisChat: chatOnly,
         });
         yield* analytics.record("provider.session.started", {
           provider: sessionWithInstance.provider,

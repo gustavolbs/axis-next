@@ -1,3 +1,4 @@
+import { isAxisChatsProject } from "../../axis/chats/AxisChats.ts";
 import {
   ApprovalRequestId,
   ChatAttachment,
@@ -407,6 +408,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const repositoryIdentityResolutionConcurrency = 4;
+  const resolveProjectIdentity = (projectId: ProjectId, workspaceRoot: string) =>
+    isAxisChatsProject(projectId)
+      ? Effect.succeed(null)
+      : repositoryIdentityResolver.resolve(workspaceRoot);
   const resolveRepositoryIdentitiesForProjects = Effect.fn(
     "ProjectionSnapshotQuery.resolveRepositoryIdentitiesForProjects",
   )(function* (
@@ -419,7 +424,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       options?.includeDeleted === true
         ? projectRows
         : projectRows.filter((row) => row.deletedAt === null);
-    const uniqueWorkspaceRoots = [...new Set(filteredProjectRows.map((row) => row.workspaceRoot))];
+    const uniqueWorkspaceRoots = [
+      ...new Set(
+        filteredProjectRows
+          .filter((row) => !isAxisChatsProject(row.projectId))
+          .map((row) => row.workspaceRoot),
+      ),
+    ];
     const repositoryIdentityByWorkspaceRoot = new Map(
       yield* Effect.forEach(
         uniqueWorkspaceRoots,
@@ -434,7 +445,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     return new Map(
       filteredProjectRows.map((row) => [
         row.projectId,
-        repositoryIdentityByWorkspaceRoot.get(row.workspaceRoot) ?? null,
+        isAxisChatsProject(row.projectId)
+          ? null
+          : (repositoryIdentityByWorkspaceRoot.get(row.workspaceRoot) ?? null),
       ]),
     );
   });
@@ -2608,7 +2621,7 @@ pending_approval_requests AS (
         Effect.flatMap((option) =>
           Option.isNone(option)
             ? Effect.succeed(Option.none<OrchestrationProject>())
-            : repositoryIdentityResolver.resolve(option.value.workspaceRoot).pipe(
+            : resolveProjectIdentity(option.value.projectId, option.value.workspaceRoot).pipe(
                 Effect.map((repositoryIdentity) =>
                   Option.some({
                     id: option.value.projectId,
@@ -2641,13 +2654,11 @@ pending_approval_requests AS (
       Effect.flatMap((option) =>
         Option.isNone(option)
           ? Effect.succeed(Option.none<OrchestrationProjectShell>())
-          : repositoryIdentityResolver
-              .resolve(option.value.workspaceRoot)
-              .pipe(
-                Effect.map((repositoryIdentity) =>
-                  Option.some(mapProjectShellRow(option.value, repositoryIdentity)),
-                ),
+          : resolveProjectIdentity(option.value.projectId, option.value.workspaceRoot).pipe(
+              Effect.map((repositoryIdentity) =>
+                Option.some(mapProjectShellRow(option.value, repositoryIdentity)),
               ),
+            ),
       ),
     );
 

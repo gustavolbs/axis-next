@@ -4654,6 +4654,45 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("denies editing and command tools in Chats while allowing read and web tools", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        runtimeMode: "full-access",
+        axisChat: true,
+      });
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.equal(options?.permissionMode, "default");
+      assert.equal(options?.allowDangerouslySkipPermissions, undefined);
+      assert.deepEqual(options?.settingSources, []);
+      const canUseTool = options?.canUseTool;
+      assert(canUseTool);
+      for (const toolName of ["Write", "Edit", "Bash", "Agent", "mcp__files__write"]) {
+        const decision = yield* Effect.promise(() =>
+          canUseTool(
+            toolName,
+            {},
+            { signal: new AbortController().signal, toolUseID: toolName, requestId: toolName },
+          ),
+        );
+        assert.equal(decision?.behavior, "deny");
+      }
+      const read = yield* Effect.promise(() =>
+        canUseTool(
+          "Read",
+          { file_path: "/reference.txt" },
+          { signal: new AbortController().signal, toolUseID: "read", requestId: "read" },
+        ),
+      );
+      assert.equal(read?.behavior, "allow");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("bridges approval request/response lifecycle through canUseTool", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

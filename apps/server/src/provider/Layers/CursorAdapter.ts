@@ -551,7 +551,7 @@ export function makeCursorAdapter(
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
-            runtimeMode: input.runtimeMode,
+            runtimeMode: input.axisChat === true ? "approval-required" : input.runtimeMode,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...(mcpSession
@@ -687,6 +687,9 @@ export function makeCursorAdapter(
                     params,
                     "acp.jsonrpc",
                   );
+                  if (input.axisChat === true) {
+                    return { outcome: { outcome: "cancelled" as const } };
+                  }
                   if (input.runtimeMode === "full-access") {
                     const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
                     if (autoApprovedOptionId !== undefined) {
@@ -758,7 +761,7 @@ export function makeCursorAdapter(
 
           yield* applyRequestedSessionConfiguration({
             runtime: acp,
-            runtimeMode: input.runtimeMode,
+            runtimeMode: input.axisChat === true ? "approval-required" : input.runtimeMode,
             interactionMode: undefined,
             modelSelection: cursorModelSelection,
             mapError: ({ cause, method }) =>
@@ -770,7 +773,7 @@ export function makeCursorAdapter(
             provider: PROVIDER,
             providerInstanceId: boundInstanceId,
             status: "ready",
-            runtimeMode: input.runtimeMode,
+            runtimeMode: input.axisChat === true ? "approval-required" : input.runtimeMode,
             cwd,
             model: cursorModelSelection?.model,
             threadId: input.threadId,

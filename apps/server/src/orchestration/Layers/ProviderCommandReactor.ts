@@ -1,3 +1,4 @@
+import { isAxisChatsProject } from "../../axis/chats/AxisChats.ts";
 import {
   type ChatAttachment,
   CommandId,
@@ -501,6 +502,7 @@ const make = Effect.gen(function* () {
     readonly branch: string | null;
     readonly worktreePath: string | null;
   }) {
+    if (isAxisChatsProject(thread.projectId)) return;
     const { worktreePath, branch } = thread;
     if (!worktreePath || !branch) {
       return;
@@ -714,7 +716,7 @@ const make = Effect.gen(function* () {
     }
     const project = yield* resolveProject(thread.projectId);
     const effectiveCwd =
-      thread.projectId === null
+      thread.projectId === null || isAxisChatsProject(thread.projectId)
         ? yield* standaloneCwd(thread.id)
         : resolveThreadWorkspaceCwd({
             thread,
@@ -736,6 +738,7 @@ const make = Effect.gen(function* () {
           ...(preferredProvider ? { provider: preferredProvider } : {}),
           providerInstanceId: desiredInstanceId,
           ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+          ...(isAxisChatsProject(thread.projectId) ? { axisChat: true as const } : {}),
           ...(thread.title ? { title: thread.title } : {}),
           modelSelection: desiredModelSelection,
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
@@ -1042,7 +1045,7 @@ const make = Effect.gen(function* () {
     }
     const project = yield* resolveProject(thread.projectId);
     const cwd =
-      thread.projectId === null
+      thread.projectId === null || isAxisChatsProject(thread.projectId)
         ? yield* standaloneCwd(thread.id)
         : (resolveThreadWorkspaceCwd({
             thread,
@@ -1313,7 +1316,7 @@ const make = Effect.gen(function* () {
     if (nonCompactUserMessageCount === 1 && !isCompactCommand) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =
-        thread.projectId === null
+        thread.projectId === null || isAxisChatsProject(thread.projectId)
           ? yield* standaloneCwd(thread.id)
           : (resolveThreadWorkspaceCwd({
               thread,
