@@ -29,7 +29,7 @@ const baseItem = {
 };
 
 describe("buildAxisWorkHubCacheSnapshot", () => {
-  it("keeps only focused recent data and creates an eight-hour snapshot", () => {
+  it("keeps provider-selected data and creates an eight-hour snapshot", () => {
     const request = decodeInput({
       sourceId: "personal_connector",
       contextId: "personal",
@@ -37,16 +37,10 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
       capabilityId: "connector",
       mcpName: "Work tools",
       collectionPolicy: {
-        calendarLookbackDays: 14,
-        calendarLookaheadDays: 90,
-        assignedWorkItemsOnly: true,
-        directMessages: true,
-        mentions: true,
-        assignedIssueComments: true,
+        prompt: "",
       },
       cacheTtlSeconds: 28_800,
       previousCursor: null,
-      previousRefreshedAt: "2026-09-04T12:00:00.000Z",
     });
     const result = decodeResult({
       cursor: "next-page",
@@ -150,7 +144,10 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
       "recent-event",
       "continuing-event",
       "all-day-event",
+      "event-from-2012",
       "AXIS-42",
+      "AXIS-41",
+      "old-dm",
       "new-mention",
     ]);
     expect(snapshot.items[0]?.meetingLink).toBe("https://meet.example.com/planning");
@@ -166,7 +163,7 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
       cancelled: false,
     });
     expect(snapshot.items[1]?.deepLink).toBeNull();
-    expect(snapshot.items[3]).toMatchObject({
+    expect(snapshot.items[4]).toMatchObject({
       assignee: "Ada Lovelace",
       priority: "High",
       dueDate: "2026-09-12T00:00:00.000Z",
@@ -179,7 +176,7 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
     expect(snapshot.expiresAt).toBe("2026-09-05T20:00:00.000Z");
   });
 
-  it("keeps only non-empty calendar intervals that intersect the half-open window", () => {
+  it("does not apply hidden calendar filters to provider results", () => {
     const request = decodeInput({
       sourceId: "personal_connector",
       contextId: "personal",
@@ -187,16 +184,10 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
       capabilityId: "connector",
       mcpName: "Work tools",
       collectionPolicy: {
-        calendarLookbackDays: 1,
-        calendarLookaheadDays: 1,
-        assignedWorkItemsOnly: false,
-        directMessages: false,
-        mentions: false,
-        assignedIssueComments: false,
+        prompt: "",
       },
       cacheTtlSeconds: 28_800,
       previousCursor: null,
-      previousRefreshedAt: null,
     });
     const result = decodeResult({
       cursor: null,
@@ -241,11 +232,8 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
     });
 
     expect(buildAxisWorkHubCacheSnapshot({ request, result, nowEpochMs: now }).items).toHaveLength(
-      1,
+      4,
     );
-    expect(
-      buildAxisWorkHubCacheSnapshot({ request, result, nowEpochMs: now }).items[0]?.nativeId,
-    ).toBe("all-day-no-time");
   });
 });
 
@@ -257,43 +245,30 @@ describe("buildCollectionPrompt", () => {
     capabilityId: "connector",
     mcpName: "Work tools",
     collectionPolicy: {
-      calendarLookbackDays: 14,
-      calendarLookaheadDays: 90,
-      assignedWorkItemsOnly: true,
-      directMessages: true,
-      mentions: true,
-      assignedIssueComments: true,
+      prompt: "Find upcoming customer meetings and open support tickets.",
     },
     cacheTtlSeconds: 28_800,
     previousCursor: null,
-    previousRefreshedAt: "2026-09-04T12:00:00.000Z",
   });
 
-  it("uses the source calendar policy in one contiguous provider query", () => {
-    const prompt = buildCollectionPrompt(request, now);
-    const bounds = prompt.match(/start: "([^"]+)" end: "([^"]+)"/u);
+  it("uses the source prompt as the only search criterion", () => {
+    const prompt = buildCollectionPrompt(request);
 
-    expect(bounds).not.toBeNull();
-    expect(Date.parse(bounds![1]!)).toBe(now - 14 * 86_400_000);
-    expect(Date.parse(bounds![2]!)).toBe(now + 90 * 86_400_000);
-    // The old prompt emitted a numbered slice list; one range means one query.
-    expect(prompt).not.toMatch(/PER SLICE/u);
-    expect(prompt.match(/afterDateTime/gu)).toHaveLength(1);
+    expect(prompt).toContain("Find upcoming customer meetings and open support tickets.");
+    expect(prompt).toContain("sole criterion");
+    expect(prompt).not.toContain("afterDateTime");
+    expect(prompt).not.toContain("calendarLookbackDays");
   });
 
-  it("names the known connector tools so discovery costs one ToolSearch", () => {
-    const prompt = buildCollectionPrompt(request, now);
+  it("keeps provider safety and the structured output contract", () => {
+    const prompt = buildCollectionPrompt(request);
 
-    expect(prompt).toContain("select:");
-    expect(prompt).toContain("jira_search");
-    expect(prompt).toContain("outlook_calendar_search");
-    expect(prompt).toContain("slack_search_public_and_private");
-    expect(prompt).toContain("after:2026-09-04");
-    expect(prompt).toContain("sourceUpdatedAt");
-    expect(prompt).toContain("assignee");
-    expect(prompt).toContain("sourceTimeZone");
-    expect(prompt).toContain("every participant");
-    expect(prompt).toContain("cancelled=true");
+    expect(prompt).toContain('MCP server named "Work tools"');
+    expect(prompt).toContain("ToolSearch");
+    expect(prompt).toContain("read-only, source-scoped, and structured-output requirements");
+    expect(prompt).toContain(
+      "Always finish by returning the structured JSON result instead of prose.",
+    );
   });
 });
 

@@ -10,6 +10,12 @@
 
 - Preserve existing chat histories while moving them into Chats, with separate conversation directories and restricted provider execution. Disable workspace edits, terminal sessions, worktrees, setup scripts, and Git checkpoints for Chats.
 
+## [0.2.4] - 2026-09-09
+
+### Fixed
+
+- Use a source-specific prompt as the sole Work Hub collection criterion.
+
 ## [0.2.3] - 2026-09-08
 
 ### Fixed

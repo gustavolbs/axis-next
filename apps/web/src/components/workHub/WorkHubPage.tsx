@@ -709,8 +709,7 @@ function MessagesView({
       </div>
       {sorted.length === 0 ? (
         <EmptyCollection>
-          Sync Slack, Jira, or another selected MCP to load DMs, mentions, and new assigned-ticket
-          comments.
+          Configure a source prompt and sync the selected MCP to load its matching items.
         </EmptyCollection>
       ) : (
         <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60">
