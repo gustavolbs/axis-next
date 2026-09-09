@@ -84,7 +84,7 @@ it.effect("imports standalone history as replayable events and keeps original fi
         VALUES ('existing-thread', 'existing-project', 'Existing project thread', ${now}, ${now}, ${now})`;
       const chatJson = yield* encodeChatJson(yield* decodeChat(chat));
       yield* sql`INSERT INTO axis_scratch_chats VALUES ('chat', 'environment', ${chatJson}, NULL, 'session', ${now}, ${now}, ${now})`;
-      yield* runMigrations();
+      yield* runMigrations({ toMigrationInclusive: 57 });
       const preserved =
         yield* sql`SELECT thread_id, project_id, pinned_at FROM projection_threads WHERE thread_id = 'existing-thread'`;
       assert.deepEqual(preserved, [
@@ -133,7 +133,7 @@ it.effect("imports standalone history as replayable events and keeps original fi
         replayedThread?.messages.map((entry) => entry.text),
         ["Question", "Answer"],
       );
-      yield* runMigrations();
+      yield* runMigrations({ toMigrationInclusive: 57 });
       const count = yield* sql<{
         count: number;
       }>`SELECT COUNT(*) AS count FROM orchestration_events`;
@@ -226,7 +226,7 @@ it.effect(
         'existing-chat', 'environment', ${chatJson}, 'existing-project', 'existing-thread', ${now}, ${now}, ${now}
       )`;
 
-        yield* runMigrations();
+        yield* runMigrations({ toMigrationInclusive: 57 });
 
         const projection = yield* sql<{ project_id: string | null }>`
         SELECT project_id FROM projection_threads WHERE thread_id = 'existing-thread'

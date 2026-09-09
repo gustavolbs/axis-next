@@ -2868,7 +2868,10 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: reusable.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: buildOpenCodePermissionRules(
+                        input.runtimeMode,
+                        input.axisChat === true,
+                      ),
                     }),
                   );
                   return { openCodeSession: reusable, created: false };
@@ -2895,7 +2898,10 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: buildOpenCodePermissionRules(
+                        input.runtimeMode,
+                        input.axisChat === true,
+                      ),
                     }),
                   );
                   return { openCodeSession: forked, created: true };
@@ -2909,7 +2915,10 @@ export function makeOpenCodeAdapter(
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
                     ...(input.title ? { title: input.title } : {}),
-                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    permission: buildOpenCodePermissionRules(
+                      input.runtimeMode,
+                      input.axisChat === true,
+                    ),
                   }),
                 );
                 if (!createdSession.data) {

@@ -34,6 +34,8 @@ import {
 import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
 
+import { AXIS_CHATS_PROJECT_ID, isAxisChatsProject } from "../axis/chats/AxisChats.ts";
+
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
 
@@ -198,6 +200,59 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   OrchestrationCommandRejection | PlatformError.PlatformError,
   Crypto.Crypto
 > {
+  let projectId: OrchestrationThread["projectId"] | undefined;
+  switch (command.type) {
+    case "project.create":
+    case "project.meta.update":
+    case "project.delete":
+    case "thread.create":
+      projectId = command.projectId ?? AXIS_CHATS_PROJECT_ID;
+      break;
+    case "thread.turn.start":
+    case "thread.meta.update":
+    case "thread.runtime-mode.set":
+    case "thread.approval.respond":
+    case "thread.checkpoint.revert": {
+      const threadId = command.threadId;
+      projectId = readModel.threads.find((thread) => thread.id === threadId)?.projectId;
+      break;
+    }
+  }
+  if (isAxisChatsProject(projectId)) {
+    const unsupported =
+      command.type === "project.delete" ||
+      (command.type === "project.meta.update" &&
+        (command.autoPull === true ||
+          (command.scripts?.length ?? 0) > 0 ||
+          command.defaultThreadEnvMode === "worktree")) ||
+      (command.type === "thread.meta.update" &&
+        (command.branch != null ||
+          command.worktreePath != null ||
+          command.linkedPullRequest != null)) ||
+      command.type === "thread.checkpoint.revert" ||
+      (command.type === "thread.runtime-mode.set" && command.runtimeMode !== "approval-required") ||
+      (command.type === "thread.approval.respond" &&
+        command.decision !== "decline" &&
+        command.decision !== "cancel");
+    if (unsupported) {
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: command.type,
+        detail:
+          "Chats is a managed conversation project. Workspace changes and write permissions are unavailable.",
+      });
+    }
+    if (command.type === "thread.create") {
+      command = {
+        ...command,
+        projectId: AXIS_CHATS_PROJECT_ID,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+      };
+    } else if (command.type === "thread.turn.start") {
+      command = { ...command, runtimeMode: "approval-required" };
+    }
+  }
   switch (command.type) {
     case "project.create": {
       yield* requireProjectAbsent({

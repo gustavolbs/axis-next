@@ -1,3 +1,4 @@
+import Migration0058 from "./Migrations/058_AxisChatsProject.ts";
 /**
  * Migration runner with an inline loader.
  *
@@ -138,6 +139,7 @@ export const migrationEntries = [
   [55, "ProjectlessThreads", Migration0055],
   [56, "AxisContextCleanup", Migration0056],
   [57, "ImportStandaloneChats", Migration0057],
+  [58, "AxisChatsProject", Migration0058],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

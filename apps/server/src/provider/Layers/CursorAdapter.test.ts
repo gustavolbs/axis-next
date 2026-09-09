@@ -784,9 +784,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       ),
   );
 
-  it.effect(
-    "auto-approves ACP tool permissions in full-access mode without approval runtime events",
-    () =>
+  it.effect.each([false, true])(
+    "handles native tool permissions without approval prompts (Chats: %s)",
+    (axisChat) =>
       Effect.gen(function* () {
         const adapter = yield* CursorAdapter;
         const serverSettings = yield* ServerSettingsService;
@@ -831,6 +831,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           provider: ProviderDriverKind.make("cursor"),
           cwd: process.cwd(),
           runtimeMode: "full-access",
+          axisChat,
           modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
         });
 
@@ -871,14 +872,16 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             typeof entry.result.outcome === "object" &&
             entry.result.outcome !== null &&
             "outcome" in entry.result.outcome &&
-            entry.result.outcome.outcome === "selected" &&
-            "optionId" in entry.result.outcome &&
-            entry.result.outcome.optionId === "allow-always",
+            (axisChat
+              ? entry.result.outcome.outcome === "cancelled"
+              : entry.result.outcome.outcome === "selected" &&
+                "optionId" in entry.result.outcome &&
+                entry.result.outcome.optionId === "allow-always"),
         );
         assert.isDefined(permissionResponse);
 
         const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
-        assert.deepStrictEqual(argvRuns, [["--force", "acp"]]);
+        assert.deepStrictEqual(argvRuns, [axisChat ? ["acp"] : ["--force", "acp"]]);
 
         yield* adapter.stopSession(threadId);
       }),

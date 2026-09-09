@@ -163,6 +163,7 @@ export interface CodexSessionRuntimeOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
+  readonly chatOnly?: boolean;
   readonly model?: string;
   readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
   readonly resolveConciseOutputProfile?: Effect.Effect<
@@ -535,10 +536,17 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
 function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
+  readonly chatOnly?: boolean;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
-  const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const config = input.chatOnly
+    ? {
+        approvalPolicy: "never" as const,
+        sandbox: "read-only" as const,
+        approvalsReviewer: "user" as const,
+      }
+    : runtimeModeToThreadConfig(input.runtimeMode);
   return {
     cwd: input.cwd,
     approvalPolicy: config.approvalPolicy,
@@ -605,6 +613,7 @@ function buildCodexCollaborationMode(input: {
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
+  readonly chatOnly?: boolean;
   readonly prompt?: string;
   readonly attachments?: ReadonlyArray<{
     readonly type: "image";
@@ -632,7 +641,13 @@ export function buildTurnStartParams(input: {
     turnInput.push(attachment);
   }
 
-  const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const config = input.chatOnly
+    ? {
+        approvalPolicy: "never" as const,
+        sandbox: "read-only" as const,
+        approvalsReviewer: "user" as const,
+      }
+    : runtimeModeToThreadConfig(input.runtimeMode);
   const collaborationMode = buildCodexCollaborationMode({
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
@@ -646,7 +661,9 @@ export function buildTurnStartParams(input: {
     input: turnInput,
     approvalPolicy: config.approvalPolicy,
     approvalsReviewer: config.approvalsReviewer,
-    sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode),
+    sandboxPolicy: input.chatOnly
+      ? { type: "readOnly" }
+      : runtimeModeToTurnSandboxPolicy(input.runtimeMode),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
@@ -707,6 +724,7 @@ export const openCodexThread = (input: {
   readonly client: CodexThreadOpenClient;
   readonly threadId: ThreadId;
   readonly runtimeMode: RuntimeMode;
+  readonly chatOnly?: boolean;
   readonly cwd: string;
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
@@ -716,6 +734,7 @@ export const openCodexThread = (input: {
   const startParams = buildThreadStartParams({
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
+    chatOnly: input.chatOnly ?? false,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
   });
@@ -2254,6 +2273,7 @@ export const makeCodexSessionRuntime = (
         client,
         threadId: options.threadId,
         runtimeMode: options.runtimeMode,
+        chatOnly: options.chatOnly ?? false,
         cwd: options.cwd,
         requestedModel,
         serviceTier: options.serviceTier,
@@ -2334,6 +2354,7 @@ export const makeCodexSessionRuntime = (
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
+            chatOnly: options.chatOnly ?? false,
             ...(input.input ? { prompt: input.input } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),

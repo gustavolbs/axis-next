@@ -31,6 +31,7 @@ import {
   type OrchestrationClientOrigin,
   type OrchestrationCommand,
   type GitActionProgressEvent,
+  GitCommandError,
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
@@ -56,6 +57,7 @@ import {
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   ServerSelfUpdateError,
+  SourceControlRepositoryError,
   type ServerSelfUpdateProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
@@ -68,6 +70,9 @@ import {
   type TerminalError,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
+  TerminalSessionLookupError,
+  type VcsStatusStreamEvent,
+  VcsUnsupportedOperationError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -75,6 +80,7 @@ import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgro
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
+import { isAxisChatsProject, isAxisChatCwd, axisChatsVcsStatus } from "./axis/chats/AxisChats.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
@@ -962,11 +968,68 @@ const makeWsRpcLayer = (
           return output;
         });
 
+      const requireChatWorkspaceWritable = (cwd: string) =>
+        isAxisChatCwd(config.stateDir, cwd)
+          ? Effect.fail(
+              new GitCommandError({
+                operation: "workspace.write",
+                command: "git",
+                cwd,
+                detail: "Chats does not support repository changes.",
+              }),
+            )
+          : Effect.void;
+      const requireChatTerminalAvailable = (input: {
+        readonly threadId: string;
+        readonly terminalId?: string | undefined;
+      }) =>
+        Effect.gen(function* () {
+          const thread = yield* projectionSnapshotQuery
+            .getThreadShellById(ThreadId.make(input.threadId))
+            .pipe(
+              Effect.mapError(
+                () =>
+                  new TerminalSessionLookupError({
+                    threadId: input.threadId,
+                    terminalId: input.terminalId ?? "default",
+                  }),
+              ),
+            );
+          if (Option.isSome(thread) && isAxisChatsProject(thread.value.projectId)) {
+            return yield* new TerminalSessionLookupError({
+              threadId: input.threadId,
+              terminalId: input.terminalId ?? "default",
+            });
+          }
+        });
+
       const dispatchBootstrapTurnStart = (
         command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
         Effect.gen(function* () {
-          const bootstrap = command.bootstrap;
+          const projectId =
+            command.bootstrap?.createThread?.projectId ??
+            Option.getOrUndefined(
+              yield* projectionSnapshotQuery
+                .getThreadShellById(command.threadId)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    toDispatchCommandError(cause, "Failed to resolve chat project"),
+                  ),
+                ),
+            )?.projectId;
+          const bootstrap =
+            isAxisChatsProject(projectId) || command.bootstrap?.createThread?.projectId === null
+              ? command.bootstrap?.createThread
+                ? {
+                    createThread: {
+                      ...command.bootstrap.createThread,
+                      branch: null,
+                      worktreePath: null,
+                    },
+                  }
+                : undefined
+              : command.bootstrap;
           const { bootstrap: _bootstrap, ...finalTurnStartCommand } = command;
           let createdThread = false;
           let targetProjectId = bootstrap?.createThread?.projectId;
@@ -2454,9 +2517,16 @@ const makeWsRpcLayer = (
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlPublishRepository,
-            sourceControlRepositories
-              .publishRepository(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            (isAxisChatCwd(config.stateDir, input.cwd)
+              ? Effect.fail(
+                  new SourceControlRepositoryError({
+                    operation: "publish",
+                    provider: input.provider,
+                    detail: "Chats does not support repositories.",
+                  }),
+                )
+              : sourceControlRepositories.publishRepository(input)
+            ).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             {
               "rpc.aggregate": "source-control",
             },
@@ -2528,17 +2598,26 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
-            workspaceFileSystem.writeFile(input).pipe(
-              Effect.mapError(
-                (cause) =>
+            isAxisChatCwd(config.stateDir, input.cwd)
+              ? Effect.fail(
                   new ProjectWriteFileError({
                     cwd: input.cwd,
                     relativePath: input.relativePath,
-                    ...projectFileFailureContext(cause),
-                    cause,
+                    failure: "operation_failed",
+                    cause: new Error("Chats cannot change workspace files."),
                   }),
-              ),
-            ),
+                )
+              : workspaceFileSystem.writeFile(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectWriteFileError({
+                        cwd: input.cwd,
+                        relativePath: input.relativePath,
+                        ...projectFileFailureContext(cause),
+                        cause,
+                      }),
+                  ),
+                ),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
@@ -2646,9 +2725,15 @@ const makeWsRpcLayer = (
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeVcsStatus,
-            vcsStatusBroadcaster.streamStatus(input, {
-              automaticRemoteRefreshInterval: automaticGitFetchInterval,
-            }),
+            isAxisChatCwd(config.stateDir, input.cwd)
+              ? Stream.succeed<VcsStatusStreamEvent>({
+                  _tag: "snapshot",
+                  local: axisChatsVcsStatus,
+                  remote: null,
+                }).pipe(Stream.concat(Stream.never))
+              : vcsStatusBroadcaster.streamStatus(input, {
+                  automaticRemoteRefreshInterval: automaticGitFetchInterval,
+                }),
             {
               "rpc.aggregate": "vcs",
             },
@@ -2656,7 +2741,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRefreshStatus,
-            vcsStatusBroadcaster.refreshStatus(input.cwd),
+            isAxisChatCwd(config.stateDir, input.cwd)
+              ? Effect.succeed(axisChatsVcsStatus)
+              : vcsStatusBroadcaster.refreshStatus(input.cwd),
             {
               "rpc.aggregate": "vcs",
             },
@@ -2664,7 +2751,8 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsPull]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsPull,
-            gitWorkflow.pullCurrentBranch(input.cwd).pipe(
+            requireChatWorkspaceWritable(input.cwd).pipe(
+              Effect.andThen(gitWorkflow.pullCurrentBranch(input.cwd)),
               Effect.matchCauseEffect({
                 onFailure: (cause) => Effect.failCause(cause),
                 onSuccess: (result) =>
@@ -2677,22 +2765,23 @@ const makeWsRpcLayer = (
           observeRpcStream(
             WS_METHODS.gitRunStackedAction,
             Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-              gitWorkflow
-                .runStackedAction(input, {
-                  actionId: input.actionId,
-                  progressReporter: {
-                    publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                  },
-                })
-                .pipe(
-                  Effect.matchCauseEffect({
-                    onFailure: (cause) => Queue.failCause(queue, cause),
-                    onSuccess: () =>
-                      refreshGitStatus(input.cwd).pipe(
-                        Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
-                      ),
+              requireChatWorkspaceWritable(input.cwd).pipe(
+                Effect.andThen(
+                  gitWorkflow.runStackedAction(input, {
+                    actionId: input.actionId,
+                    progressReporter: {
+                      publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                    },
                   }),
                 ),
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Queue.failCause(queue, cause),
+                  onSuccess: () =>
+                    refreshGitStatus(input.cwd).pipe(
+                      Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
+                    ),
+                }),
+              ),
             ),
             { "rpc.aggregate": "vcs" },
           ),
@@ -2707,45 +2796,77 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPreparePullRequestThread,
-            gitWorkflow
-              .preparePullRequestThread(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            requireChatWorkspaceWritable(input.cwd).pipe(
+              Effect.andThen(gitWorkflow.preparePullRequestThread(input)),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.vcsListRefs]: (input) =>
-          observeRpcEffect(WS_METHODS.vcsListRefs, gitWorkflow.listRefs(input), {
-            "rpc.aggregate": "vcs",
-          }),
+          observeRpcEffect(
+            WS_METHODS.vcsListRefs,
+            isAxisChatCwd(config.stateDir, input.cwd)
+              ? Effect.succeed({
+                  refs: [],
+                  isRepo: false,
+                  hasPrimaryRemote: false,
+                  nextCursor: null,
+                  totalCount: 0,
+                })
+              : gitWorkflow.listRefs(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
-            gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            requireChatWorkspaceWritable(input.cwd).pipe(
+              Effect.andThen(gitWorkflow.createWorktree(input)),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
-            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            requireChatWorkspaceWritable(input.cwd).pipe(
+              Effect.andThen(gitWorkflow.removeWorktree(input)),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateRef,
-            gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            requireChatWorkspaceWritable(input.cwd).pipe(
+              Effect.andThen(gitWorkflow.createRef(input)),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsSwitchRef,
-            gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            requireChatWorkspaceWritable(input.cwd).pipe(
+              Effect.andThen(gitWorkflow.switchRef(input)),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsInit]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsInit,
-            vcsProvisioning
-              .initRepository(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            (isAxisChatCwd(config.stateDir, input.cwd)
+              ? Effect.fail(
+                  new VcsUnsupportedOperationError({
+                    operation: "init",
+                    kind: input.kind ?? "git",
+                    detail: "Chats does not support repositories.",
+                  }),
+                )
+              : vcsProvisioning.initRepository(input)
+            ).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.reviewGetDiffPreview]: (input) =>
@@ -2759,24 +2880,36 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "review" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalOpen,
+            requireChatTerminalAvailable(input).pipe(Effect.andThen(terminalManager.open(input))),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalAttach]: (input) =>
           observeRpcStream(
             WS_METHODS.terminalAttach,
             Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
               Effect.acquireRelease(
-                terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                requireChatTerminalAvailable(input).pipe(
+                  Effect.andThen(
+                    terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                  ),
+                ),
                 (unsubscribe) => Effect.sync(unsubscribe),
               ),
             ),
             { "rpc.aggregate": "terminal" },
           ),
         [WS_METHODS.terminalWrite]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalWrite, terminalManager.write(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalWrite,
+            requireChatTerminalAvailable(input).pipe(Effect.andThen(terminalManager.write(input))),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalResize]: (input) =>
           observeRpcEffect(WS_METHODS.terminalResize, terminalManager.resize(input), {
             "rpc.aggregate": "terminal",
@@ -2786,9 +2919,15 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "terminal",
           }),
         [WS_METHODS.terminalRestart]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalRestart,
+            requireChatTerminalAvailable(input).pipe(
+              Effect.andThen(terminalManager.restart(input)),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalClose]: (input) =>
           observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
             "rpc.aggregate": "terminal",

@@ -9,9 +9,10 @@ function actionFor(
   runtimeMode: Parameters<typeof buildOpenCodePermissionRules>[0],
   permission: string,
   target = "*",
+  chatOnly = false,
 ) {
   // OpenCode uses the last matching rule. Its wildcards match directory separators.
-  return buildOpenCodePermissionRules(runtimeMode).findLast(
+  return buildOpenCodePermissionRules(runtimeMode, chatOnly).findLast(
     (rule) =>
       (rule.permission === "*" || rule.permission === permission) &&
       new RegExp(`^${RegExpUtils.escape(rule.pattern).replaceAll("\\*", ".*")}$`, "s").test(target),
@@ -19,6 +20,17 @@ function actionFor(
 }
 
 describe("buildOpenCodePermissionRules", () => {
+  it("denies editing, commands, subagents and unknown tools in Chats in every client mode", () => {
+    for (const mode of ["approval-required", "auto-accept-edits", "auto", "full-access"] as const) {
+      for (const tool of ["edit", "bash", "task", "mcp_write_file", "unknown"]) {
+        NodeAssert.equal(actionFor(mode, tool, "*", true), "deny");
+      }
+      for (const tool of ["read", "websearch", "question"]) {
+        NodeAssert.equal(actionFor(mode, tool, "*", true), "allow");
+      }
+    }
+  });
+
   it("pre-approves edits once the user has chosen to auto-accept them", () => {
     NodeAssert.equal(actionFor("auto-accept-edits", "edit"), "allow");
   });

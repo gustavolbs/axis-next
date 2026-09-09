@@ -856,22 +856,30 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 readClientTextFile({ fileSystem, path, allowedRoots, request }),
               );
               yield* runtime.handleWriteTextFile((request) =>
-                writeClientTextFile({ fileSystem, path, allowedRoots, request }),
+                input.axisChat === true
+                  ? Effect.fail(
+                      EffectAcpErrors.AcpRequestError.internalError("Chats cannot change files."),
+                    )
+                  : writeClientTextFile({ fileSystem, path, allowedRoots, request }),
               );
               yield* runtime.handleRequestPermission((request) =>
-                context
-                  ? handlePermission(context, request).pipe(
-                      Effect.mapError((cause) =>
-                        EffectAcpErrors.AcpRequestError.internalError(
-                          "Could not process an Antigravity permission request.",
-                          undefined,
-                          { cause },
-                        ),
-                      ),
-                    )
-                  : Effect.succeed({
+                input.axisChat === true
+                  ? Effect.succeed({
                       outcome: { outcome: "cancelled" },
-                    } satisfies NativePermissionResponse),
+                    } satisfies NativePermissionResponse)
+                  : context
+                    ? handlePermission(context, request).pipe(
+                        Effect.mapError((cause) =>
+                          EffectAcpErrors.AcpRequestError.internalError(
+                            "Could not process an Antigravity permission request.",
+                            undefined,
+                            { cause },
+                          ),
+                        ),
+                      )
+                    : Effect.succeed({
+                        outcome: { outcome: "cancelled" },
+                      } satisfies NativePermissionResponse),
               );
               const started = yield* runtime.start();
               const model = yield* applyAntigravityAcpModelSelection({
@@ -880,7 +888,11 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 defaultModel: yield* options.defaultModel ?? Effect.succeed(undefined),
                 mapError: (cause) => cause,
               });
-              yield* runtime.setMode(antigravityPermissionMode(input.runtimeMode));
+              yield* runtime.setMode(
+                antigravityPermissionMode(
+                  input.axisChat === true ? "approval-required" : input.runtimeMode,
+                ),
+              );
               yield* options.onSessionStarted?.(started, cwd) ?? Effect.void;
               const createdAt = yield* nowIso;
               const session: ProviderSession = {
@@ -889,7 +901,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 threadId: input.threadId,
                 cwd,
                 status: "ready",
-                runtimeMode: input.runtimeMode,
+                runtimeMode: input.axisChat === true ? "approval-required" : input.runtimeMode,
                 ...(model ? { model } : {}),
                 resumeCursor: { schemaVersion: 1, sessionId: started.sessionId },
                 createdAt,

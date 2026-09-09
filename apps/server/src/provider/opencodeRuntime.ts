@@ -481,7 +481,20 @@ export function toOpenCodeFileParts(input: {
   return parts;
 }
 
-export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): PermissionRuleset {
+export function buildOpenCodePermissionRules(
+  runtimeMode: RuntimeMode,
+  chatOnly = false,
+): PermissionRuleset {
+  if (chatOnly) {
+    return [
+      { permission: "*", pattern: "*", action: "deny" },
+      ...["read", "glob", "grep", "webfetch", "websearch", "question"].map((permission) => ({
+        permission,
+        pattern: "*",
+        action: "allow" as const,
+      })),
+    ];
+  }
   if (runtimeMode === "full-access") {
     return [
       { permission: "*", pattern: "*", action: "allow" },

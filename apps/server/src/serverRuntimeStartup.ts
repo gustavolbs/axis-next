@@ -25,6 +25,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import { ensureAxisChatsProject } from "./axis/chats/AxisChatsStartup.ts";
+import { isAxisChatsProject } from "./axis/chats/AxisChats.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -714,7 +716,7 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   const workspaceRoots = [
     ...new Set(
       projects
-        .filter((project) => project.autoPull === true)
+        .filter((project) => project.autoPull === true && !isAxisChatsProject(project.id))
         .map((project) => project.workspaceRoot),
     ),
   ];
@@ -832,6 +834,8 @@ export const make = (options?: StartupOptions) =>
           yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
         }),
       );
+
+      yield* runStartupPhase("chats.ensure-project", ensureAxisChatsProject);
 
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
 

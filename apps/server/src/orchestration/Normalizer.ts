@@ -1,3 +1,4 @@
+import { isAxisChatsProject } from "../axis/chats/AxisChats.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -108,6 +109,15 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           ),
         );
 
+    if (
+      canonicalCommand.type === "project.meta.update" &&
+      isAxisChatsProject(canonicalCommand.projectId) &&
+      canonicalCommand.workspaceRoot !== undefined
+    ) {
+      return yield* new OrchestrationDispatchCommandError({
+        message: "The Chats directory is managed by the server.",
+      });
+    }
     if (canonicalCommand.type === "project.create") {
       return {
         ...canonicalCommand,

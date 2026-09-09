@@ -441,6 +441,7 @@ function makeProviderServiceLayer(
         Layer.provide(directoryLayer),
         Layer.provide(input.serverSettingsLayer ?? defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
+        Layer.provide(NodeServices.layer),
         Layer.provideMerge(input.analyticsLayer ?? AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -500,6 +501,7 @@ for (const [enabled, completed] of [
             ),
             Layer.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: enabled })),
             Layer.provide(serverConfigTestLayer),
+            Layer.provide(NodeServices.layer),
             Layer.provide(AnalyticsService.layerTest),
             Layer.provide(
               Layer.succeed(
@@ -612,6 +614,7 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
+        Layer.provide(NodeServices.layer),
         Layer.provideMerge(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -654,6 +657,7 @@ it.effect("ProviderServiceLive flushes deferred completions during shutdown", ()
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(recordedAnalytics.layer),
         Layer.provide(
           Layer.succeed(
@@ -790,6 +794,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
       Layer.provide(serverConfigTestLayer),
+      Layer.provide(NodeServices.layer),
       Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
@@ -873,6 +878,7 @@ it.effect(
         Layer.provide(directoryLayer),
         Layer.provide(serverSettingsLayer),
         Layer.provide(serverConfigTestLayer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -942,6 +948,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
       Layer.provide(serverConfigTestLayer),
+      Layer.provide(NodeServices.layer),
       Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
@@ -1114,6 +1121,7 @@ it.effect(
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -1173,6 +1181,7 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
       Layer.provide(serverConfigTestLayer),
+      Layer.provide(NodeServices.layer),
       Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
@@ -1234,6 +1243,7 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
       Layer.provide(directoryLayer),
       Layer.provide(defaultServerSettingsLayer),
       Layer.provide(serverConfigTestLayer),
+      Layer.provide(NodeServices.layer),
       Layer.provide(AnalyticsService.layerTest),
       Layer.provide(
         Layer.succeed(
@@ -1301,6 +1311,7 @@ it.effect(
         Layer.provide(firstDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -1361,6 +1372,7 @@ it.effect(
         Layer.provide(secondDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -2386,6 +2398,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         Layer.provide(firstDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -2425,6 +2438,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         Layer.provide(secondDirectoryLayer),
         Layer.provide(defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(
@@ -2494,6 +2508,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           Layer.provide(firstDirectoryLayer),
           Layer.provide(defaultServerSettingsLayer),
           Layer.provide(serverConfigTestLayer),
+          Layer.provide(NodeServices.layer),
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(
             Layer.succeed(
@@ -2528,6 +2543,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           Layer.provide(secondDirectoryLayer),
           Layer.provide(defaultServerSettingsLayer),
           Layer.provide(serverConfigTestLayer),
+          Layer.provide(NodeServices.layer),
           Layer.provide(AnalyticsService.layerTest),
           Layer.provide(
             Layer.succeed(
@@ -4410,6 +4426,7 @@ describe("agent browser access", () => {
         Layer.provide(directoryLayer),
         Layer.provide(ServerSettings.ServerSettingsService.layerTest({ enableAgentBrowserAccess })),
         Layer.provide(serverConfigTestLayer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(AnalyticsService.layerTest),
         Layer.provide(
           Layer.succeed(

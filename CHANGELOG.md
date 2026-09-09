@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.0] - 2026-09-09
+
+### Added
+
+- Make standalone conversations available through a managed Chats project in each environment, using the existing project and thread protocol for official T3 mobile clients.
+
+### Changed
+
+- Preserve existing chat histories while moving them into Chats, with separate conversation directories and restricted provider execution. Disable workspace edits, terminal sessions, worktrees, setup scripts, and Git checkpoints for Chats.
+
 ## [0.2.4] - 2026-09-09
 
 ### Fixed

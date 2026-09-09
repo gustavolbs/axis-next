@@ -72,6 +72,9 @@ import { ServerActivation } from "../../serverActivation.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 
+import { ensureAxisChatsProject } from "../../axis/chats/AxisChatsStartup.ts";
+import { AXIS_CHATS_PROJECT_ID } from "../../axis/chats/AxisChats.ts";
+
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -483,14 +486,18 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
-    runtime = ManagedRuntime.make(layer);
+    const services = ManagedRuntime.make(layer);
+    runtime = services;
 
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
-    if (!input?.standalone)
+    if (input?.standalone) {
+      await services.runPromise(ensureAxisChatsProject);
+      await services.runPromise(ensureAxisChatsProject);
+    } else
       await Effect.runPromise(
         engine.dispatch({
           type: "project.create",
@@ -621,7 +628,7 @@ describe("ProviderCommandReactor", () => {
   }
 
   effectIt.effect(
-    "starts standalone turns in a server-owned directory without projects or worktrees",
+    "starts standalone turns in a server-owned directory inside Chats without worktrees",
     () =>
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
@@ -648,11 +655,19 @@ describe("ProviderCommandReactor", () => {
         });
         yield* Deferred.await(started);
         yield* Effect.promise(() => harness.drain());
-        expect((yield* Effect.promise(() => harness.readModel())).projects).toEqual([]);
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        expect(readModel.threads[0]?.projectId).toBe(AXIS_CHATS_PROJECT_ID);
+        expect(readModel.projects).toHaveLength(1);
+        expect(readModel.projects[0]).toMatchObject({
+          title: "Chats",
+          defaultThreadEnvMode: "local",
+          autoPull: false,
+        });
         expect(harness.startSession).toHaveBeenCalledWith(
           ThreadId.make("thread-1"),
           expect.objectContaining({
             cwd: NodePath.join(harness.stateDir, "chats", "thread-1"),
+            runtimeMode: "approval-required",
           }),
         );
         expect(harness.sendTurn).toHaveBeenCalled();
