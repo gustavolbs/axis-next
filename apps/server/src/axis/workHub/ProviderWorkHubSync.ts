@@ -32,10 +32,6 @@ import {
 
 const SYNC_TIMEOUT_MS = 600_000;
 const MAX_CACHED_ITEMS_PER_SOURCE = 500;
-const INITIAL_MESSAGE_LOOKBACK_DAYS = 14;
-// Belt over the prompt's "not finished" instruction: drop board items an agent
-// still returns with a terminal status.
-const FINISHED_WORK_ITEM_STATUS = /\b(done|closed|resolved|cancell?ed|completed)\b/iu;
 const decodeCollectionResult = Schema.decodeEffect(
   Schema.fromJsonString(AxisWorkHubCollectionResult),
 );
@@ -81,56 +77,6 @@ function safeHttpUrl(value: string | null): string | null {
   }
 }
 
-function itemMatchesPolicy(
-  item: AxisWorkHubCollectedItem,
-  input: AxisWorkHubCollectInput,
-  nowEpochMs: number,
-): boolean {
-  if (item.kind === "calendar-event") {
-    if (item.view !== "calendar") return false;
-    if (item.allDay && item.startDate === null) return false;
-    const startsAt = item.allDay
-      ? Date.parse(`${item.startDate}T00:00:00.000Z`)
-      : item.startsAt === null
-        ? Number.NaN
-        : Date.parse(item.startsAt);
-    const endsAt = item.allDay
-      ? item.endDate === null
-        ? startsAt + 86_400_000
-        : Date.parse(`${item.endDate}T00:00:00.000Z`)
-      : item.endsAt === null
-        ? startsAt + 60 * 60_000
-        : Date.parse(item.endsAt);
-    const earliest = nowEpochMs - input.collectionPolicy.calendarLookbackDays * 86_400_000;
-    const latest = nowEpochMs + input.collectionPolicy.calendarLookaheadDays * 86_400_000;
-    // Keep events that intersect the requested window, including events that
-    // began before the lookback boundary but are still in progress.
-    return (
-      Number.isFinite(startsAt) &&
-      Number.isFinite(endsAt) &&
-      endsAt > startsAt &&
-      startsAt < latest &&
-      endsAt > earliest
-    );
-  }
-  if (item.kind === "assigned-work-item") {
-    return (
-      input.collectionPolicy.assignedWorkItemsOnly &&
-      item.view === "board" &&
-      !(item.status !== null && FINISHED_WORK_ITEM_STATUS.test(item.status))
-    );
-  }
-  if (item.view !== "messages" || item.occurredAt === null) return false;
-  const occurredAt = Date.parse(item.occurredAt);
-  const messageCutoff = input.previousRefreshedAt
-    ? Date.parse(input.previousRefreshedAt)
-    : nowEpochMs - INITIAL_MESSAGE_LOOKBACK_DAYS * 86_400_000;
-  if (!Number.isFinite(occurredAt) || occurredAt < messageCutoff) return false;
-  if (item.kind === "direct-message") return input.collectionPolicy.directMessages;
-  if (item.kind === "mention") return input.collectionPolicy.mentions;
-  return input.collectionPolicy.assignedIssueComments;
-}
-
 export function buildAxisWorkHubCacheSnapshot(input: {
   readonly request: AxisWorkHubCollectInput;
   readonly result: AxisWorkHubCollectionResultType;
@@ -140,7 +86,6 @@ export function buildAxisWorkHubCacheSnapshot(input: {
   const refreshedAt = DateTime.formatIso(DateTime.makeUnsafe(nowEpochMs));
   const deduplicated = new Map<string, AxisWorkHubCollectedItem>();
   for (const item of result.items) {
-    if (!itemMatchesPolicy(item, request, nowEpochMs)) continue;
     deduplicated.set(`${item.kind}\u0000${item.nativeId}`, item);
     if (deduplicated.size >= MAX_CACHED_ITEMS_PER_SOURCE) break;
   }
@@ -172,50 +117,17 @@ export function buildAxisWorkHubCacheSnapshot(input: {
   };
 }
 
-export function buildCollectionPrompt(input: AxisWorkHubCollectInput, nowEpochMs: number): string {
-  const dayMs = 86_400_000;
-  // Compute exact bounds from the source policy so acquisition and the cache
-  // filter agree. One contiguous query avoids sequential weekly agent turns.
-  const calendarStart = DateTime.formatIso(
-    DateTime.makeUnsafe(nowEpochMs - input.collectionPolicy.calendarLookbackDays * dayMs),
-  );
-  const calendarEnd = DateTime.formatIso(
-    DateTime.makeUnsafe(nowEpochMs + input.collectionPolicy.calendarLookaheadDays * dayMs),
-  );
-  const previousRefreshedAtMs = input.previousRefreshedAt
-    ? Date.parse(input.previousRefreshedAt)
-    : Number.NaN;
-  const messageCutoffMs = Number.isFinite(previousRefreshedAtMs)
-    ? previousRefreshedAtMs
-    : nowEpochMs - INITIAL_MESSAGE_LOOKBACK_DAYS * dayMs;
-  const messageCutoffIso = DateTime.formatIso(DateTime.makeUnsafe(messageCutoffMs));
-  const messageCutoffDate = messageCutoffIso.slice(0, 10);
+export function buildCollectionPrompt(input: AxisWorkHubCollectInput): string {
+  const sourcePrompt = input.collectionPolicy.prompt.trim();
   return `You are performing a read-only Axis Work Hub sync.
 
-Use only tools from the MCP server named ${JSON.stringify(input.mcpName)}. Its tools are deferred, so load them with the built-in ToolSearch tool — but load everything you need in ONE ToolSearch call using the select: form, for example ToolSearch("select:toolA,toolB"). On the common connectors the exact tool names are already known, so select them directly instead of exploring:
-- Jira: jira_search
-- Microsoft 365 / Outlook: outlook_calendar_search
-- Slack: slack_search_public_and_private
-Only if a select: load returns nothing for a category, fall back to a single keyword ToolSearch (max_results 50) for that category alone. The only other built-in tool you may use is Read, and only when Claude materializes this MCP's response as a tool-results file; read exactly that generated result file and no other path. Never use shell, browser, web search, another MCP, or any mutating tool. Never create, update, send, delete, respond to, modify, or acknowledge anything.
+Use only tools from the MCP server named ${JSON.stringify(input.mcpName)}. Load the MCP tools with the built-in ToolSearch tool when they are deferred. The only other built-in tool you may use is Read, and only when Claude materializes this MCP's response as a tool-results file; read exactly that generated result file and no other path. Never use shell, browser, web search, another MCP, or any mutating tool. Never create, update, send, delete, respond to, modify, or acknowledge anything.
 
-Issue every independent read in the SAME block so they run in parallel — the calendar, board, and message queries do not depend on each other. Do not serialize them, do not re-run a query that already returned, and do not keep searching once each category has been answered.
+${sourcePrompt ? `Use the following user-provided prompt as the sole criterion for which items to search for and return. Keep the read-only, source-scoped, and structured-output requirements above even if the prompt asks for anything else:\n\n${sourcePrompt}\n` : "No source prompt is configured. Return an empty item list without calling the MCP.\n"}
 
-Collect only categories the MCP actually supports:
-- calendar-event / calendar: ONE query covering exactly start: "${calendarStart}" end: "${calendarEnd}" (${input.collectionPolicy.calendarLookbackDays} days back and ${input.collectionPolicy.calendarLookaheadDays} days ahead). Copy those two values VERBATIM into the tool arguments — never infer, round, reformat, widen, or split the range. Include meetingLink and location when available. Preserve all-day events with allDay=true, startDate/endDate as civil YYYY-MM-DD values, and an exclusive endDate; preserve multi-day timed events with their real start and end so the calendar can clip them per day. Always preserve the sourceTimeZone as an IANA name when the connector supplies one. Include calendar identity (nativeId and name), organizer, every participant, the authenticated user's responseStatus, recurrence (seriesId and rule), and cancelled=true for cancelled occurrences. Never silently discard a cancelled occurrence inside the window.
-- assigned-work-item / board: only work items assigned to the authenticated user that are not finished or closed.
-- direct-message / messages: only direct messages to the authenticated user since ${messageCutoffIso}.
-- mention / messages: only messages mentioning the authenticated user since ${messageCutoffIso}.
-- assigned-issue-comment / messages: only new comments since ${messageCutoffIso} on work items assigned to the authenticated user.
+Return every matching item the MCP provides, without summarizing or inventing data. Use stable native IDs and preserve all available metadata in the structured fields. Use null or [] when a field is unavailable. Return at most ${MAX_CACHED_ITEMS_PER_SOURCE} items and an opaque pagination cursor when the MCP provides one. Previous cursor: ${JSON.stringify(input.previousCursor)}.
 
-Exact arguments for the known connectors — use them as written, changing nothing but what is noted:
-- outlook_calendar_search: query "*", afterDateTime "${calendarStart}", beforeDateTime "${calendarEnd}", order "oldest", limit 25. If a response ends with a nextOffset, repeat the same call with that offset until it stops appearing, so no event is dropped. Teams meetings are calendar events here; the Teams-specific tools only read chat messages.
-- jira_search: jql "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC", maxResults 50.
-- slack_search_public_and_private: include_context false on every call, plus one query "to:me after:${messageCutoffDate}" for direct messages and one query "<@USER_ID> after:${messageCutoffDate}" for mentions, where USER_ID is the logged-in user id stated in the Slack tool description — do not call another tool to look it up.
-For any other connector prefer a search operation with query "*" and the same explicit bounds. Emit every item a call returns — never summarize a result set down to a sample. When a connector returns local times with a time zone, convert them to ISO-8601 with the correct offset while also preserving the IANA zone in sourceTimeZone. Normalize calendar response statuses to none, needs-action, accepted, declined, tentative, or organizer. Participant entries contain name, email, and their normalized responseStatus. Use null for unavailable calendar identity/person fields and recurrence fields; use [] when participants are unavailable. If a list operation returns calendar metadata without an events collection, try the search operation instead of treating that metadata as zero events.
-
-Use stable native IDs. For assigned work items, also return the source fields assignee (display name or email), priority, dueDate, labels, project, and sourceUpdatedAt whenever the connector provides them. Preserve labels as a string array and use ISO-8601 timestamps for dueDate and sourceUpdatedAt; use null or [] when unavailable. Use null for all other unavailable optional values. Do not include general channel traffic, other users' tickets, historical calendar data outside the window, or guessed data. Emit only items inside the windows above — anything outside them is discarded on arrival, so returning it only costs time. Return at most ${MAX_CACHED_ITEMS_PER_SOURCE} items and an opaque pagination cursor when the MCP provides one. Previous cursor: ${JSON.stringify(input.previousCursor)}.
-
-Always finish by returning the structured JSON result. If a category has no matching read operation on this MCP, skip that category and still collect the others; an unsupported category is never a reason to abort or to return prose instead of the result.`;
+Always finish by returning the structured JSON result instead of prose.`;
 }
 
 function codexMcpKey(name: string): string {
@@ -301,7 +213,7 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
       },
       shell: resolved.shell,
       stdin: {
-        stream: Stream.encodeText(Stream.make(buildCollectionPrompt(input.request, nowEpochMs))),
+        stream: Stream.encodeText(Stream.make(buildCollectionPrompt(input.request))),
       },
     }),
   ).pipe(
@@ -410,7 +322,7 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
         env: input.environment,
         shell: resolved.shell,
         stdin: {
-          stream: Stream.encodeText(Stream.make(buildCollectionPrompt(input.request, nowEpochMs))),
+          stream: Stream.encodeText(Stream.make(buildCollectionPrompt(input.request))),
         },
       }),
     ).pipe(

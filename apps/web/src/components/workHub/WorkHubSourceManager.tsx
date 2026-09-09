@@ -138,7 +138,6 @@ export function WorkHubSourceManager() {
 
   const updateSourceSettings = async (input: {
     readonly source: AxisWorkHubSource;
-    readonly cacheTtlSeconds: number;
     readonly collectionPolicy: AxisWorkHubCollectionPolicy;
   }): Promise<boolean> => {
     const snapshot = query.data;
@@ -150,7 +149,6 @@ export function WorkHubSourceManager() {
         source.id === input.source.id
           ? {
               ...source,
-              cacheTtlSeconds: input.cacheTtlSeconds,
               collectionPolicy: input.collectionPolicy,
               updatedAt,
             }
@@ -340,8 +338,8 @@ export function WorkHubSourceManager() {
           </p>
           <h2 className="mt-1 text-base font-semibold text-foreground">Source selection</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Choose what Work Hub may query inside each isolated context. Every source keeps its own
-            cache and sync policy.
+            Choose what Work Hub may query inside each isolated context. Every source uses its own
+            prompt and cache.
           </p>
         </div>
         <div className="flex items-center gap-2">

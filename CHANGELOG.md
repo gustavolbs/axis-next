@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.4] - 2026-09-09
+
+### Fixed
+
+- Use a source-specific prompt as the sole Work Hub collection criterion.
+
 ## [0.2.3] - 2026-09-08
 
 ### Fixed

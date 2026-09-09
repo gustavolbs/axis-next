@@ -187,10 +187,6 @@ export const make = Effect.gen(function* () {
       collectionPolicy: source.collectionPolicy,
       cacheTtlSeconds: source.cacheTtlSeconds,
       previousCursor: previous?.cursor ?? null,
-      previousRefreshedAt:
-        previous?.items.some((item) => item.view === "messages") === true
-          ? previous.refreshedAt
-          : null,
     }).pipe(
       Effect.mapError(
         (cause) =>

@@ -94,15 +94,27 @@ describe("AxisContextCatalog", () => {
       enabled: true,
       cacheTtlSeconds: 28_800,
       collectionPolicy: {
-        calendarLookbackDays: 60,
-        calendarLookaheadDays: 90,
-        assignedWorkItemsOnly: true,
-        directMessages: true,
-        mentions: true,
-        assignedIssueComments: true,
+        prompt: "",
       },
     });
     expect(catalog.providerAccessGrants[0]?.revokedAt).toBeNull();
+  });
+
+  it("drops legacy collection filters while preserving the source prompt", () => {
+    expect(
+      decodeWorkHubSource({
+        ...validCatalog().workHubSources[0],
+        collectionPolicy: {
+          prompt: "Find current work.",
+          calendarLookbackDays: 14,
+          calendarLookaheadDays: 90,
+          assignedWorkItemsOnly: true,
+          directMessages: true,
+          mentions: true,
+          assignedIssueComments: true,
+        },
+      }).collectionPolicy,
+    ).toEqual({ prompt: "Find current work." });
   });
 
   it("upgrades legacy Work Hub cache entries to at least eight hours", () => {
