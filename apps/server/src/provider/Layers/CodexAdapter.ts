@@ -27,6 +27,7 @@ import {
   RuntimeTaskId,
   type RuntimeTaskUsage,
   type TurnTokenUsage,
+  type TokenEfficiencyConciseOutputProfile,
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
@@ -83,6 +84,10 @@ const PROVIDER = ProviderDriverKind.make("codex");
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
+  readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
+  readonly resolveConciseOutputProfile?: Effect.Effect<
+    TokenEfficiencyConciseOutputProfile | undefined
+  >;
   readonly environment?: NodeJS.ProcessEnv;
   readonly makeRuntime?: (
     options: CodexSessionRuntimeOptions,
@@ -2228,6 +2233,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { resumeCursor: input.resumeCursor }
             : {}),
           runtimeMode: input.runtimeMode,
+          ...(options?.conciseOutputProfile
+            ? { conciseOutputProfile: options.conciseOutputProfile }
+            : {}),
+          ...(options?.resolveConciseOutputProfile
+            ? { resolveConciseOutputProfile: options.resolveConciseOutputProfile }
+            : {}),
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
             : {}),

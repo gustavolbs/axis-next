@@ -12,6 +12,7 @@ import {
   type ProviderSession,
   type ProviderSetupError,
   type ProviderUserInputAnswers,
+  type TokenEfficiencyConciseOutputProfile,
   type RuntimeTaskStatus,
   type ThreadId,
   type TurnCompletedPayload,
@@ -125,6 +126,10 @@ function mapAntigravityError(threadId: ThreadId, method: string, cause: EffectAc
 
 export interface AntigravityAdapterOptions {
   readonly instanceId: ProviderInstanceId;
+  readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
+  readonly resolveConciseOutputProfile?: Effect.Effect<
+    TokenEfficiencyConciseOutputProfile | undefined
+  >;
   readonly makeRuntime: (
     input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner" | "onAuthorizationUrl">,
   ) => Effect.Effect<Runtime, EffectAcpErrors.AcpError | ProviderSetupError, Scope.Scope>;
@@ -221,6 +226,27 @@ function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean
 }
 
 /** Resolves an agent-supplied path and rejects anything outside the session roots. */
+const resolvePathThroughExistingParent = Effect.fn(
+  "AntigravityAdapter.resolvePathThroughExistingParent",
+)(function* (input: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly requestPath: string;
+}) {
+  const missingParts: string[] = [];
+  let current = input.requestPath;
+  while (true) {
+    const existing = yield* input.fileSystem.realPath(current).pipe(Effect.option);
+    if (Option.isSome(existing)) {
+      return input.path.join(existing.value, ...missingParts.toReversed());
+    }
+    const parent = input.path.dirname(current);
+    if (parent === current) return input.path.resolve(input.requestPath);
+    missingParts.push(input.path.basename(current));
+    current = parent;
+  }
+});
+
 const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePath")(
   function* (input: {
     readonly fileSystem: FileSystem.FileSystem;
@@ -230,11 +256,19 @@ const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePat
   }) {
     const { path } = input;
     const resolved = path.resolve(input.requestPath);
-    // Follow symlinks on the parent so a link out of the workspace cannot escape it.
-    const parent = yield* input.fileSystem
-      .realPath(path.dirname(resolved))
-      .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-    const real = path.join(parent, path.basename(resolved));
+    // Normalize through the nearest existing ancestor so missing nested write
+    // paths still compare correctly when the workspace itself is symlinked.
+    const parent = yield* resolvePathThroughExistingParent({
+      fileSystem: input.fileSystem,
+      path,
+      requestPath: path.dirname(resolved),
+    });
+    // Resolve an existing final symlink too; otherwise a symlinked file could
+    // escape the roots even when its parent is inside one.
+    const candidate = path.join(parent, path.basename(resolved));
+    const real = yield* input.fileSystem
+      .realPath(candidate)
+      .pipe(Effect.orElseSucceed(() => candidate));
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );
@@ -312,6 +346,8 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
   const serverConfig = yield* ServerConfig;
   const ownerScope = yield* Effect.scope;
   const makeNativeLoggers = yield* makeAcpNativeLoggerFactory();
+  const readConciseOutputProfile =
+    options?.resolveConciseOutputProfile ?? Effect.succeed(options?.conciseOutputProfile);
   const sessions = new Map<ThreadId, SessionContext>();
   const locks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
   const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
@@ -1082,7 +1118,11 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                   ...prompt,
                   {
                     type: "text",
-                    text: buildRuntimeInstructions({ harness: "Antigravity", model }),
+                    text: buildRuntimeInstructions({
+                      harness: "Antigravity",
+                      model,
+                      conciseOutputProfile: yield* readConciseOutputProfile,
+                    }),
                   },
                 ],
               },

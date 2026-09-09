@@ -272,6 +272,7 @@ import {
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import { TokenEfficiencySnapshot } from "./tokenEfficiency.ts";
 import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -381,6 +382,7 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
+  serverGetTokenEfficiency: "server.getTokenEfficiency",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
   // Axis context and capability management
@@ -841,6 +843,12 @@ export const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSumm
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
+export const WsServerGetTokenEfficiencyRpc = Rpc.make(WS_METHODS.serverGetTokenEfficiency, {
+  payload: Schema.Struct({}),
+  success: TokenEfficiencySnapshot,
+  error: EnvironmentAuthorizationError,
 });
 
 /**
@@ -1515,6 +1523,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
+  WsServerGetTokenEfficiencyRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,

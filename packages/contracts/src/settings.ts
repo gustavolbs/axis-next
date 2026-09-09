@@ -26,6 +26,7 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+import { TokenEfficiencySettings } from "./tokenEfficiency.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -940,6 +941,8 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** Server-authoritative token measurement and opt-in compaction policy. */
+  tokenEfficiency: TokenEfficiencySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
@@ -1156,6 +1159,14 @@ export const ServerSettingsPatch = Schema.Struct({
   // patches risk leaving driver-specific config in a half-merged state.
   // The web UI sends a fully-formed map every time it edits this field.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
+  tokenEfficiency: Schema.optionalKey(
+    Schema.Struct({
+      mode: Schema.optionalKey(TokenEfficiencySettings.fields.mode),
+      engine: Schema.optionalKey(TokenEfficiencySettings.fields.engine),
+      byInstance: Schema.optionalKey(TokenEfficiencySettings.fields.byInstance),
+      conciseOutput: Schema.optionalKey(TokenEfficiencySettings.fields.conciseOutput),
+    }),
+  ),
   // Per-entry, unlike `providerInstances`: a client only ever adds or removes
   // one source, and sending the whole map races another edit that has not
   // echoed back yet. `null` removes; the server merges into its current map.

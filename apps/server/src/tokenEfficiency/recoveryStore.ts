@@ -47,6 +47,8 @@ export interface RecoveryStore {
     readonly contextKey: string;
     readonly handle: string;
   }) => Effect.Effect<string | undefined>;
+  /** Remove an unused handle after a transform declines to change the text. */
+  readonly release?: (handle: string) => Effect.Effect<void>;
 }
 
 /**
@@ -93,6 +95,11 @@ export const makeRecoveryStore = (
         evictExpired(at);
         const entry = entries.get(handle);
         return entry !== undefined && entry.contextKey === contextKey ? entry.original : undefined;
+      }),
+
+    release: (handle) =>
+      Effect.sync(() => {
+        entries.delete(handle);
       }),
   };
 };

@@ -13,6 +13,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeGrokTextGeneration } from "../../textGeneration/GrokTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeGrokAdapter } from "../Layers/GrokAdapter.ts";
+import { resolveConciseOutputProfile } from "../RuntimeInstructions.ts";
 import {
   buildInitialGrokProviderSnapshot,
   checkGrokProviderStatus,
@@ -93,9 +94,16 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
       });
+      const resolveConciseOutputProfileForInstance = serverSettings.getSettings.pipe(
+        Effect.map(({ tokenEfficiency }) =>
+          resolveConciseOutputProfile(tokenEfficiency, instanceId),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
 
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
+        resolveConciseOutputProfile: resolveConciseOutputProfileForInstance,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
       });

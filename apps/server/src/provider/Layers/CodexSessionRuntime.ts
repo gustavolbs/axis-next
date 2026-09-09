@@ -13,6 +13,7 @@ import {
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
+  type TokenEfficiencyConciseOutputProfile,
   RuntimeMode,
   ThreadId,
   TurnId,
@@ -163,6 +164,10 @@ export interface CodexSessionRuntimeOptions {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
+  readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
+  readonly resolveConciseOutputProfile?: Effect.Effect<
+    TokenEfficiencyConciseOutputProfile | undefined
+  >;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
@@ -569,21 +574,28 @@ function buildCodexCollaborationMode(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
   readonly browserToolsAvailable?: boolean;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
-  if (input.interactionMode === undefined) {
+  if (input.interactionMode === undefined && input.conciseOutputProfile === undefined) {
     return undefined;
   }
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
   const reasoningEffort = input.effort ?? "medium";
   return {
-    mode: input.interactionMode,
+    mode: input.interactionMode ?? "default",
     settings: {
       model,
       reasoning_effort: reasoningEffort,
       developer_instructions: buildCodexDeveloperInstructions(
-        input.interactionMode,
-        { model, reasoningEffort },
+        input.interactionMode ?? "default",
+        {
+          model,
+          reasoningEffort,
+          ...(input.conciseOutputProfile
+            ? { conciseOutputProfile: input.conciseOutputProfile }
+            : {}),
+        },
         input.browserToolsAvailable ?? true,
       ),
     },
@@ -602,6 +614,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean;
 }): Effect.Effect<
@@ -624,6 +637,7 @@ export function buildTurnStartParams(input: {
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.conciseOutputProfile ? { conciseOutputProfile: input.conciseOutputProfile } : {}),
     browserToolsAvailable: input.browserToolsAvailable ?? true,
   });
 
@@ -2313,6 +2327,10 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
+          const conciseOutputProfile =
+            options.resolveConciseOutputProfile === undefined
+              ? options.conciseOutputProfile
+              : yield* options.resolveConciseOutputProfile;
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
@@ -2322,6 +2340,7 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            ...(conciseOutputProfile ? { conciseOutputProfile } : {}),
             // Derived from the session's own MCP configuration rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.

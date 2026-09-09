@@ -51,15 +51,23 @@ const PROTECTED_LINE_PATTERNS: ReadonlyArray<{ readonly why: string; readonly te
   { why: "structured-data", test: /^[\s]*[[\]{}]|["']\s*:\s*/u },
   // Errors, stack frames, and failures are the reason the payload is being
   // read at all.
-  { why: "error", test: /\b(?:error|exception|traceback|panic|fatal|failed|stack trace)\b/iu },
+  {
+    why: "error",
+    test: /\b(?:error|erro|exception|exce(?:cao|ção)|traceback|panic|panico|pânico|fatal|failed|falha|falhou|stack trace|rastreamento)\b/iu,
+  },
   { why: "stack-frame", test: /^\s*at\s+\S+|^\s{2,}File "/u },
+  // Approvals and policy decisions are operational instructions, not prose.
+  {
+    why: "approval-or-policy",
+    test: /\b(?:approval|approved|approver|approval required|aprova(?:cao|ção)|aprovado|aprovar|permission|permiss(?:ao|ão)|security policy|safety policy|politica de seguranca|política de segurança)\b/iu,
+  },
   // Identifiers a reader may copy: hashes, UUIDs, long digit runs.
   { why: "identifier", test: /\b(?:[0-9a-f]{7,}|[0-9A-Za-z_-]{16,}|\d{4,})\b/u },
   // Credentials, in every shape we can cheaply recognize. These must never
   // reach a recovery store, let alone a lossy transform.
   {
     why: "secret",
-    test: /\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{8,}|xox[baprs]-|AKIA[0-9A-Z]{8,}|eyJ[A-Za-z0-9_-]{8,}\.)|(?:api[_-]?key|secret|token|password|passwd|credential|authorization|bearer)\s*[:=]/iu,
+    test: /\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{8,}|xox[baprs]-|AKIA[0-9A-Z]{8,}|eyJ[A-Za-z0-9_-]{8,}\.)|(?:api[_-]?key|secret|token|password|passwd|credential|authorization|bearer|senha|segredo|credencial|autoriz(?:acao|ação))\s*[:=]/iu,
   },
 ];
 

@@ -23,11 +23,17 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as TokenEfficiencyMetrics from "../../../tokenEfficiency/TokenEfficiencyMetrics.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   PreviewAutomationBroker.PreviewAutomationBroker,
 ];
+const tokenEfficiencyDependencies = [
+  ...dependencies,
+  TokenEfficiencyMetrics.TokenEfficiencyMetrics,
+];
+const recoveryDependencies = [McpInvocationContext.McpInvocationContext];
 
 const PreviewActionResult = Schema.Record(Schema.String, Schema.Never).annotate({
   description: "The preview action completed successfully.",
@@ -170,9 +176,27 @@ export const PreviewEvaluateTool = browserTool(
     parameters: PreviewAutomationEvaluateInput,
     success: Schema.Unknown,
     failure: PreviewAutomationError,
-    dependencies,
+    dependencies: tokenEfficiencyDependencies,
   }).annotate(Tool.Title, "Evaluate JavaScript in preview"),
 );
+
+export const PreviewRecoverTool = Tool.make("preview_recover", {
+  description:
+    "Recover the original textual result of a token-efficiency compaction using its context-scoped handle. Accepts tabId for consistent preview targeting, but recovery remains bound to this thread. Returns null when the handle is expired or belongs to another thread.",
+  parameters: Schema.Struct({
+    ...PreviewAutomationTabTargetInput.fields,
+    handle: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160)).annotate({
+      description: "Context-scoped recovery handle returned with a compacted preview result.",
+    }),
+  }),
+  success: Schema.NullOr(Schema.String),
+  failure: PreviewAutomationError,
+  dependencies: recoveryDependencies,
+})
+  .annotate(Tool.Title, "Recover original preview result")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.Destructive, false);
 
 export const PreviewWaitForTool = readonlyBrowserTool(
   Tool.make("preview_wait_for", {
@@ -219,6 +243,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewPressTool,
   PreviewScrollTool,
   PreviewEvaluateTool,
+  PreviewRecoverTool,
   PreviewWaitForTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
@@ -235,6 +260,7 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewPressTool,
   PreviewScrollTool,
   PreviewEvaluateTool,
+  PreviewRecoverTool,
   PreviewWaitForTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,

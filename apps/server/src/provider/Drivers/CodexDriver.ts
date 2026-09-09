@@ -36,6 +36,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
+import { resolveConciseOutputProfile } from "../RuntimeInstructions.ts";
 import {
   CODEX_RESET_CREDIT_TIMEOUT,
   CodexResetCreditCoordinator,
@@ -142,6 +143,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
+      const resolveConciseOutputProfileForInstance = serverSettings.getSettings.pipe(
+        Effect.map(({ tokenEfficiency }) =>
+          resolveConciseOutputProfile(tokenEfficiency, instanceId),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -155,6 +162,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // below.
       const adapter = yield* makeCodexAdapter(effectiveConfig, {
         instanceId,
+        resolveConciseOutputProfile: resolveConciseOutputProfileForInstance,
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });

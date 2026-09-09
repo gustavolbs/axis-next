@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.3] - 2026-09-08
+
+### Fixed
+
+- Run the mobile fingerprint PR check on the standard Ubuntu runner so it is not blocked by the unavailable Blacksmith queue.
+
+## [0.2.2] - 2026-09-08
+
+### Added
+
+- Add explicit provider metric availability, stable prompt-prefix handling, an optional external Caveman record adapter, bilingual benchmark fixtures, and an aggregate-only Hermes evidence bridge.
+- Compact structured accessibility-tree text leaves with context-scoped recovery metadata.
+
+### Changed
+
+- Keep external token-efficiency engines fail-open and record-only until reviewed task-quality and provider-billed A/B results justify rollout.
+
+## [0.2.1] - 2026-09-07
+
+### Added
+
+- Add opt-in token-efficiency controls, aggregate provider baselines, deterministic MCP result compaction with recovery handles, and diagnostics in Settings.
+- Add an optional concise-output profile across Codex, Claude Code, Cursor, Grok, OpenCode, and Antigravity.
+
 ## [0.2.0] - 2026-09-07
 
 ### Changed

@@ -40,6 +40,8 @@ describe("modes", () => {
             applied: false,
             skippedReason: "mode-off",
           });
+          expect(outcome.estimatedTokensBefore).toBe(0);
+          expect(outcome.estimatedTokensAfter).toBe(0);
         }),
       ),
   );
@@ -56,6 +58,35 @@ describe("modes", () => {
           expect(outcome.skippedReason).toBe("record-mode");
           expect(outcome.estimatedTokensAfter).toBeLessThan(outcome.estimatedTokensBefore);
           expect(outcome.recoveryHandle).toBeUndefined();
+        }),
+      ),
+  );
+
+  it.effect("awaits an optional external transform while preserving record mode", () =>
+    makeTokenEfficiencyEngine({
+      transforms: new Map([[DETERMINISTIC_ENGINE_ID, async () => "tiny external summary"]]),
+    })
+      .compact(request({ mode: "record" }))
+      .pipe(
+        Effect.map((outcome) => {
+          expect(outcome.text).toBe(REPEATED);
+          expect(outcome.skippedReason).toBe("record-mode");
+          expect(outcome.estimatedTokensAfter).toBeLessThan(outcome.estimatedTokensBefore);
+        }),
+      ),
+  );
+
+  it.effect("does not allow a record-only external engine to mutate payloads", () =>
+    makeTokenEfficiencyEngine({
+      transforms: new Map([[DETERMINISTIC_ENGINE_ID, () => "tiny external summary"]]),
+      recordOnlyEngines: new Set([DETERMINISTIC_ENGINE_ID]),
+    })
+      .compact(request())
+      .pipe(
+        Effect.map((outcome) => {
+          expect(outcome.text).toBe(REPEATED);
+          expect(outcome.applied).toBe(false);
+          expect(outcome.skippedReason).toBe(`record-only-engine:${DETERMINISTIC_ENGINE_ID}`);
         }),
       ),
   );
@@ -107,6 +138,18 @@ describe("invariants", () => {
     withTransform(() => {
       throw new Error("engine exploded");
     })
+      .compact(request())
+      .pipe(
+        Effect.map((outcome) => {
+          expect(outcome.text).toBe(REPEATED);
+          expect(outcome.applied).toBe(false);
+          expect(outcome.skippedReason).toBe(`engine-failed:${DETERMINISTIC_ENGINE_ID}`);
+        }),
+      ),
+  );
+
+  it.effect("passes the original through when the engine returns malformed data", () =>
+    withTransform(() => null)
       .compact(request())
       .pipe(
         Effect.map((outcome) => {

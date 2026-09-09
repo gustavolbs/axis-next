@@ -183,6 +183,50 @@ describe("buildTurnStartParams", () => {
     });
   });
 
+  it.effect("keeps concise output in developer instructions instead of user input", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "auto-accept-edits",
+        prompt: "Implement it",
+        model: "gpt-5.3-codex",
+        interactionMode: "default",
+        conciseOutputProfile: {
+          enabled: true,
+          maxSentences: 3,
+          maxBullets: 2,
+        },
+      });
+
+      NodeAssert.deepStrictEqual(params.input, [{ type: "text", text: "Implement it" }]);
+      NodeAssert.match(
+        params.collaborationMode?.settings.developer_instructions ?? "",
+        /at most 3 sentences.*at most 2 bullet points/,
+      );
+    }),
+  );
+
+  it("activates the default collaboration mode when concise output is enabled", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Summarize it",
+        conciseOutputProfile: {
+          enabled: true,
+          maxSentences: 2,
+          maxBullets: 1,
+        },
+      }),
+    );
+
+    NodeAssert.equal(params.collaborationMode?.mode, "default");
+    NodeAssert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /at most 2 sentences/,
+    );
+  });
+
   it("reports the same fallback model and effort in settings and instructions", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
@@ -224,30 +268,30 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
-  it("omits collaboration mode when interaction mode is absent", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("omits collaboration mode when interaction mode is absent", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "approval-required",
         prompt: "Review",
-      }),
-    );
+      });
 
-    NodeAssert.deepStrictEqual(params, {
-      threadId: "provider-thread-1",
-      approvalPolicy: "untrusted",
-      approvalsReviewer: "user",
-      sandboxPolicy: {
-        type: "readOnly",
-      },
-      input: [
-        {
-          type: "text",
-          text: "Review",
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "readOnly",
         },
-      ],
-    });
-  });
+        input: [
+          {
+            type: "text",
+            text: "Review",
+          },
+        ],
+      });
+    }),
+  );
 });
 
 describe("Codex MCP elicitation approvals", () => {

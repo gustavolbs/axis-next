@@ -125,8 +125,11 @@ function OpenContentSearchDialog(props: {
   const groups = useMemo(() => groupMatches(visibleMatches), [visibleMatches]);
 
   useEffect(() => {
+    // These values are deliberately reset after a new result set commits.
     setSelectedIndex(0);
     setVisibleCount(VISIBLE_MATCH_WINDOW);
+    // The search hook returns a new result set as the query or filters change.
+    // Resetting the window is intentionally tied to that result identity.
   }, [matches]);
 
   useEffect(() => {

@@ -894,6 +894,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-diagnostics",
       tag: WS_METHODS.serverGetProcessDiagnostics,
     }),
+    tokenEfficiency: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:token-efficiency",
+      tag: WS_METHODS.serverGetTokenEfficiency,
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,

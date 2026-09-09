@@ -44,11 +44,8 @@ describe("compactDeterministically", () => {
     expect(compactDeterministically(lines("a", "", "", "", "b")).text).toBe(lines("a", "", "b"));
   });
 
-  it("elides the middle of very long output and reports the count", () => {
-    const long = Array.from(
-      { length: 500 },
-      (_, index) => `line ${String.fromCharCode(97 + (index % 26))}`,
-    );
+  it("elides only a provably repetitive middle and reports the count", () => {
+    const long = Array.from({ length: 500 }, () => NOISE);
     const result = compactDeterministically(long.join("\n"), {
       repeatThreshold: 1000,
       maxConsecutiveBlankLines: 1,
@@ -57,6 +54,39 @@ describe("compactDeterministically", () => {
     });
     expect(result.text.split("\n")).toHaveLength(21);
     expect(result.text).toContain("… 480 lines omitted from the middle of this output");
+  });
+
+  it("never elides unique lines from a long payload", () => {
+    const long = Array.from({ length: 500 }, (_, index) => `unique output ${index}`);
+    const text = long.join("\n");
+    expect(
+      compactDeterministically(text, {
+        repeatThreshold: 1000,
+        maxConsecutiveBlankLines: 1,
+        maxLines: 100,
+        edgeLines: 10,
+      }),
+    ).toEqual({ text, removedLines: 0 });
+  });
+
+  it.each([
+    ["JSON", '  "retry": 3,'],
+    ["code", "const timeout = 30;"],
+    ["path", "reading /var/log/app/server.log"],
+    ["command", "$ npm install"],
+    ["URL", "https://example.com/api/v1"],
+    ["identifier", "build 7570472d829549e33056927476576445f76052bb"],
+    ["number", "port 58231"],
+  ] as const)("preserves repeated %s payload lines", (_, protectedLine) => {
+    const text = Array.from({ length: 500 }, () => protectedLine).join("\n");
+    expect(
+      compactDeterministically(text, {
+        repeatThreshold: 1000,
+        maxConsecutiveBlankLines: 1,
+        maxLines: 100,
+        edgeLines: 10,
+      }),
+    ).toEqual({ text, removedLines: 0 });
   });
 
   it("refuses to elide a middle that hides an error", () => {

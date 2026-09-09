@@ -14,9 +14,11 @@
  *
  * @module tokenEfficiency
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { AxisContextId } from "./axisContext.ts";
+import { IsoDateTime, NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 /**
  * What the engine is allowed to do.
@@ -45,6 +47,46 @@ export type TokenEfficiencyEngineId = typeof TokenEfficiencyEngineId.Type;
 
 /** The built-in shape-aware compactor; the only engine that ships today. */
 export const DETERMINISTIC_ENGINE_ID = TokenEfficiencyEngineId.make("deterministic");
+
+export const DEFAULT_CONCISE_OUTPUT_ENABLED = false;
+export const DEFAULT_CONCISE_OUTPUT_MAX_SENTENCES = 5;
+export const DEFAULT_CONCISE_OUTPUT_MAX_BULLETS = 5;
+
+const ConciseOutputMaxSentences = PositiveInt.check(Schema.isBetween({ minimum: 1, maximum: 20 }));
+const ConciseOutputMaxBullets = NonNegativeInt.check(Schema.isBetween({ minimum: 0, maximum: 20 }));
+
+/**
+ * Provider-owned verbosity limits. The profile is opt-in and does not replace
+ * the provider's normal voice, language, or human-facing response style.
+ */
+export const TokenEfficiencyConciseOutputProfile = Schema.Struct({
+  enabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CONCISE_OUTPUT_ENABLED)),
+  ),
+  maxSentences: ConciseOutputMaxSentences.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CONCISE_OUTPUT_MAX_SENTENCES)),
+  ),
+  maxBullets: ConciseOutputMaxBullets.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CONCISE_OUTPUT_MAX_BULLETS)),
+  ),
+});
+export type TokenEfficiencyConciseOutputProfile = typeof TokenEfficiencyConciseOutputProfile.Type;
+
+/**
+ * Build the provider-owned instruction only for an enabled profile. Returning
+ * undefined keeps the default path byte-for-byte free of style instructions.
+ */
+export function buildConciseOutputInstruction(
+  profile: TokenEfficiencyConciseOutputProfile | undefined,
+): string | undefined {
+  if (profile?.enabled !== true) return undefined;
+
+  return [
+    "Respond in your normal provider-owned voice and preserve the user's language.",
+    `Keep the response to at most ${profile.maxSentences} sentences.`,
+    `Use at most ${profile.maxBullets} bullet points when bullets are useful.`,
+  ].join(" ");
+}
 
 /**
  * What a payload is, for the purposes of deciding whether it may be touched.
@@ -86,11 +128,164 @@ export const TokenEfficiencySettings = Schema.Struct({
       Schema.Struct({
         mode: Schema.optionalKey(TokenEfficiencyMode),
         engine: Schema.optionalKey(TokenEfficiencyEngineId),
+        conciseOutput: Schema.optionalKey(TokenEfficiencyConciseOutputProfile),
+      }),
+    ),
+  ),
+  conciseOutput: Schema.optionalKey(TokenEfficiencyConciseOutputProfile),
+});
+export type TokenEfficiencySettings = typeof TokenEfficiencySettings.Type;
+
+/**
+ * The identity used to merge efficiency observations. `null` is the global
+ * context, which keeps provider/model baselines useful before Axis context
+ * routing is available. An omitted context also decodes to that value.
+ */
+export const TokenEfficiencyScopeKey = Schema.Struct({
+  provider: ProviderDriverKind,
+  providerInstanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  contextId: Schema.NullOr(AxisContextId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+});
+export type TokenEfficiencyScopeKey = typeof TokenEfficiencyScopeKey.Type;
+
+const NonNegativeFiniteNumber = Schema.Number.check(
+  Schema.isFinite(),
+  Schema.isGreaterThanOrEqualTo(0),
+);
+
+/**
+ * Distinguishes an observed zero from a provider field that was not exposed.
+ * This is intentionally per metric: providers commonly expose input/output
+ * counts while omitting retries, tool-result counts, or billing.
+ */
+export const TokenEfficiencyMetricAvailability = Schema.Struct({
+  inputTokens: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  cachedInputTokens: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  outputTokens: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  reasoningTokens: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  toolResultTokens: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  latencyMs: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  retries: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  billedCostUsd: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type TokenEfficiencyMetricAvailability = typeof TokenEfficiencyMetricAvailability.Type;
+
+/**
+ * Additive observations for one scope. Token and latency fields default to
+ * zero so a provider can report only the measurements it exposes. A null
+ * billed cost means that no provider-reported cost was available.
+ */
+export const TokenEfficiencyMetrics = Schema.Struct({
+  inputTokens: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  cachedInputTokens: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  outputTokens: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  reasoningTokens: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  toolResultTokens: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** Sum of observed wall-clock latency in milliseconds. */
+  latencyMs: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** Number of retry attempts beyond the first attempt. */
+  retries: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  billedCostUsd: Schema.NullOr(NonNegativeFiniteNumber).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  availability: TokenEfficiencyMetricAvailability.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        inputTokens: false,
+        cachedInputTokens: false,
+        outputTokens: false,
+        reasoningTokens: false,
+        toolResultTokens: false,
+        latencyMs: false,
+        retries: false,
+        billedCostUsd: false,
       }),
     ),
   ),
 });
-export type TokenEfficiencySettings = typeof TokenEfficiencySettings.Type;
+export type TokenEfficiencyMetrics = typeof TokenEfficiencyMetrics.Type;
+
+/** Counts kept independent so pass-through and failures cannot hide attempts. */
+export const TokenEfficiencyCounters = Schema.Struct({
+  attempts: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  compressionsApplied: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  passThrough: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  netNegative: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  failures: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type TokenEfficiencyCounters = typeof TokenEfficiencyCounters.Type;
+
+/** Estimates from the compactor, kept separate from provider-billed usage. */
+export const TokenEfficiencySavings = Schema.Struct({
+  estimatedTokensBefore: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  estimatedTokensAfter: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type TokenEfficiencySavings = typeof TokenEfficiencySavings.Type;
+
+/** No-compression control measurements for one provider/instance/model/context. */
+export const TokenEfficiencyBaseline = Schema.Struct({
+  scope: TokenEfficiencyScopeKey,
+  sampleCount: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  metrics: TokenEfficiencyMetrics,
+});
+export type TokenEfficiencyBaseline = typeof TokenEfficiencyBaseline.Type;
+
+/** Measurements and outcome counters for a candidate efficiency policy. */
+export const TokenEfficiencyAggregate = Schema.Struct({
+  scope: TokenEfficiencyScopeKey,
+  metrics: TokenEfficiencyMetrics,
+  counters: TokenEfficiencyCounters,
+  savings: TokenEfficiencySavings.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({ estimatedTokensBefore: 0, estimatedTokensAfter: 0 }),
+    ),
+  ),
+});
+export type TokenEfficiencyAggregate = typeof TokenEfficiencyAggregate.Type;
+
+export const TOKEN_EFFICIENCY_CONTRACT_VERSION = 1 as const;
+
+/**
+ * Wire-safe efficiency report. It contains only aggregate numbers and scope
+ * metadata; raw provider/tool text, recovery handles, and payloads have no
+ * place in this schema and therefore cannot be sent in a report.
+ */
+export const TokenEfficiencySnapshot = Schema.Struct({
+  contractVersion: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(TOKEN_EFFICIENCY_CONTRACT_VERSION)),
+  ),
+  generatedAt: IsoDateTime,
+  windowStart: Schema.optionalKey(IsoDateTime),
+  windowEnd: Schema.optionalKey(IsoDateTime),
+  baselines: Schema.Array(TokenEfficiencyBaseline).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  aggregates: Schema.Array(TokenEfficiencyAggregate).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+});
+export type TokenEfficiencySnapshot = typeof TokenEfficiencySnapshot.Type;
+
+/**
+ * Aggregate-only input accepted by the optional Hermes learning bridge. Raw
+ * prompts, payloads, recovery handles, and provider messages cannot fit this
+ * schema, so learning receives measurements rather than user content.
+ */
+export const TokenEfficiencyHermesObservation = Schema.Struct({
+  contractVersion: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(TOKEN_EFFICIENCY_CONTRACT_VERSION)),
+  ),
+  contextId: AxisContextId,
+  generatedAt: IsoDateTime,
+  baselines: Schema.Array(TokenEfficiencyBaseline).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  aggregates: Schema.Array(TokenEfficiencyAggregate).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+});
+export type TokenEfficiencyHermesObservation = typeof TokenEfficiencyHermesObservation.Type;
 
 /**
  * Outcome of one compaction attempt, reported in every mode.
@@ -119,6 +314,15 @@ export interface TokenEfficiencyOutcome {
    */
   readonly skippedReason: string | undefined;
 }
+
+/** Metadata carried beside a transformed payload so the caller can recover it. */
+export const TokenEfficiencyApplied = Schema.Struct({
+  engine: TokenEfficiencyEngineId,
+  recoveryHandle: TrimmedNonEmptyString,
+  estimatedTokensBefore: NonNegativeInt,
+  estimatedTokensAfter: NonNegativeInt,
+});
+export type TokenEfficiencyApplied = typeof TokenEfficiencyApplied.Type;
 
 /**
  * Resolve the mode and engine for one provider instance.

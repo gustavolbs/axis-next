@@ -12,9 +12,10 @@ const testLayer = Layer.merge(
   storeLayer.pipe(Layer.provide(SqlitePersistenceMemory)),
 );
 const layer = it.layer(testLayer);
+const decodeAxisScratchChat = Schema.decodeUnknownSync(AxisScratchChat);
 
 const baseChat = (id: string): AxisScratchChat =>
-  Schema.decodeUnknownSync(AxisScratchChat)({
+  decodeAxisScratchChat({
     id: `scratch_${id}`,
     environmentId: "env-test",
     title: `Chat ${id}`,

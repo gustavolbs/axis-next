@@ -23,6 +23,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  ServerSettingsError,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -72,6 +73,7 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
+import * as TokenEfficiencyMetrics from "../../tokenEfficiency/TokenEfficiencyMetrics.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 
 const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
@@ -397,6 +399,12 @@ function makeProviderServiceLayer(
     readonly supportsConversationRollback?: boolean;
     readonly analyticsLayer?: Layer.Layer<AnalyticsService.AnalyticsService>;
     readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
+    readonly serverSettingsLayer?: Layer.Layer<
+      ServerSettings.ServerSettingsService,
+      ServerSettingsError,
+      never
+    >;
+    readonly tokenEfficiencyMetrics?: TokenEfficiencyMetrics.TokenEfficiencyMetricsShape;
   } = {},
 ) {
   const codex = makeFakeCodexAdapter(CODEX_DRIVER, input.supportsConversationRollback);
@@ -424,10 +432,14 @@ function makeProviderServiceLayer(
 
   const layer = it.layer(
     Layer.mergeAll(
-      makeProviderServiceLive().pipe(
+      makeProviderServiceLive(
+        input.tokenEfficiencyMetrics === undefined
+          ? {}
+          : { tokenEfficiencyMetrics: input.tokenEfficiencyMetrics },
+      ).pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
-        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(input.serverSettingsLayer ?? defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
         Layer.provideMerge(input.analyticsLayer ?? AnalyticsService.layerTest),
         Layer.provide(
@@ -4007,6 +4019,156 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       assert.equal(completed[0]?.properties?.inputTokens, 120);
       assert.equal(completed[0]?.properties?.outputTokens, 30);
       assert.equal(completed[0]?.properties?.hasSubagents, true);
+    }),
+  );
+});
+
+const recordedTokenEfficiencyMetrics = TokenEfficiencyMetrics.make();
+const tokenEfficiencyCodex = makeFakeCodexAdapter();
+const tokenEfficiencyProvider = makeProviderServiceLayer({
+  registry: makeStaticInstanceRegistry([[codexInstanceId, tokenEfficiencyCodex.adapter]]),
+  serverSettingsLayer: ServerSettings.layerTest({ tokenEfficiency: { mode: "record" } }),
+  tokenEfficiencyMetrics: recordedTokenEfficiencyMetrics,
+});
+
+tokenEfficiencyProvider.layer("ProviderServiceLive token efficiency", (it) => {
+  it.effect("records provider usage and latency once for duplicate terminal events", () =>
+    Effect.gen(function* () {
+      yield* recordedTokenEfficiencyMetrics.reset;
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-token-efficiency");
+      const turnId = asTurnId("turn-token-efficiency");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = yield* Stream.take(provider.streamEvents, 2).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      tokenEfficiencyCodex.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-token-efficiency-started"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId,
+        payload: { model: "gpt-5" },
+      });
+      const completedEvent: LegacyProviderRuntimeEvent = {
+        type: "turn.completed",
+        eventId: asEventId("evt-token-efficiency-completed"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.040Z",
+        threadId,
+        turnId,
+        payload: {
+          state: "completed",
+          totalCostUsd: 1.25,
+          tokenUsage: {
+            usageStatus: "complete",
+            usageScope: "main_agent",
+            inputTokens: 1_200,
+            cachedInputTokens: 800,
+            outputTokens: 300,
+            reasoningTokens: 120,
+            hasSubagents: false,
+          },
+        },
+      };
+      tokenEfficiencyCodex.emit(completedEvent);
+      tokenEfficiencyCodex.emit({
+        ...completedEvent,
+        eventId: asEventId("evt-token-efficiency-completed-duplicate"),
+      });
+      yield* Fiber.join(events);
+
+      const snapshot = yield* recordedTokenEfficiencyMetrics.getSnapshot;
+      assert.equal(snapshot.baselines.length, 1);
+      assert.equal(snapshot.baselines[0]?.sampleCount, 1);
+      assert.deepEqual(snapshot.baselines[0]?.scope, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        model: "gpt-5",
+        contextId: null,
+      });
+      assert.deepEqual(snapshot.baselines[0]?.metrics, {
+        inputTokens: 1_200,
+        cachedInputTokens: 800,
+        outputTokens: 300,
+        reasoningTokens: 120,
+        toolResultTokens: 0,
+        latencyMs: 40,
+        retries: 0,
+        billedCostUsd: 1.25,
+        availability: {
+          inputTokens: true,
+          cachedInputTokens: true,
+          outputTokens: true,
+          reasoningTokens: true,
+          toolResultTokens: false,
+          latencyMs: true,
+          retries: false,
+          billedCostUsd: true,
+        },
+      });
+    }),
+  );
+
+  it.effect("uses the session model when Codex turn.started has no model payload", () =>
+    Effect.gen(function* () {
+      yield* recordedTokenEfficiencyMetrics.reset;
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-token-efficiency-session-model");
+      const turnId = asTurnId("turn-token-efficiency-session-model");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        modelSelection: { instanceId: codexInstanceId, model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+      });
+
+      const events = yield* Stream.take(provider.streamEvents, 2).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      tokenEfficiencyCodex.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-token-efficiency-session-model-started"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId,
+        payload: {},
+      });
+      tokenEfficiencyCodex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-token-efficiency-session-model-completed"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.040Z",
+        threadId,
+        turnId,
+        payload: {
+          state: "completed",
+          tokenUsage: {
+            usageStatus: "complete",
+            usageScope: "main_agent",
+            inputTokens: 10,
+            outputTokens: 2,
+            hasSubagents: false,
+          },
+        },
+      });
+      yield* Fiber.join(events);
+
+      const snapshot = yield* recordedTokenEfficiencyMetrics.getSnapshot;
+      assert.equal(snapshot.baselines[0]?.scope.model, "gpt-5-codex");
     }),
   );
 });

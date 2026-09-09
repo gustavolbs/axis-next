@@ -28,6 +28,7 @@ import {
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  resolveTokenEfficiency,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -67,6 +68,7 @@ import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as TokenEfficiencyMetrics from "../../tokenEfficiency/TokenEfficiencyMetrics.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 interface PendingCompaction {
@@ -95,6 +97,8 @@ export interface ProviderServiceLiveOptions {
   readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
   /** Same seam as `issueMcpCredential`, for observing the deny path's revoke. */
   readonly revokeMcpCredential?: typeof McpSessionRegistry.revokeActiveMcpThread;
+  /** Injected by the live server so RPC and provider events share one snapshot. */
+  readonly tokenEfficiencyMetrics?: TokenEfficiencyMetrics.TokenEfficiencyMetricsShape;
 }
 
 interface TurnAnalyticsMetadata {
@@ -130,6 +134,13 @@ interface TurnAnalyticsState {
   readonly completedKeys: Set<string>;
   readonly completedOrder: Array<string>;
 }
+
+interface TokenEfficiencyTurnStart {
+  readonly model: string | undefined;
+  readonly startedAtMs: number | undefined;
+}
+
+const MAX_TOKEN_EFFICIENCY_TURN_KEYS = 512;
 
 const MAX_COMPLETED_TURN_ANALYTICS_KEYS = 512;
 const MAX_ACTIVE_TURN_ANALYTICS_PER_SESSION = 8;
@@ -318,6 +329,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const tokenEfficiencyMetrics =
+    options?.tokenEfficiencyMetrics === undefined
+      ? Option.none<TokenEfficiencyMetrics.TokenEfficiencyMetricsShape>()
+      : Option.some(options.tokenEfficiencyMetrics);
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const revokeMcpCredential =
@@ -339,6 +354,127 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   });
   let turnAnalyticsRequestId = 0;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+  const tokenEfficiencyTurnStarts = new Map<string, TokenEfficiencyTurnStart>();
+  const tokenEfficiencySessionModels = new Map<string, string>();
+  const tokenEfficiencyCompleted = new Set<string>();
+  const tokenEfficiencyCompletedOrder: Array<string> = [];
+
+  const rememberTokenEfficiencySessionModel = (
+    instanceId: ProviderInstanceId,
+    threadId: ThreadId,
+    model: string | undefined,
+  ): void => {
+    const normalized = model?.trim();
+    if (!normalized) return;
+    const key = turnAnalyticsSessionKey(instanceId, threadId);
+    tokenEfficiencySessionModels.delete(key);
+    tokenEfficiencySessionModels.set(key, normalized);
+    while (tokenEfficiencySessionModels.size > MAX_TOKEN_EFFICIENCY_TURN_KEYS) {
+      const oldest = tokenEfficiencySessionModels.keys().next().value;
+      if (oldest === undefined) break;
+      tokenEfficiencySessionModels.delete(oldest);
+    }
+  };
+
+  const tokenEfficiencyTurnKey = (
+    source: { readonly instanceId: ProviderInstanceId },
+    event: { readonly threadId: ThreadId; readonly turnId?: TurnId | undefined },
+  ): string | undefined =>
+    event.turnId === undefined
+      ? undefined
+      : `${String(source.instanceId)}\u0000${String(event.threadId)}\u0000${String(event.turnId)}`;
+
+  const eventCreatedAtMs = (createdAt: string): number | undefined => {
+    const parsed = Date.parse(createdAt);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const observeTokenEfficiencyTurnStarted = (
+    source: { readonly instanceId: ProviderInstanceId },
+    event: Extract<ProviderRuntimeEvent, { readonly type: "turn.started" }>,
+  ): Effect.Effect<void> =>
+    Effect.sync(() => {
+      const key = tokenEfficiencyTurnKey(source, event);
+      if (key === undefined || tokenEfficiencyCompleted.has(key)) return;
+      tokenEfficiencyTurnStarts.set(key, {
+        model:
+          event.payload.model ??
+          tokenEfficiencySessionModels.get(
+            turnAnalyticsSessionKey(source.instanceId, event.threadId),
+          ),
+        startedAtMs: eventCreatedAtMs(event.createdAt),
+      });
+      while (tokenEfficiencyTurnStarts.size > MAX_TOKEN_EFFICIENCY_TURN_KEYS) {
+        const oldest = tokenEfficiencyTurnStarts.keys().next().value;
+        if (oldest === undefined) break;
+        tokenEfficiencyTurnStarts.delete(oldest);
+      }
+    });
+
+  const recordTokenEfficiencyTurnCompleted = (
+    source: { readonly instanceId: ProviderInstanceId; readonly provider: ProviderDriverKind },
+    event: Extract<ProviderRuntimeEvent, { readonly type: "turn.completed" | "turn.aborted" }>,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      if (Option.isNone(tokenEfficiencyMetrics)) return;
+      const key = tokenEfficiencyTurnKey(source, event);
+      if (key === undefined) return;
+      const firstObservation = yield* Effect.sync(() => {
+        if (tokenEfficiencyCompleted.has(key)) return false;
+        tokenEfficiencyCompleted.add(key);
+        tokenEfficiencyCompletedOrder.push(key);
+        while (tokenEfficiencyCompletedOrder.length > MAX_TOKEN_EFFICIENCY_TURN_KEYS) {
+          const oldest = tokenEfficiencyCompletedOrder.shift();
+          if (oldest !== undefined) tokenEfficiencyCompleted.delete(oldest);
+        }
+        return true;
+      });
+      if (!firstObservation) return;
+      const started = tokenEfficiencyTurnStarts.get(key);
+      tokenEfficiencyTurnStarts.delete(key);
+      const settings = yield* serverSettings.getSettings.pipe(Effect.option);
+      const resolved = Option.match(settings, {
+        onNone: () => resolveTokenEfficiency(undefined, source.instanceId),
+        onSome: (value) => resolveTokenEfficiency(value.tokenEfficiency, source.instanceId),
+      });
+      const usage = event.payload.tokenUsage;
+      const completedAtMs = eventCreatedAtMs(event.createdAt);
+      const latencyMs =
+        started?.startedAtMs === undefined || completedAtMs === undefined
+          ? undefined
+          : Math.max(0, completedAtMs - started.startedAtMs);
+      const billedCostUsd =
+        event.type === "turn.completed" &&
+        event.payload.totalCostUsd !== undefined &&
+        Number.isFinite(event.payload.totalCostUsd) &&
+        event.payload.totalCostUsd >= 0
+          ? event.payload.totalCostUsd
+          : undefined;
+      yield* tokenEfficiencyMetrics.value.recordTurn({
+        provider: source.provider,
+        providerInstanceId: source.instanceId,
+        ...(started?.model !== undefined ? { model: started.model } : {}),
+        ...(usage
+          ? {
+              usage: {
+                ...(usage.inputTokens !== undefined ? { inputTokens: usage.inputTokens } : {}),
+                ...(usage.cachedInputTokens !== undefined
+                  ? { cachedInputTokens: usage.cachedInputTokens }
+                  : {}),
+                ...(usage.outputTokens !== undefined ? { outputTokens: usage.outputTokens } : {}),
+                ...(usage.reasoningTokens !== undefined
+                  ? { reasoningTokens: usage.reasoningTokens }
+                  : {}),
+                ...(billedCostUsd !== undefined ? { billedCostUsd } : {}),
+              },
+            }
+          : billedCostUsd !== undefined
+            ? { usage: { billedCostUsd } }
+            : {}),
+        ...(latencyMs === undefined ? {} : { latencyMs }),
+        mode: resolved.mode,
+      });
+    });
 
   const finishTurnAnalytics = (
     state: TurnAnalyticsState,
@@ -718,7 +854,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+  const prepareMcpSession = (
+    threadId: ThreadId,
+    providerInstanceId: ProviderInstanceId,
+    provider?: ProviderDriverKind,
+    model?: string,
+  ) =>
     Effect.gen(function* () {
       if (!(yield* agentBrowserAccessEnabled)) {
         // Revoke as well as clear. Every other prepare path reaches
@@ -731,7 +872,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
         return undefined;
       }
-      const credential = yield* issueMcpCredential({ threadId, providerInstanceId });
+      const credential = yield* issueMcpCredential({
+        threadId,
+        providerInstanceId,
+        ...(provider === undefined ? {} : { provider }),
+        ...(model === undefined ? {} : { model }),
+      });
       if (credential) {
         yield* Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config));
       }
@@ -872,6 +1018,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         eventType: canonicalEvent.type,
       });
       if (canonicalEvent.type === "turn.started") {
+        yield* observeTokenEfficiencyTurnStarted(source, canonicalEvent);
         yield* observeTurnStartedForAnalytics(source, canonicalEvent);
       } else if (canonicalEvent.type === "model.rerouted") {
         yield* observeModelReroutedForAnalytics(source, canonicalEvent);
@@ -879,9 +1026,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         canonicalEvent.type === "turn.completed" ||
         canonicalEvent.type === "turn.aborted"
       ) {
+        yield* recordTokenEfficiencyTurnCompleted(source, canonicalEvent);
         yield* recordTurnCompletedAnalytics(source, canonicalEvent);
       } else if (canonicalEvent.type === "session.exited") {
         yield* clearTurnAnalyticsSession(source.instanceId, canonicalEvent.threadId);
+        yield* Effect.sync(() =>
+          tokenEfficiencySessionModels.delete(
+            turnAnalyticsSessionKey(source.instanceId, canonicalEvent.threadId),
+          ),
+        );
       }
       if (
         isCompactedEvent(canonicalEvent) &&
@@ -1020,7 +1173,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      yield* prepareMcpSession(
+        input.binding.threadId,
+        bindingInstanceId,
+        input.binding.provider,
+        persistedModelSelection?.model,
+      );
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -1043,6 +1201,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* upsertSessionBinding(
         { ...resumed, providerInstanceId: bindingInstanceId },
         input.binding.threadId,
+      );
+      rememberTokenEfficiencySessionModel(
+        bindingInstanceId,
+        input.binding.threadId,
+        persistedModelSelection?.model ?? resumed.model,
       );
       yield* analytics.record("provider.session.recovered", {
         provider: resumed.provider,
@@ -1237,7 +1400,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId);
+        yield* prepareMcpSession(
+          threadId,
+          resolvedInstanceId,
+          adapter.provider,
+          input.modelSelection?.model,
+        );
         const session = yield* adapter
           .startSession({
             ...input,
@@ -1258,6 +1426,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...session,
           providerInstanceId: resolvedInstanceId,
         };
+        rememberTokenEfficiencySessionModel(
+          resolvedInstanceId,
+          threadId,
+          input.modelSelection?.model ?? sessionWithInstance.model,
+        );
 
         yield* stopStaleSessionsForThread({
           threadId,
@@ -1389,7 +1562,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
       }
       metricProvider = routed.adapter.provider;
-      metricModel = input.modelSelection?.model;
+      const modelSelectionForInstance =
+        input.modelSelection?.instanceId === routed.instanceId ? input.modelSelection : undefined;
+      if (modelSelectionForInstance?.model !== undefined) {
+        rememberTokenEfficiencySessionModel(
+          routed.instanceId,
+          input.threadId,
+          modelSelectionForInstance.model,
+        );
+      }
+      metricModel = modelSelectionForInstance?.model;
       yield* Effect.annotateCurrentSpan({
         "provider.kind": routed.adapter.provider,
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),

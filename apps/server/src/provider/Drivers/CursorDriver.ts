@@ -26,6 +26,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
+import { resolveConciseOutputProfile } from "../RuntimeInstructions.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
@@ -111,9 +112,16 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
       });
+      const resolveConciseOutputProfileForInstance = serverSettings.getSettings.pipe(
+        Effect.map(({ tokenEfficiency }) =>
+          resolveConciseOutputProfile(tokenEfficiency, instanceId),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
 
       const adapter = yield* makeCursorAdapter(effectiveConfig, {
         environment: processEnv,
+        resolveConciseOutputProfile: resolveConciseOutputProfileForInstance,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
       });

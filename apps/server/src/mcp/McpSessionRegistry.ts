@@ -1,4 +1,9 @@
-import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  type AxisContextId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -14,6 +19,9 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
+  readonly provider?: ProviderDriverKind;
+  readonly model?: string;
+  readonly contextId?: AxisContextId;
 }
 
 export interface McpIssuedCredential {
@@ -128,6 +136,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
+        ...(request.provider === undefined ? {} : { provider: request.provider }),
+        ...(request.model === undefined ? {} : { model: request.model }),
+        ...(request.contextId === undefined ? {} : { contextId: request.contextId }),
         capabilities: new Set(["preview"]),
         issuedAt,
       };

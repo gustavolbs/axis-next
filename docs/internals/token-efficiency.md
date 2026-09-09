@@ -10,8 +10,9 @@ The roadmap requires benchmarking several compressors — a deterministic
 compactor, Caveman Engine, LLMLingua-2 — against no compression at all. If
 each engine wired itself into orchestration, that comparison would be a
 refactor per candidate and the results would not be comparable. So engines are
-pure `string -> string` transforms behind one registry, and switching or
-disabling one is a settings change.
+pure transforms behind one registry, and switching or disabling one is a
+settings change. External engines may return a promise, but the registry still
+owns the same safety invariants.
 
 The registry, not the engine, enforces the three properties that make a
 compressor safe to run in production. Engines are third-party or experimental
@@ -77,11 +78,40 @@ never compressed either.
 until an A/B proves lower provider-billed tokens at equivalent task quality
 and acceptable latency. `record` is the mode that A/B runs in — it measures
 the saving and sends the original, so it is indistinguishable from `off` on
-the wire.
+the wire. An opt-in provider-owned concise-output profile is available across
+the six provider adapters, with per-instance settings taking precedence over
+the server default. Claude's SDK binds the system prompt when its session is
+created, so changing the profile while a Claude session is active takes effect
+on the next session; the other adapters read the profile at turn dispatch.
 
-Nothing calls the registry yet. Wiring it to tool results and terminal output,
-and establishing the per-provider baselines an A/B compares against, are the
-next roadmap items.
+Provider turn completion events feed aggregate, in-memory baselines and
+rollout metrics per provider instance/model/context. Each metric carries
+availability metadata, so an observed zero is distinct from a provider field
+that was not exposed. The first call sites are `preview_evaluate` and
+`preview_snapshot`: textual fields and structured accessibility-tree leaves may
+be compacted when the instance is explicitly opted in, and each original is
+recoverable with a context-scoped, expiring handle. ACP runtimes also expose an
+optional fail-open `terminal/output` transform hook for provider adapters.
+
+An externally installed Caveman executable can be configured with
+`T3_CAVEMAN_ENGINE_COMMAND`; it is record-only, never bundled, and its stderr
+is not forwarded. `TokenEfficiencyBenchmark` provides bilingual fixtures for
+Codex, Claude, Work Hub, remote-dispatch, and scheduled-agent comparisons, but
+does not claim task-quality equivalence without a caller-supplied evaluator.
+`evaluateTokenEfficiencyBenchmark` turns those reviewed scores into a
+fail-closed candidate verdict: a candidate needs complete no-compression
+control results, valid quality scores, a bounded quality delta, positive
+estimated savings, and an acceptable latency budget before it can be treated
+as a rollout candidate.
+Runtime instructions keep a stable provider prompt prefix and append changing
+model/effort/profile metadata afterward. The Hermes bridge accepts only
+context-scoped aggregate observations and emits evidence; it cannot activate a
+compression policy. Its proposal evaluator requires reviewed quality scores,
+control samples, positive savings, and bounded failures before returning a
+draft-only `AxisLearningProposalDraft`; it never writes to the learning store
+or activates a version. Native provider search adapters, real Caveman/LLMLingua
+benchmark runs, reviewed task-quality scores, and Hermes proposal evaluation
+against an external engine remain future roadmap work.
 
 Source: `apps/server/src/tokenEfficiency/`, contracts in
 `packages/contracts/src/tokenEfficiency.ts`.

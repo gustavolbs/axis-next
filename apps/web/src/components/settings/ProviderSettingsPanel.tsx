@@ -7,11 +7,14 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   defaultInstanceIdForDriver,
+  DEFAULT_CONCISE_OUTPUT_MAX_BULLETS,
+  DEFAULT_CONCISE_OUTPUT_MAX_SENTENCES,
   type EnvironmentId,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  type TokenEfficiencyConciseOutputProfile,
   resolveEnvironmentMachineKind,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
@@ -72,6 +75,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { ScrollArea } from "../ui/scroll-area";
+import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -117,6 +121,16 @@ function withoutProviderInstanceKey<V>(
   const next = { ...record } as Record<ProviderInstanceId, V>;
   delete next[key];
   return next;
+}
+
+function clampConciseOutputLimit(
+  value: number | null,
+  minimum: number,
+  maximum: number,
+  fallback: number,
+): number {
+  if (value === null || !Number.isFinite(value)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.floor(value)));
 }
 
 function withoutProviderInstanceFavorites(
@@ -636,6 +650,20 @@ export function EnvironmentProviderSettings({
   );
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
+  const conciseOutput: TokenEfficiencyConciseOutputProfile = settings.tokenEfficiency
+    .conciseOutput ?? {
+    enabled: false,
+    maxSentences: DEFAULT_CONCISE_OUTPUT_MAX_SENTENCES,
+    maxBullets: DEFAULT_CONCISE_OUTPUT_MAX_BULLETS,
+  };
+  const updateConciseOutput = (patch: Partial<TokenEfficiencyConciseOutputProfile>) => {
+    updateSettings({
+      tokenEfficiency: {
+        ...settings.tokenEfficiency,
+        conciseOutput: { ...conciseOutput, ...patch },
+      },
+    });
+  };
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const providerHealthPreset = getBackgroundActivityPresetSettings(
     resolvedBackgroundActivity.profile,
@@ -1151,6 +1179,106 @@ export function EnvironmentProviderSettings({
         sources={settings.usageLimitSources}
         readOnly={readOnly}
       />
+
+      <SettingsSection title="Response efficiency">
+        <SettingsRow
+          title="Concise output"
+          description="Keep provider replies compact while preserving their normal language and voice."
+          serverScoped
+          control={
+            <div
+              inert={readOnly}
+              aria-disabled={readOnly || undefined}
+              className={cn(readOnly && "opacity-50 select-none")}
+            >
+              <Switch
+                checked={conciseOutput.enabled}
+                onCheckedChange={(checked) => updateConciseOutput({ enabled: checked })}
+                aria-label="Enable concise output"
+              />
+            </div>
+          }
+        />
+        {conciseOutput.enabled ? (
+          <>
+            <SettingsRow
+              title="Maximum sentences"
+              description="Limit the number of sentences in each provider response."
+              serverScoped
+              control={
+                <div
+                  inert={readOnly}
+                  aria-disabled={readOnly || undefined}
+                  className={cn(
+                    "flex shrink-0 items-center gap-2",
+                    readOnly && "opacity-50 select-none",
+                  )}
+                >
+                  <NumberField
+                    value={conciseOutput.maxSentences}
+                    min={1}
+                    max={20}
+                    step={1}
+                    size="sm"
+                    className="w-32"
+                    onValueChange={(value) =>
+                      updateConciseOutput({
+                        maxSentences: clampConciseOutputLimit(
+                          value,
+                          1,
+                          20,
+                          conciseOutput.maxSentences,
+                        ),
+                      })
+                    }
+                  >
+                    <NumberFieldGroup>
+                      <NumberFieldDecrement aria-label="Decrease maximum sentences" />
+                      <NumberFieldInput aria-label="Maximum sentences" />
+                      <NumberFieldIncrement aria-label="Increase maximum sentences" />
+                    </NumberFieldGroup>
+                  </NumberField>
+                </div>
+              }
+            />
+            <SettingsRow
+              title="Maximum bullets"
+              description="Limit bullet points when a list is useful."
+              serverScoped
+              control={
+                <div
+                  inert={readOnly}
+                  aria-disabled={readOnly || undefined}
+                  className={cn(
+                    "flex shrink-0 items-center gap-2",
+                    readOnly && "opacity-50 select-none",
+                  )}
+                >
+                  <NumberField
+                    value={conciseOutput.maxBullets}
+                    min={0}
+                    max={20}
+                    step={1}
+                    size="sm"
+                    className="w-32"
+                    onValueChange={(value) =>
+                      updateConciseOutput({
+                        maxBullets: clampConciseOutputLimit(value, 0, 20, conciseOutput.maxBullets),
+                      })
+                    }
+                  >
+                    <NumberFieldGroup>
+                      <NumberFieldDecrement aria-label="Decrease maximum bullets" />
+                      <NumberFieldInput aria-label="Maximum bullets" />
+                      <NumberFieldIncrement aria-label="Increase maximum bullets" />
+                    </NumberFieldGroup>
+                  </NumberField>
+                </div>
+              }
+            />
+          </>
+        ) : null}
+      </SettingsSection>
 
       <SettingsSection title="Advanced">
         <SettingsRow

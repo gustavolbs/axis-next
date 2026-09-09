@@ -11,6 +11,9 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as PreviewHandlers from "./toolkits/preview/handlers.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TokenEfficiencyMetrics from "../tokenEfficiency/TokenEfficiencyMetrics.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -35,6 +38,7 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
+  Layer.provide(TokenEfficiencyMetrics.layerTest()),
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
 );
@@ -50,6 +54,144 @@ it("normalizes empty successful notification responses to accepted", () => {
   );
   expect(resultResponse.status).toBe(200);
 });
+
+it.effect("compacts textual evaluate results only when the provider instance opts in", () => {
+  const repeated = [
+    "start",
+    "npm warn deprecated transitive dependency, see the log for details",
+    "npm warn deprecated transitive dependency, see the log for details",
+    "npm warn deprecated transitive dependency, see the log for details",
+    "npm warn deprecated transitive dependency, see the log for details",
+    "done",
+  ].join("\n");
+  return Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const configured = yield* settings.getSettings;
+    expect(configured.tokenEfficiency.mode).toBe("compress");
+    const result = yield* PreviewHandlers.compactPreviewToolResult(repeated);
+    const compacted = result as {
+      readonly value: string;
+      readonly tokenEfficiency: { readonly recoveryHandle: string };
+    };
+    expect(result).toMatchObject({
+      tokenEfficiency: { recoveryHandle: expect.any(String) },
+    });
+    if (typeof result !== "object" || result === null || !("value" in result)) {
+      throw new Error("expected compacted preview result metadata");
+    }
+    expect(compacted.value).toContain("previous line repeated");
+    expect(compacted.value.length).toBeLessThan(repeated.length);
+    const recoveryHandle = compacted.tokenEfficiency.recoveryHandle;
+    expect(yield* PreviewHandlers.recoverPreviewToolPayload(recoveryHandle)).toBe(repeated);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({ tokenEfficiency: { mode: "compress" } }),
+        TokenEfficiencyMetrics.layerTest(),
+        Layer.succeed(McpInvocationContext.McpInvocationContext, invocation),
+      ),
+    ),
+  );
+});
+
+it.effect("compacts textual snapshot fields with field-scoped recovery handles", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const repeatedLine = "repeated browser log line that is long enough to collapse";
+    const repeated = ["start", repeatedLine, repeatedLine, repeatedLine, repeatedLine, "done"].join(
+      "\n",
+    );
+    yield* Stream.runForEach(
+      yield* broker.connect({
+        clientId: "mcp-snapshot-compaction-client",
+        environmentId,
+      }),
+      (event) =>
+        event.type === "connected"
+          ? Effect.void
+          : broker.respond({
+              clientId: "mcp-snapshot-compaction-client",
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+              ok: true,
+              result: {
+                url: "http://example.test/",
+                title: "Example",
+                loading: false,
+                visibleText: repeated,
+                interactiveElements: [],
+                accessibilityTree: {
+                  root: {
+                    role: "button",
+                    nodeId: "stable-node-id",
+                    name: repeated,
+                    text: repeated,
+                    value: repeated,
+                  },
+                },
+                consoleEntries: [{ level: "info", text: repeated, timestamp: "now" }],
+                networkEntries: [],
+                actionTimeline: [],
+                screenshot: {
+                  mimeType: "image/png",
+                  data: Buffer.from("png").toString("base64"),
+                  width: 10,
+                  height: 5,
+                },
+              },
+            }),
+    ).pipe(Effect.forkScoped);
+    yield* Effect.yieldNow;
+
+    const result = yield* server
+      .callTool({ name: "preview_snapshot", arguments: {} })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      visibleText: expect.stringContaining("previous line repeated"),
+      accessibilityTree: {
+        root: {
+          role: "button",
+          nodeId: "stable-node-id",
+          name: expect.stringContaining("previous line repeated"),
+          text: expect.stringContaining("previous line repeated"),
+          value: repeated,
+        },
+      },
+      tokenEfficiency: {
+        fields: [
+          { field: "visibleText" },
+          { field: "accessibilityTree.root.name" },
+          { field: "accessibilityTree.root.text" },
+          { field: "consoleEntries[0].text" },
+        ],
+      },
+    });
+
+    const fields = (
+      result.structuredContent as {
+        tokenEfficiency: { fields: Array<{ field: string; applied: { recoveryHandle: string } }> };
+      }
+    ).tokenEfficiency.fields;
+    for (const field of fields) {
+      expect(yield* PreviewHandlers.recoverPreviewToolPayload(field.applied.recoveryHandle)).toBe(
+        repeated,
+      );
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.ServerSettingsService.layerTest({ tokenEfficiency: { mode: "compress" } }),
+        TestLayer,
+        Layer.succeed(McpInvocationContext.McpInvocationContext, invocation),
+      ),
+    ),
+  ),
+);
 
 it.effect("returns bounded structural preview snapshot failures", () =>
   Effect.scoped(
@@ -228,6 +370,8 @@ it.effect("registers annotated tools and preserves authenticated request context
       const navigateTool = server.tools.find(({ tool }) => tool.name === "preview_navigate");
       expect(navigateTool?.tool.annotations?.destructiveHint).toBe(false);
       expect(navigateTool?.tool.annotations?.openWorldHint).toBe(true);
+
+      expect(server.tools.some(({ tool }) => tool.name === "preview_recover")).toBe(true);
 
       const status = yield* server
         .callTool({ name: "preview_status", arguments: {} })
