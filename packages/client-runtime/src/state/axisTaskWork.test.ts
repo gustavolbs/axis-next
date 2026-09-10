@@ -8,6 +8,8 @@ import {
   WS_METHODS,
   type AxisContextProjectScope,
   type AxisTaskExtension,
+  type AxisWorkflowLookup,
+  type AxisWorkflowSnapshot,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -92,9 +94,34 @@ describe("Axis task client state", () => {
         };
         const listCalls = new Map<string, number>();
         const detailCalls = new Map<string, number>();
+        let workflowCancelled = false;
+        const workflowCalls = new Map<string, number>();
+        const workflowSnapshot = (input: AxisWorkflowLookup): AxisWorkflowSnapshot => ({
+          task: tasks[input.scope.project.projectId]!,
+          state: {
+            taskId: input.taskId,
+            stepId: input.stepId,
+            status: workflowCancelled ? "interrupted" : "running",
+            execution: {
+              threadId: ThreadId.make("execution"),
+              turnId: null,
+              commandId: input.commandId,
+            },
+            artifact: null,
+            reason: null,
+          },
+        });
         const increment = (calls: Map<string, number>, projectId: string) =>
           calls.set(projectId, (calls.get(projectId) ?? 0) + 1);
         const client = {
+          [WS_METHODS.axisWorkflowGet]: (input: AxisWorkflowLookup) => {
+            increment(workflowCalls, input.scope.project.projectId);
+            return Effect.succeed(workflowSnapshot(input));
+          },
+          [WS_METHODS.axisWorkflowCancel]: (input: AxisWorkflowLookup) => {
+            workflowCancelled = true;
+            return Effect.succeed(workflowSnapshot(input));
+          },
           [WS_METHODS.axisTasksList]: (input: { readonly scope: AxisContextProjectScope }) => {
             const projectId = input.scope.project.projectId;
             increment(listCalls, projectId);
@@ -258,6 +285,37 @@ describe("Axis task client state", () => {
         expect(error).not.toHaveBeenCalled();
         expect(listCalls.get("project-a")).toBe(2);
         expect(detailCalls.get("project-a")).toBe(2);
+        const lookup = (projectId: string): AxisWorkflowLookup => ({
+          scope: scope(projectId),
+          threadId: tasks[projectId]!.threadId,
+          taskId: tasks[projectId]!.id,
+          stepId: AxisTaskStepId.make("intake"),
+          commandId: CommandId.make(`attempt-${projectId}`),
+        });
+        const attemptA = atoms.axisWorkflowAttempt({ environmentId, input: lookup("project-a") });
+        const attemptB = atoms.axisWorkflowAttempt({ environmentId, input: lookup("project-b") });
+        yield* AtomRegistry.mount(registry, attemptA);
+        yield* AtomRegistry.mount(registry, attemptB);
+        yield* AtomRegistry.getResult(registry, attemptA, { suspendOnWaiting: true });
+        yield* AtomRegistry.getResult(registry, attemptB, { suspendOnWaiting: true });
+        const cancelled = yield* AtomRegistry.toStream(registry, attemptA).pipe(
+          Stream.filter(
+            (result) =>
+              AsyncResult.isSuccess(result) && result.value.state.status === "interrupted",
+          ),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        const cancel = yield* Effect.promise(() =>
+          atoms.cancelAxisWorkflow.run(registry, {
+            environmentId,
+            input: { ...lookup("project-a"), expectedRevision: 1 },
+          }),
+        );
+        expect(AsyncResult.isSuccess(cancel)).toBe(true);
+        yield* Fiber.join(cancelled);
+        expect(workflowCalls.get("project-a")).toBe(2);
+        expect(workflowCalls.get("project-b")).toBe(1);
       }),
     ),
   );

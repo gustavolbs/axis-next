@@ -79,4 +79,14 @@ describe("RPC authorization scopes", () => {
       );
     }
   });
+  it("allows workflow observation without authorizing execution or interruption", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.axisWorkflowGet)).toBe(AuthOrchestrationReadScope);
+    for (const method of [
+      WS_METHODS.axisWorkflowStart,
+      WS_METHODS.axisWorkflowRetry,
+      WS_METHODS.axisWorkflowCancel,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
 });

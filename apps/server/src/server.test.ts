@@ -26,6 +26,8 @@ import {
   EnvironmentId,
   AxisContextId,
   AxisProjectProfile,
+  AxisWorkflowAdmission,
+  AxisTaskWorkflowServiceError,
   EventId,
   GitCommandError,
   KeybindingRule,
@@ -109,6 +111,7 @@ const decodeAxisWorkHubCacheSnapshot = Schema.decodeUnknownEffect(AxisWorkHubCac
 const decodeAxisWorkHubSourceStatus = Schema.decodeUnknownEffect(AxisWorkHubSourceStatus);
 const decodeAxisLearningSnapshot = Schema.decodeUnknownEffect(AxisLearningSnapshot);
 const decodeAxisProjectProfile = Schema.decodeUnknownEffect(AxisProjectProfile);
+const decodeAxisWorkflowAdmission = Schema.decodeUnknownEffect(AxisWorkflowAdmission);
 const decodeAxisLearningProposal = Schema.decodeUnknownEffect(AxisLearningProposal);
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -125,6 +128,7 @@ import {
   make as makeAxisProjectScope,
 } from "./axis/projects/AxisProjectScope.ts";
 import { AxisTaskStore } from "./axis/tasks/AxisTaskStore.ts";
+import { AxisTaskWorkflowService } from "./axis/tasks/AxisTaskWorkflowService.ts";
 import { AxisScratchChatRunner } from "./axis/scratch/AxisScratchChatRunner.ts";
 import { AxisWorkHubSourceSync } from "./axis/workHub/AxisWorkHubSourceSync.ts";
 import * as ServerConfig from "./config.ts";
@@ -578,6 +582,7 @@ const buildAppUnderTest = (options?: {
     axisLearningService?: Partial<AxisLearningService.AxisLearningService["Service"]>;
     axisProjectProfile?: Partial<AxisProjectProfileStore["Service"]>;
     axisProjectScope?: Partial<AxisProjectScope["Service"]>;
+    axisTaskWorkflow?: Partial<AxisTaskWorkflowService["Service"]>;
     axisScratchChats?: Partial<AxisScratchChatRunner["Service"]>;
     axisWorkHubSourceSync?: Partial<AxisWorkHubSourceSync["Service"]>;
   };
@@ -898,6 +903,7 @@ const buildAppUnderTest = (options?: {
             unlinkSource: () => Effect.die("Axis task unlink is not stubbed in this test"),
             listLifecycle: () => Effect.succeed([]),
           }),
+          Layer.mock(AxisTaskWorkflowService)({ ...options?.layers?.axisTaskWorkflow }),
           Layer.mock(AxisScratchChatRunner)({
             list: () => Effect.succeed([] as ReadonlyArray<never>),
             create: () => Effect.die("Scratch chat create is not stubbed in this test"),
@@ -5618,6 +5624,89 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "routes workflow operations with server-derived caller identity and typed failures",
+    () =>
+      Effect.gen(function* () {
+        const environmentId = testEnvironmentDescriptor.environmentId;
+        const input = yield* decodeAxisWorkflowAdmission({
+          scope: { contextId: "company", project: { environmentId, projectId: defaultProjectId } },
+          threadId: "task-thread",
+          taskId: "task",
+          stepId: "intake",
+          commandId: "attempt",
+          expectedRevision: 0,
+          modelSelection: { instanceId: "codex", model: "gpt-5.6-luna" },
+        });
+        const catalog = yield* decodeAxisContextCatalogSnapshot({
+          revision: 1,
+          updatedAt: "2026-09-10T00:00:00.000Z",
+          catalog: {
+            contexts: [
+              {
+                id: "company",
+                kind: "company",
+                name: "Company",
+                createdAt: "2026-09-10T00:00:00.000Z",
+                updatedAt: "2026-09-10T00:00:00.000Z",
+              },
+            ],
+          },
+        });
+        const failure = () =>
+          Effect.fail(
+            new AxisTaskWorkflowServiceError({
+              reason: "not_found",
+              message: "No matching admitted attempt.",
+            }),
+          );
+        const start = vi.fn<AxisTaskWorkflowService["Service"]["start"]>(failure);
+        const get = vi.fn<AxisTaskWorkflowService["Service"]["get"]>(failure);
+        const cancel = vi.fn<AxisTaskWorkflowService["Service"]["cancel"]>(failure);
+        const retry = vi.fn<AxisTaskWorkflowService["Service"]["retry"]>(failure);
+        yield* buildAppUnderTest({
+          layers: {
+            axisContextCatalog: { get: Effect.succeed(catalog) },
+            axisTaskWorkflow: { start, get, cancel, retry },
+          },
+        });
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const denied = yield* client[WS_METHODS.axisWorkflowStart]({
+                ...input,
+                scope: { ...input.scope, contextId: AxisContextId.make("missing") },
+              }).pipe(Effect.flip);
+              assert.equal(denied._tag, "AxisTaskWorkflowServiceError");
+              assert.equal(start.mock.calls.length, 0);
+              const operations = [
+                client[WS_METHODS.axisWorkflowStart](input),
+                client[WS_METHODS.axisWorkflowGet](input),
+                client[WS_METHODS.axisWorkflowCancel](input),
+                client[WS_METHODS.axisWorkflowRetry]({
+                  ...input,
+                  previousCommandId: CommandId.make("previous"),
+                }),
+              ];
+              for (const operation of operations) {
+                const rejected = yield* operation.pipe(Effect.flip);
+                assert.equal(rejected._tag, "AxisTaskWorkflowServiceError");
+              }
+              for (const operation of [start, get, cancel, retry]) {
+                assert.equal(operation.mock.calls.length, 1);
+                assert.deepEqual(operation.mock.calls[0]![0], {
+                  environmentId,
+                  contextId: input.scope.contextId,
+                });
+                assert.equal(operation.mock.calls[0]![1].taskId, input.taskId);
+              }
+            }),
+          ),
+        );
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("keeps non-administrative Axis Learning sessions in their own context", () =>

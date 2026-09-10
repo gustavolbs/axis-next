@@ -873,6 +873,11 @@ export function createServerEnvironmentAtoms<R, E>(
     tag: WS_METHODS.axisTasksGet,
     staleTimeMs: 5_000,
   });
+  const axisWorkflowAttempt = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:axis:workflow-attempt",
+    tag: WS_METHODS.axisWorkflowGet,
+    staleTimeMs: 1_000,
+  });
   const axisOnboardingRuns = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:axis:onboarding-runs",
     tag: WS_METHODS.axisOnboardingList,
@@ -916,6 +921,52 @@ export function createServerEnvironmentAtoms<R, E>(
     axisTask,
     axisOnboardingRuns,
     axisOnboardingRun,
+    axisWorkflowAttempt,
+    startAxisWorkflow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:workflow-start",
+      tag: WS_METHODS.axisWorkflowStart,
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => {
+          refreshAxisTaskQueries(registry, environmentId, input.scope, input.threadId);
+          const { scope, threadId, taskId, stepId, commandId } = input;
+          registry.refresh(
+            axisWorkflowAttempt({
+              environmentId,
+              input: { scope, threadId, taskId, stepId, commandId },
+            }),
+          );
+        }),
+    }),
+    retryAxisWorkflow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:workflow-retry",
+      tag: WS_METHODS.axisWorkflowRetry,
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => {
+          refreshAxisTaskQueries(registry, environmentId, input.scope, input.threadId);
+          const { scope, threadId, taskId, stepId, commandId } = input;
+          registry.refresh(
+            axisWorkflowAttempt({
+              environmentId,
+              input: { scope, threadId, taskId, stepId, commandId },
+            }),
+          );
+        }),
+    }),
+    cancelAxisWorkflow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:workflow-cancel",
+      tag: WS_METHODS.axisWorkflowCancel,
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => {
+          refreshAxisTaskQueries(registry, environmentId, input.scope, input.threadId);
+          const { scope, threadId, taskId, stepId, commandId } = input;
+          registry.refresh(
+            axisWorkflowAttempt({
+              environmentId,
+              input: { scope, threadId, taskId, stepId, commandId },
+            }),
+          );
+        }),
+    }),
     startAxisOnboarding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:axis:onboarding-start",
       tag: WS_METHODS.axisOnboardingStart,
