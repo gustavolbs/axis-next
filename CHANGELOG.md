@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.2] - 2026-09-10
+
+### Fixed
+
+- Isolate Chromium storage and application locks with each development environment so Desktop worktrees do not share a browser profile.
+
 ## [0.5.1] - 2026-09-10
 
 ### Fixed

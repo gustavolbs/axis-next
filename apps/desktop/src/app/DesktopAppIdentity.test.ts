@@ -146,6 +146,24 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
+  for (const home of ["/repo/worktree-a/.t3", "/repo/worktree-b/.t3"]) {
+    it.effect(`isolates development Chromium storage in ${home}`, () =>
+      withIdentity(
+        Effect.gen(function* () {
+          const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+          assert.equal(yield* identity.resolveUserDataPath, `${home}/userdata/electron`);
+        }),
+        {
+          legacyPathExists: true,
+          environment: {
+            isPackaged: false,
+            env: { T3CODE_HOME: home, VITE_DEV_SERVER_URL: "http://localhost:7225" },
+          },
+        },
+      ),
+    );
+  }
+
   it.effect("keeps using the legacy userData path when it already exists", () =>
     withIdentity(
       Effect.gen(function* () {
