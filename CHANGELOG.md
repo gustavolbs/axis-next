@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] - 2026-09-10
+
+### Fixed
+
+- Allow administrative clients to open project profiles and Learning in an existing company context while preserving project and environment validation.
+
 ## [0.5.0] - 2026-09-10
 
 ### Added
