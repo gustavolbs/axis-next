@@ -30,6 +30,7 @@ import type {
   AxisProjectProfile,
   AxisProjectRuleId,
 } from "../../../../../packages/contracts/src/axisProjectProfile.ts";
+import { axisProjectScopeKey } from "../../../../../packages/contracts/src/axisProjectProfile.ts";
 import * as AxisProjectProfileStore from "../projects/AxisProjectProfileStore.ts";
 import * as AxisProjectScope from "../projects/AxisProjectScope.ts";
 import { AxisTaskExecution } from "../tasks/AxisTaskExecution.ts";
@@ -57,6 +58,7 @@ export type AxisOnboardingServiceError =
 export interface AxisOnboardingRunSnapshot {
   readonly run: AxisOnboardingRunType;
   readonly progress: AxisOnboardingProgressType;
+  readonly applied?: boolean;
 }
 
 export interface AxisOnboardingApplyResponse {
@@ -153,9 +155,10 @@ const progressFor = (run: AxisOnboardingRunType): AxisOnboardingProgressType => 
   };
 };
 
-const snapshot = (run: AxisOnboardingRunType): AxisOnboardingRunSnapshot => ({
+const snapshot = (run: AxisOnboardingRunType, applied = false): AxisOnboardingRunSnapshot => ({
   run,
   progress: progressFor(run),
+  applied,
 });
 
 export class AxisOnboardingService extends Context.Service<
@@ -197,6 +200,20 @@ export const make = Effect.gen(function* () {
   const starts = yield* Semaphore.make(1);
   const activeRuns = new Map<string, Fiber.Fiber<unknown, unknown>>();
 
+  const appliedRunIds = (scope: AxisContextProjectScope) =>
+    sql<{ runId: string }>`
+    SELECT DISTINCT run_id AS "runId" FROM axis_onboarding_applications
+    WHERE context_id = ${scope.contextId} AND scope_key = ${axisProjectScopeKey(scope.project)}
+  `.pipe(
+      Effect.map((rows) => new Set(rows.map((row) => row.runId))),
+      Effect.mapError(
+        () =>
+          new AxisOnboardingStore.AxisOnboardingPersistenceError({
+            operation: "read onboarding applications",
+          }),
+      ),
+    );
+
   const getRun = (
     scope: AxisContextProjectScope,
     runId: AxisOnboardingRunId,
@@ -216,11 +233,20 @@ export const make = Effect.gen(function* () {
   const list: AxisOnboardingService["Service"]["list"] = (scope) =>
     runs.list(scope).pipe(
       Effect.flatMap((items) => Effect.forEach(items, recoverInterruptedRun)),
-      Effect.map((items) => items.map(snapshot)),
+      Effect.flatMap((items) =>
+        appliedRunIds(scope).pipe(
+          Effect.map((ids) => items.map((run) => snapshot(run, ids.has(run.id)))),
+        ),
+      ),
     );
 
   const get: AxisOnboardingService["Service"]["get"] = (scope, runId) =>
-    getRun(scope, runId).pipe(Effect.flatMap(recoverInterruptedRun), Effect.map(snapshot));
+    getRun(scope, runId).pipe(
+      Effect.flatMap(recoverInterruptedRun),
+      Effect.flatMap((run) =>
+        appliedRunIds(scope).pipe(Effect.map((ids) => snapshot(run, ids.has(run.id)))),
+      ),
+    );
 
   const saveWhileRunning = (
     scope: AxisContextProjectScope,
@@ -424,7 +450,7 @@ export const make = Effect.gen(function* () {
             );
             return yield* get(input.scope, id);
           }
-          return snapshot(existing.value);
+          return yield* get(existing.value.scope, existing.value.id);
         }
 
         const startedAt = DateTime.formatIso(yield* DateTime.now);
@@ -498,6 +524,7 @@ export const make = Effect.gen(function* () {
         Effect.provideService(AxisOnboardingStore.AxisOnboardingStore, runs),
         Effect.provideService(AxisProjectProfileStore.AxisProjectProfileStore, profiles),
         Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.map((result) => ({ ...result, run: { ...result.run, applied: true } })),
       );
     });
 

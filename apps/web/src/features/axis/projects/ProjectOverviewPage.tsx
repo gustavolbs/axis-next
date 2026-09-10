@@ -96,6 +96,7 @@ const onboardingRunForUi = (snapshot: AxisOnboardingRunSnapshot): ProjectOnboard
   scope: snapshot.run.scope,
   execution: snapshot.run.execution,
   status: snapshot.run.status,
+  applied: snapshot.applied ?? false,
   sources: snapshot.run.sources.map((source) => ({
     path: source.path,
     status: source.status,

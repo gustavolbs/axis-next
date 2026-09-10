@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.1] - 2026-09-10
+
+### Fixed
+
+- Restore the applied onboarding state from persisted application receipts after reload so another analysis can start without reapplying earlier decisions.
+
 ## [0.7.0] - 2026-09-10
 
 ### Added

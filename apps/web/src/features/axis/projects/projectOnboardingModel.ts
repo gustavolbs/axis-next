@@ -45,6 +45,7 @@ export interface ProjectOnboardingRun {
     readonly commandId: string;
   };
   readonly status: ProjectOnboardingRunStatus;
+  readonly applied?: boolean;
   readonly sources: ReadonlyArray<ProjectOnboardingSource>;
   readonly candidateRules: ReadonlyArray<ProjectOnboardingCandidateRule>;
   readonly conflicts: ReadonlyArray<ProjectOnboardingConflict>;
@@ -216,7 +217,11 @@ export function pendingProjectOnboardingDecisions(
 export function projectOnboardingPhaseFromSnapshot(
   run: ProjectOnboardingRun | null,
 ): ProjectOnboardingPhase {
-  return run === null ? "idle" : phaseFromRunStatus(run.status);
+  return run === null
+    ? "idle"
+    : run.status === "completed" && run.applied === true
+      ? "applied"
+      : phaseFromRunStatus(run.status);
 }
 
 export function buildProjectOnboardingModel(

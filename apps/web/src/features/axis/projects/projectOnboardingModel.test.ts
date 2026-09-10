@@ -47,6 +47,22 @@ const run = (status: ProjectOnboardingRun["status"] = "completed"): ProjectOnboa
 });
 
 describe("project onboarding model", () => {
+  it("restores the applied phase from the durable server receipt and allows another analysis", () => {
+    const input = {
+      scope,
+      run: { ...run(), applied: true },
+      connectionState: "connected" as const,
+      profileRevision: 1,
+    };
+    const model = buildProjectOnboardingModel(input);
+    expect(model.phase).toBe("applied");
+    expect(model.canAnalyze).toBe(true);
+    expect(model.canApply).toBe(false);
+    expect(buildProjectOnboardingModel({ ...input, run: run() }).phase).toBe("review");
+    expect(
+      buildProjectOnboardingModel({ ...input, run: { ...run("failed"), applied: true } }).phase,
+    ).toBe("failed");
+  });
   it("keeps cancel available for a connected analysis and blocks mutations offline or across scopes", () => {
     const input = {
       scope,
