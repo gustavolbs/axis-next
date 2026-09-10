@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1] - 2026-09-10
+
+### Fixed
+
+- Fence server-update continuation against current provider and project context, preserve uncertain provider effects, and prevent normal turns from racing pending continuation.
+- Reject incomplete continuation claims and avoid retaining an unbounded history of dispatched continuation keys.
+
 ## [0.6.0] - 2026-09-10
 
 ### Added

@@ -125,7 +125,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       }
     }));
 
-  it("compareAndSet preserves a binding replaced by an external writer", () =>
+  it.effect("compareAndSet preserves a binding replaced by an external writer", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
       const threadId = ThreadId.make("thread-directory-cas");
@@ -167,7 +167,97 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         assert.equal(current.value.status, "stopped");
         assert.deepEqual(current.value.runtimePayload, { version: "external" });
       }
-    }));
+    }),
+  );
+
+  it.effect("materializes legacy NULL instances before binding CAS and lease", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("legacy-null-cas-lease");
+      yield* repository.upsert({
+        threadId,
+        providerName: "codex",
+        providerInstanceId: null,
+        adapterKey: "codex",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2026-09-10T12:00:00.000Z",
+        resumeCursor: { id: "legacy" },
+        runtimePayload: { activeTurnId: "turn-old" },
+      });
+      const captured = (yield* directory.listBindings()).find(
+        (binding) => binding.threadId === threadId,
+      )!;
+      assert.equal(captured.providerInstanceId, "codex");
+      assert.equal(
+        Option.getOrThrow(yield* repository.getByThreadId({ threadId })).providerInstanceId,
+        "codex",
+      );
+      assert(directory.withLease !== undefined && directory.compareAndSet !== undefined);
+      assert.deepEqual(
+        yield* directory.withLease({ expected: captured, effect: Effect.succeed("leased") }),
+        Option.some("leased"),
+      );
+      assert.equal(
+        yield* directory.compareAndSet({
+          expected: captured,
+          next: { ...captured, status: "stopped" },
+        }),
+        true,
+      );
+      assert.equal(yield* directory.compareAndSet({ expected: captured, next: captured }), false);
+    }),
+  );
+
+  it.effect("legacy promotion rereads the winner when an external writer replaces NULL", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const original = {
+        threadId: ThreadId.make("legacy-null-external"),
+        providerName: "codex",
+        providerInstanceId: null,
+        adapterKey: "codex",
+        runtimeMode: "full-access" as const,
+        status: "running" as const,
+        lastSeenAt: "2026-09-10T12:00:00.000Z",
+        resumeCursor: null,
+        runtimePayload: { version: "old" },
+      };
+      const replacement = {
+        ...original,
+        providerInstanceId: ProviderInstanceId.make("custom-codex"),
+        runtimePayload: { version: "external" },
+      };
+      yield* repository.upsert(original);
+      let comparisons = 0;
+      const binding = yield* ProviderSessionDirectory.pipe(
+        Effect.flatMap((directory) => directory.getBinding(original.threadId)),
+        Effect.provide(
+          ProviderSessionDirectoryLive.pipe(
+            Layer.provide(
+              Layer.succeed(ProviderSessionRuntime.ProviderSessionRuntimeRepository, {
+                ...repository,
+                compareAndSet: (input) =>
+                  Effect.gen(function* () {
+                    comparisons++;
+                    yield* repository.upsert(replacement);
+                    return yield* repository.compareAndSet(input);
+                  }),
+              }),
+            ),
+            Layer.fresh,
+          ),
+        ),
+      );
+      assert.equal(comparisons, 1);
+      assert.equal(Option.getOrThrow(binding).providerInstanceId, replacement.providerInstanceId);
+      assert.deepEqual(
+        Option.getOrThrow(yield* repository.getByThreadId({ threadId: original.threadId })),
+        replacement,
+      );
+    }),
+  );
 
   it("lists persisted bindings with metadata in oldest-first order", () =>
     Effect.gen(function* () {

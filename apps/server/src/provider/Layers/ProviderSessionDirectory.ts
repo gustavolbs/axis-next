@@ -67,7 +67,8 @@ function bindingToRuntime(
     threadId: binding.threadId,
     providerName: binding.provider,
     providerInstanceId:
-      binding.providerInstanceId ?? (!providerChanged ? (existing?.providerInstanceId ?? null) : null),
+      binding.providerInstanceId ??
+      (!providerChanged ? (existing?.providerInstanceId ?? null) : null),
     adapterKey:
       binding.adapterKey ??
       (providerChanged ? binding.provider : (existing?.adapterKey ?? binding.provider)),
@@ -75,13 +76,8 @@ function bindingToRuntime(
     status: binding.status ?? existing?.status ?? "running",
     lastSeenAt,
     resumeCursor:
-      binding.resumeCursor !== undefined
-        ? binding.resumeCursor
-        : (existing?.resumeCursor ?? null),
-    runtimePayload: mergeRuntimePayload(
-      existing?.runtimePayload ?? null,
-      binding.runtimePayload,
-    ),
+      binding.resumeCursor !== undefined ? binding.resumeCursor : (existing?.resumeCursor ?? null),
+    runtimePayload: mergeRuntimePayload(existing?.runtimePayload ?? null, binding.runtimePayload),
   };
 }
 
@@ -114,16 +110,38 @@ function toRuntimeBinding(
 const makeProviderSessionDirectory = Effect.gen(function* () {
   const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
-  const getBinding = (threadId: ThreadId) =>
+  const materializeBinding = Effect.fn(function* (
+    runtime: ProviderSessionRuntime.ProviderSessionRuntime,
+  ): Effect.fn.Return<
+    Option.Option<ProviderRuntimeBindingWithMetadata>,
+    ProviderSessionDirectoryPersistenceError
+  > {
+    const binding = yield* toRuntimeBinding(runtime, "ProviderSessionDirectory.getBinding");
+    if (runtime.providerInstanceId !== null) return Option.some(binding);
+    // Migration must reach SQLite before exposing the promoted identity. Its
+    // CAS still matches the original NULL and complete captured row, so a
+    // concurrent writer cannot be replaced by the migration snapshot.
+    const promoted = yield* repository
+      .compareAndSet({
+        expected: runtime,
+        next: { ...runtime, providerInstanceId: binding.providerInstanceId! },
+      })
+      .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.promoteLegacyBinding")));
+    return promoted ? Option.some(binding) : yield* getBinding(runtime.threadId);
+  });
+
+  const getBinding = (
+    threadId: ThreadId,
+  ): Effect.Effect<
+    Option.Option<ProviderRuntimeBindingWithMetadata>,
+    ProviderSessionDirectoryPersistenceError
+  > =>
     repository.getByThreadId({ threadId }).pipe(
       Effect.mapError(toPersistenceError("ProviderSessionDirectory.getBinding:getByThreadId")),
       Effect.flatMap((runtime) =>
         Option.match(runtime, {
-          onNone: () => Effect.succeed(Option.none<ProviderRuntimeBinding>()),
-          onSome: (value) =>
-            toRuntimeBinding(value, "ProviderSessionDirectory.getBinding").pipe(
-              Effect.map((binding) => Option.some(binding)),
-            ),
+          onNone: () => Effect.succeed(Option.none<ProviderRuntimeBindingWithMetadata>()),
+          onSome: materializeBinding,
         }),
       ),
     );
@@ -205,10 +223,8 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     repository.list().pipe(
       Effect.mapError(toPersistenceError("ProviderSessionDirectory.listBindings:list")),
       Effect.flatMap((rows) =>
-        Effect.forEach(
-          rows,
-          (row) => toRuntimeBinding(row, "ProviderSessionDirectory.listBindings"),
-          { concurrency: "unbounded" },
+        Effect.forEach(rows, materializeBinding, { concurrency: "unbounded" }).pipe(
+          Effect.map((bindings) => bindings.filter(Option.isSome).map((binding) => binding.value)),
         ),
       ),
     );

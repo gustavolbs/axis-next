@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 
 import type {
   ProviderApprovalDecision,
@@ -679,7 +680,6 @@ it.effect("ProviderServiceLive flushes deferred completions during shutdown", ()
     const provider = yield* ProviderService.ProviderService.pipe(Effect.provide(runtimeServices));
     const threadId = asThreadId("thread-turn-analytics-stop-all-deferred");
     const firstStarted = yield* Deferred.make<void>();
-    const secondStarted = yield* Deferred.make<void>();
     const sendRelease = yield* Deferred.make<void>();
     const turnId = asTurnId("turn-analytics-stop-all-deferred");
     yield* provider.startSession(threadId, {
@@ -688,30 +688,18 @@ it.effect("ProviderServiceLive flushes deferred completions during shutdown", ()
       threadId,
       runtimeMode: "full-access",
     });
-    codex.sendTurn
-      .mockImplementationOnce(() =>
-        Effect.gen(function* () {
-          yield* Deferred.succeed(firstStarted, undefined);
-          yield* Deferred.await(sendRelease);
-          return { threadId, turnId };
-        }),
-      )
-      .mockImplementationOnce(() =>
-        Effect.gen(function* () {
-          yield* Deferred.succeed(secondStarted, undefined);
-          yield* Deferred.await(sendRelease);
-          return { threadId, turnId: asTurnId("turn-analytics-stop-all-other") };
-        }),
-      );
+    codex.sendTurn.mockImplementationOnce(() =>
+      Effect.gen(function* () {
+        yield* Deferred.succeed(firstStarted, undefined);
+        yield* Deferred.await(sendRelease);
+        return { threadId, turnId };
+      }),
+    );
 
     const firstSend = yield* provider
       .sendTurn({ threadId, input: "first", attachments: [] })
       .pipe(Effect.forkChild);
     yield* Deferred.await(firstStarted);
-    const secondSend = yield* provider
-      .sendTurn({ threadId, input: "second", attachments: [] })
-      .pipe(Effect.forkChild);
-    yield* Deferred.await(secondStarted);
 
     const runtimeEvents = yield* Stream.take(provider.streamEvents, 2).pipe(
       Stream.runDrain,
@@ -756,7 +744,6 @@ it.effect("ProviderServiceLive flushes deferred completions during shutdown", ()
     assert.equal(completed[0]?.properties?.inputTokens, 1_200);
     assert.equal(completed[0]?.properties?.outputTokens, 300);
     yield* Fiber.interrupt(firstSend);
-    yield* Fiber.interrupt(secondSend);
     assert.equal(recordedAnalytics.eventsByName("provider.turn.completed").length, 1);
   }),
 );
@@ -992,9 +979,7 @@ function makeContinuationProviderLayer(
     [CLAUDE_AGENT_DRIVER]: claude.adapter,
   });
   const layer = makeProviderServiceLive().pipe(
-    Layer.provide(
-      Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry),
-    ),
+    Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
     Layer.provide(Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, directory)),
     Layer.provide(defaultServerSettingsLayer),
     Layer.provide(serverConfigTestLayer),
@@ -1028,6 +1013,9 @@ it.effect("rejects a continuation when the binding changes at the final dispatch
       providerInstanceId: codexInstanceId,
       status: "running",
       runtimePayload: {
+        activeTurnId: null,
+        continueAfterServerUpdate: "turn-1",
+        continueAfterServerUpdatePrepared: true,
         axisContinuationEffect: {
           key,
           status: "prepared",
@@ -1089,6 +1077,7 @@ it.effect("rejects a continuation when the binding changes at the final dispatch
 it.effect("does not overwrite a newer binding while settling a continuation", () =>
   Effect.gen(function* () {
     const threadId = asThreadId("thread-newer-binding-preserved");
+    const key = `server-update:${threadId}:turn-source`;
     const newer: ProviderSessionDirectory.ProviderRuntimeBinding = {
       threadId,
       provider: CODEX_DRIVER,
@@ -1096,8 +1085,11 @@ it.effect("does not overwrite a newer binding while settling a continuation", ()
       lastSeenAt: "2026-09-10T12:00:01.000Z",
       status: "running",
       runtimePayload: {
+        activeTurnId: null,
+        continueAfterServerUpdate: "turn-source",
+        continueAfterServerUpdatePrepared: true,
         axisContinuationEffect: {
-          key: "old-key",
+          key,
           status: "prepared",
           providerInstanceId: codexInstanceId,
           driverKind: CODEX_DRIVER,
@@ -1110,10 +1102,11 @@ it.effect("does not overwrite a newer binding while settling a continuation", ()
       getBinding: () => Effect.succeed(Option.some(newer)),
       upsert: (binding: ProviderSessionDirectory.ProviderRuntimeBinding) =>
         Effect.sync(() => upserts.push(binding)),
-      compareAndSet: () => Effect.sync(() => {
-        compareAndSetCalled = true;
-        return false;
-      }),
+      compareAndSet: () =>
+        Effect.sync(() => {
+          compareAndSetCalled = true;
+          return false;
+        }),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
       listBindings: () => Effect.succeed([]),
@@ -1127,7 +1120,7 @@ it.effect("does not overwrite a newer binding while settling a continuation", ()
         threadId,
         providerInstanceId: codexInstanceId,
         driverKind: CODEX_DRIVER,
-        idempotencyKey: "old-key",
+        idempotencyKey: key,
         outcome: "unknown",
       });
       assert.equal(changed, false);
@@ -1137,8 +1130,197 @@ it.effect("does not overwrite a newer binding while settling a continuation", ()
     assert.equal(
       (newer.runtimePayload as { readonly axisContinuationEffect: { readonly key: string } })
         .axisContinuationEffect.key,
-      "old-key",
+      key,
     );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const scenario of [
+  "new-active-turn",
+  "wrong-marker",
+  "not-prepared",
+  "stopped",
+  "missing-marker",
+  "accepted-turn-mismatch",
+  "promote-pending",
+  "promote-unknown",
+  "accepted-to-unknown",
+  "retained-accepted-new-turn",
+] as const)
+  it.effect(`rejects continuation settlement with ${scenario}`, () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId(`settlement-${scenario}`);
+      const accepted =
+        scenario.startsWith("accepted-") || scenario === "retained-accepted-new-turn";
+      const outcome =
+        scenario === "accepted-turn-mismatch" ||
+        scenario.startsWith("promote-") ||
+        scenario === "retained-accepted-new-turn"
+          ? ("accepted" as const)
+          : ("unknown" as const);
+      const key = `server-update:${threadId}:source-turn`;
+      const binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        lastSeenAt: "2026-09-10T12:00:00.000Z",
+        status: scenario === "stopped" ? "stopped" : "running",
+        runtimePayload: {
+          activeTurnId:
+            scenario === "new-active-turn" || scenario === "retained-accepted-new-turn"
+              ? "new-turn"
+              : null,
+          continueAfterServerUpdate:
+            scenario === "missing-marker" || scenario === "retained-accepted-new-turn"
+              ? null
+              : scenario === "wrong-marker"
+                ? "different-source"
+                : "source-turn",
+          continueAfterServerUpdatePrepared: scenario !== "not-prepared",
+          axisContinuationEffect: {
+            key,
+            status: accepted ? "accepted" : scenario === "promote-unknown" ? "unknown" : "pending",
+            providerInstanceId: codexInstanceId,
+            driverKind: CODEX_DRIVER,
+            ...(accepted ? { turnId: "accepted-turn" } : {}),
+          },
+        },
+      };
+      const setup = makeContinuationProviderLayer({
+        getBinding: () => Effect.succeed(Option.some(binding)),
+        compareAndSet: () => Effect.die("invalid generation/state must be rejected before CAS"),
+        upsert: () => Effect.die("settlement must not upsert"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([]),
+      });
+      const result = yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        assert(provider.settleContinuation !== undefined);
+        return yield* provider.settleContinuation({
+          threadId,
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+          idempotencyKey: key,
+          outcome,
+          ...(outcome === "accepted"
+            ? {
+                turnId: asTurnId(
+                  scenario === "accepted-turn-mismatch" ? "wrong-turn" : "accepted-turn",
+                ),
+              }
+            : {}),
+        });
+      }).pipe(Effect.provide(setup.layer));
+      assert.equal(result, false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+for (const outcome of ["accepted", "unknown"] as const)
+  it.effect(`settles the matching continuation generation as ${outcome}`, () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId(`matching-settlement-${outcome}`);
+      const key = `server-update:${threadId}:source-turn`;
+      let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        lastSeenAt: "2026-09-10T12:00:00.000Z",
+        status: "running",
+        runtimePayload: {
+          activeTurnId: null,
+          continueAfterServerUpdate: "source-turn",
+          continueAfterServerUpdatePrepared: true,
+          axisContinuationEffect: {
+            key,
+            status: outcome === "accepted" ? "accepted" : "pending",
+            providerInstanceId: codexInstanceId,
+            driverKind: CODEX_DRIVER,
+            ...(outcome === "accepted" ? { turnId: "accepted-turn" } : {}),
+          },
+        },
+      };
+      let writes = 0;
+      const setup = makeContinuationProviderLayer({
+        getBinding: () => Effect.sync(() => Option.some(binding)),
+        compareAndSet: ({ expected, next }) =>
+          Effect.sync(() => {
+            assert.deepEqual(expected, binding);
+            binding = next;
+            writes++;
+            return true;
+          }),
+        upsert: () => Effect.die("settlement must not upsert"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([]),
+      });
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        assert(provider.settleContinuation !== undefined);
+        const request = {
+          threadId,
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+          idempotencyKey: key,
+          outcome,
+          ...(outcome === "accepted" ? { turnId: asTurnId("accepted-turn") } : {}),
+        };
+        assert.equal(yield* provider.settleContinuation(request), true);
+        if (outcome === "accepted") assert.equal(yield* provider.settleContinuation(request), true);
+      }).pipe(Effect.provide(setup.layer));
+      assert.equal(writes, 1);
+      assert.equal(binding.status, outcome === "accepted" ? "running" : "stopped");
+      assert.propertyVal(
+        binding.runtimePayload,
+        "activeTurnId",
+        outcome === "accepted" ? "accepted-turn" : null,
+      );
+      assert.propertyVal(binding.runtimePayload, "continueAfterServerUpdate", null);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+it.effect("does not settle an old continuation preserved in a new Axis context", () =>
+  Effect.gen(function* () {
+    const threadId = asThreadId("changed-axis-context");
+    const binding = {
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      lastSeenAt: "2026-09-10T12:00:00.000Z",
+      status: "running" as const,
+      runtimePayload: {
+        axisContextDigest: "new",
+        axisContinuationEffect: {
+          key: "old-effect",
+          status: "pending",
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+          axisContextDigest: "old",
+        },
+      },
+    };
+    const setup = makeContinuationProviderLayer({
+      getBinding: () => Effect.succeed(Option.some(binding)),
+      compareAndSet: () => Effect.die("must not settle another context"),
+      upsert: () => Effect.die("must not replace another context"),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    });
+    const changed = yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      assert(provider.settleContinuation !== undefined);
+      return yield* provider.settleContinuation({
+        threadId,
+        providerInstanceId: codexInstanceId,
+        driverKind: CODEX_DRIVER,
+        idempotencyKey: "old-effect",
+        axisContextDigest: "old",
+        outcome: "unknown",
+      });
+    }).pipe(Effect.provide(setup.layer));
+    assert.equal(changed, false);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -1152,6 +1334,9 @@ it.effect("blocks a second dispatch when acceptance persistence fails", () =>
       providerInstanceId: codexInstanceId,
       status: "running",
       runtimePayload: {
+        activeTurnId: null,
+        continueAfterServerUpdate: "turn-1",
+        continueAfterServerUpdatePrepared: true,
         axisContinuationEffect: {
           key,
           status: "prepared",
@@ -1260,14 +1445,18 @@ it.effect("rejects a continuation whose instance driver mismatches its binding",
 it.effect("does not dispatch when the durable continuation CAS loses", () =>
   Effect.gen(function* () {
     const threadId = asThreadId("thread-cas-lost-before-dispatch");
+    const key = `server-update:${threadId}:turn-1`;
     const binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
       threadId,
       provider: CODEX_DRIVER,
       providerInstanceId: codexInstanceId,
       status: "running",
       runtimePayload: {
+        activeTurnId: null,
+        continueAfterServerUpdate: "turn-1",
+        continueAfterServerUpdatePrepared: true,
         axisContinuationEffect: {
-          key: "cas-lost",
+          key,
           status: "prepared",
           providerInstanceId: codexInstanceId,
           driverKind: CODEX_DRIVER,
@@ -1299,7 +1488,7 @@ it.effect("does not dispatch when the durable continuation CAS loses", () =>
           continuationFence: {
             providerInstanceId: codexInstanceId,
             driverKind: CODEX_DRIVER,
-            idempotencyKey: "cas-lost",
+            idempotencyKey: key,
           },
         }),
       );
@@ -1310,82 +1499,126 @@ it.effect("does not dispatch when the durable continuation CAS loses", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("preserves an external binding when post-settlement persistence loses CAS", () =>
-  Effect.gen(function* () {
-    const threadId = asThreadId("thread-post-settlement-cas-lost");
-    const key = "post-settlement-cas-lost";
-    let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
-      threadId,
-      provider: CODEX_DRIVER,
-      providerInstanceId: codexInstanceId,
-      lastSeenAt: "2026-09-10T12:00:00.000Z",
-      status: "running",
-      runtimePayload: {
-        axisContinuationEffect: {
-          key,
-          status: "prepared",
+for (const writerTiming of ["after-lease", "during-cas"] as const) {
+  it.effect(
+    `preserves an external binding when post-settlement persistence loses CAS (${writerTiming})`,
+    () =>
+      Effect.gen(function* () {
+        const threadId = asThreadId("thread-post-settlement-cas-lost");
+        const key = `server-update:${threadId}:turn-1`;
+        let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+          threadId,
+          provider: CODEX_DRIVER,
           providerInstanceId: codexInstanceId,
-          driverKind: CODEX_DRIVER,
-        },
-      },
-    };
-    const externalBinding: ProviderSessionDirectory.ProviderRuntimeBinding = {
-      ...binding,
-      runtimePayload: {
-        axisContinuationEffect: {
-          key: "external-winner",
-          status: "prepared",
-          providerInstanceId: codexInstanceId,
-          driverKind: CODEX_DRIVER,
-        },
-        activeTurnId: "external-turn",
-      },
-    };
-    let compareAndSetCalls = 0;
-    const directory = {
-      getBinding: () => Effect.succeed(Option.some(binding)),
-      upsert: () => Effect.void,
-      compareAndSet: ({ next }: ProviderSessionDirectory.ProviderSessionDirectoryCompareAndSetInput) =>
-        Effect.sync(() => {
-          compareAndSetCalls += 1;
-          if (compareAndSetCalls === 3) {
-            binding = externalBinding;
-            return false;
-          }
-          binding = next;
-          return true;
-        }),
-      getProvider: () => Effect.die("unused"),
-      listThreadIds: () => Effect.die("unused"),
-      listBindings: () => Effect.succeed([]),
-    } satisfies ProviderSessionDirectory.ProviderSessionDirectory["Service"];
-    const setup = makeContinuationProviderLayer(directory);
+          lastSeenAt: "2026-09-10T12:00:00.000Z",
+          status: "running",
+          runtimePayload: {
+            activeTurnId: null,
+            continueAfterServerUpdate: "turn-1",
+            continueAfterServerUpdatePrepared: true,
+            axisContinuationEffect: {
+              key,
+              status: "prepared",
+              providerInstanceId: codexInstanceId,
+              driverKind: CODEX_DRIVER,
+            },
+          },
+        };
+        const externalBinding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+          ...binding,
+          status: "stopped",
+          resumeCursor: { providerThread: "external-cursor" },
+          runtimePayload: {
+            axisContinuationEffect: {
+              key: "external-winner",
+              status: "prepared",
+              providerInstanceId: codexInstanceId,
+              driverKind: CODEX_DRIVER,
+            },
+            activeTurnId: "external-turn",
+          },
+        };
+        let compareAndSetCalls = 0;
+        let leaseCalls = 0;
+        let leaseHeld = false;
+        const directory = {
+          getBinding: () => Effect.succeed(Option.some(binding)),
+          upsert: (next: ProviderSessionDirectory.ProviderRuntimeBinding) =>
+            Effect.sync(() => {
+              binding = next;
+            }),
+          withLease: <A, E, R>({
+            effect,
+          }: {
+            readonly expected: ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata;
+            readonly effect: Effect.Effect<A, E, R>;
+          }) =>
+            Effect.sync(() => {
+              leaseHeld = true;
+              leaseCalls += 1;
+            }).pipe(
+              Effect.andThen(effect),
+              Effect.map((result) => {
+                if (writerTiming === "after-lease" && leaseCalls === 2) binding = externalBinding;
+                return Option.some(result);
+              }),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  leaseHeld = false;
+                }),
+              ),
+            ),
+          compareAndSet: ({
+            expected,
+            next,
+          }: ProviderSessionDirectory.ProviderSessionDirectoryCompareAndSetInput) =>
+            Effect.sync(() => {
+              compareAndSetCalls += 1;
+              if (compareAndSetCalls === 3 && writerTiming === "during-cas") {
+                binding = externalBinding;
+              }
+              if (!NodeUtil.isDeepStrictEqual(expected, binding)) return false;
+              binding = next;
+              return true;
+            }),
+          getProvider: () => Effect.die("unused"),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.succeed([]),
+        } satisfies ProviderSessionDirectory.ProviderSessionDirectory["Service"];
+        const setup = makeContinuationProviderLayer(directory);
+        setup.codex.sendTurn.mockImplementationOnce((input) =>
+          Effect.sync(() => {
+            assert.equal(leaseHeld, false, "provider execution must not hold the SQLite lease");
+            return { threadId: input.threadId, turnId: asTurnId("turn-outside-transaction") };
+          }),
+        );
 
-    yield* Effect.gen(function* () {
-      yield* setup.codex.startSession({
-        threadId,
-        provider: CODEX_DRIVER,
-        providerInstanceId: codexInstanceId,
-        runtimeMode: "full-access",
-      });
-      const provider = yield* ProviderService.ProviderService;
-      const result = yield* provider.sendTurn({
-        threadId,
-        continuation: true,
-        continuationFence: {
-          providerInstanceId: codexInstanceId,
-          driverKind: CODEX_DRIVER,
-          idempotencyKey: key,
-        },
-      });
-      assert.equal(result.threadId, threadId);
-    }).pipe(Effect.provide(setup.layer));
+        yield* Effect.gen(function* () {
+          yield* setup.codex.startSession({
+            threadId,
+            provider: CODEX_DRIVER,
+            providerInstanceId: codexInstanceId,
+            runtimeMode: "full-access",
+          });
+          const provider = yield* ProviderService.ProviderService;
+          const result = yield* provider.sendTurn({
+            threadId,
+            continuation: true,
+            continuationFence: {
+              providerInstanceId: codexInstanceId,
+              driverKind: CODEX_DRIVER,
+              idempotencyKey: key,
+            },
+          });
+          assert.equal(result.threadId, threadId);
+        }).pipe(Effect.provide(setup.layer));
 
-    assert.equal(compareAndSetCalls, 3);
-    assert.equal(setup.codex.sendTurn.mock.calls.length, 1);
-    assert.deepEqual(binding.runtimePayload, externalBinding.runtimePayload);
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
+        assert.equal(compareAndSetCalls, 3);
+        assert.equal(setup.codex.sendTurn.mock.calls.length, 1);
+        assert.deepEqual(binding, externalBinding);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
 let originalAntigravityInstanceAvailable = true;
 const antigravityInstanceRouting = makeProviderServiceLayer({
   registry: {
@@ -1817,6 +2050,488 @@ it.effect(
       NodeFS.rmSync(tempDir, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+for (const timing of ["admission", "accepted-settlement", "failed-settlement"] as const) {
+  it.effect(
+    `normal dispatch preserves the external writer and durable claim when CAS loses at ${timing}`,
+    () =>
+      Effect.gen(function* () {
+        const persistence = yield* Layer.build(
+          ProviderSessionDirectoryLive.pipe(
+            Layer.provide(
+              ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+            ),
+          ),
+        );
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
+          Effect.provide(persistence),
+        );
+        const threadId = asThreadId(`normal-cas-${timing}`);
+        let winner: ProviderSessionDirectory.ProviderRuntimeBinding | undefined;
+        const writeExternal = Effect.gen(function* () {
+          const current = Option.getOrThrow(yield* directory.getBinding(threadId));
+          yield* directory.upsert({
+            ...current,
+            status: "stopped",
+            runtimePayload: {
+              ...readRuntimePayloadForTest(current.runtimePayload),
+              activeTurnId: "external-turn",
+              externalField: "preserved",
+              ...(timing === "admission"
+                ? {
+                    axisContinuationEffect: {
+                      key: `server-update:${threadId}:source-turn`,
+                      status: "pending",
+                      providerInstanceId: codexInstanceId,
+                      driverKind: CODEX_DRIVER,
+                    },
+                  }
+                : {}),
+            },
+          });
+          winner = Option.getOrThrow(yield* directory.getBinding(threadId));
+        });
+        const wrapped = {
+          ...directory,
+          withLease: <A, E, R>(input: {
+            readonly expected: ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata;
+            readonly effect: Effect.Effect<A, E, R>;
+          }) =>
+            Effect.gen(function* () {
+              if (timing === "admission" && winner === undefined) yield* writeExternal;
+              return yield* directory.withLease!(input);
+            }),
+          compareAndSet: (
+            input: ProviderSessionDirectory.ProviderSessionDirectoryCompareAndSetInput,
+          ) =>
+            Effect.gen(function* () {
+              const claim = readRuntimePayloadForTest(
+                input.expected.runtimePayload,
+              ).axisNormalTurnEffect;
+              if (timing !== "admission" && claim != null && winner === undefined)
+                yield* writeExternal;
+              return yield* directory.compareAndSet!(input);
+            }),
+        } satisfies ProviderSessionDirectory.ProviderSessionDirectory["Service"];
+        const setup = makeContinuationProviderLayer(wrapped);
+        const provider = yield* ProviderService.ProviderService.pipe(
+          Effect.provide(yield* Layer.build(setup.layer)),
+        );
+        yield* provider.startSession(threadId, {
+          threadId,
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+        });
+        if (timing === "failed-settlement")
+          setup.codex.sendTurn.mockImplementationOnce(() =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: CODEX_DRIVER,
+                method: "sendTurn",
+                detail: "Possible acceptance before disconnection",
+              }),
+            ),
+          );
+        const result = yield* Effect.exit(provider.sendTurn({ threadId, input: "Normal turn" }));
+        assert.equal(Exit.isFailure(result), true);
+        assert.equal(setup.codex.sendTurn.mock.calls.length, timing === "admission" ? 0 : 1);
+        assert.isDefined(winner);
+        assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)), winner);
+        const claimKey = timing === "admission" ? "axisContinuationEffect" : "axisNormalTurnEffect";
+        assert.propertyVal(
+          readRuntimePayloadForTest(winner!.runtimePayload)[claimKey],
+          "status",
+          "pending",
+        );
+
+        // A fresh service has no local permit/idempotency history from the loser.
+        const fresh = makeContinuationProviderLayer(directory);
+        const restarted = yield* ProviderService.ProviderService.pipe(
+          Effect.provide(yield* Layer.build(Layer.fresh(fresh.layer))),
+        );
+        yield* fresh.codex.startSession({
+          threadId,
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+        });
+        assert.instanceOf(
+          yield* Effect.flip(restarted.sendTurn({ threadId, input: "Retry after CAS loss" })),
+          ProviderValidationError,
+        );
+        assert.equal(fresh.codex.sendTurn.mock.calls.length, 0);
+        assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)), winner);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+const continuationClaimLifecycle = makeProviderServiceLayer();
+for (const outcome of ["accepted", "unknown"] as const) {
+  it.effect(
+    `durable continuation admission blocks another service's normal dispatch until ${outcome} settlement`,
+    () =>
+      Effect.gen(function* () {
+        const persistence = yield* Layer.build(
+          ProviderSessionDirectoryLive.pipe(
+            Layer.provide(
+              ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+            ),
+          ),
+        );
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
+          Effect.provide(persistence),
+        );
+        const first = makeContinuationProviderLayer(directory);
+        const second = makeContinuationProviderLayer(directory);
+        const firstContext = yield* Layer.build(Layer.fresh(first.layer));
+        const secondContext = yield* Layer.build(Layer.fresh(second.layer));
+        const provider = yield* ProviderService.ProviderService.pipe(Effect.provide(firstContext));
+        const external = yield* ProviderService.ProviderService.pipe(Effect.provide(secondContext));
+        const threadId = asThreadId(`pending-continuation-${outcome}`);
+        const independent = asThreadId(`independent-${outcome}`);
+        for (const id of [threadId, independent]) {
+          yield* provider.startSession(id, {
+            threadId: id,
+            provider: CODEX_DRIVER,
+            providerInstanceId: codexInstanceId,
+            runtimeMode: "full-access",
+          });
+        }
+        yield* second.codex.startSession({
+          threadId,
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+        });
+        const key = `server-update:${threadId}:old-turn`;
+        const before = Option.getOrThrow(yield* directory.getBinding(threadId));
+        yield* directory.upsert({
+          ...before,
+          runtimePayload: {
+            activeTurnId: null,
+            continueAfterServerUpdate: "old-turn",
+            continueAfterServerUpdatePrepared: true,
+            axisContinuationEffect: {
+              key,
+              status: "prepared",
+              providerInstanceId: codexInstanceId,
+              driverKind: CODEX_DRIVER,
+            },
+          },
+        });
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        first.codex.sendTurn.mockImplementationOnce((input) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+            if (outcome === "unknown")
+              return yield* Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: CODEX_DRIVER,
+                  method: "sendTurn",
+                  detail: "Disconnected after possible acceptance",
+                }),
+              );
+            return { threadId: input.threadId, turnId: asTurnId("continued-turn") };
+          }),
+        );
+        const continuation = yield* provider
+          .sendTurn({
+            threadId,
+            continuation: true,
+            continuationFence: {
+              providerInstanceId: codexInstanceId,
+              driverKind: CODEX_DRIVER,
+              idempotencyKey: key,
+            },
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* Deferred.await(entered);
+        yield* Effect.gen(function* () {
+          const pending = Option.getOrThrow(yield* directory.getBinding(threadId));
+          assert.propertyVal(
+            readRuntimePayloadForTest(pending.runtimePayload).axisContinuationEffect,
+            "status",
+            "pending",
+          );
+          const failure = yield* Effect.flip(
+            external.sendTurn({ threadId, input: "Concurrent normal turn" }),
+          );
+          assert.instanceOf(failure, ProviderValidationError);
+          assert.equal(second.codex.sendTurn.mock.calls.length, 0);
+          assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)), pending);
+          // This receipt arrives while the first adapter is still blocked. Neither
+          // a global permit nor a SQL transaction may span that provider call.
+          const independentTurn = yield* provider.sendTurn({
+            threadId: independent,
+            input: "Independent thread",
+          });
+          assert.equal(independentTurn.threadId, independent);
+        }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+        const completed = yield* Fiber.join(continuation);
+        assert.equal(Exit.isSuccess(completed), outcome === "accepted");
+        const settled = Option.getOrThrow(yield* directory.getBinding(threadId));
+        assert.propertyVal(
+          readRuntimePayloadForTest(settled.runtimePayload).axisContinuationEffect,
+          "status",
+          outcome,
+        );
+        if (outcome === "accepted") {
+          yield* external.sendTurn({ threadId, input: "After settlement" });
+          assert.propertyVal(
+            Option.getOrThrow(yield* directory.getBinding(threadId)).runtimePayload,
+            "axisContinuationEffect",
+            null,
+          );
+        } else {
+          assert.instanceOf(
+            yield* Effect.flip(external.sendTurn({ threadId, input: "No uncertain replay" })),
+            ProviderValidationError,
+          );
+          assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)), settled);
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect(
+  "normal dispatch claims the thread durably before the adapter and fences continuation in another service",
+  () =>
+    Effect.gen(function* () {
+      const persistence = yield* Layer.build(
+        ProviderSessionDirectoryLive.pipe(
+          Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+        ),
+      );
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
+        Effect.provide(persistence),
+      );
+      const first = makeContinuationProviderLayer(directory);
+      const second = makeContinuationProviderLayer(directory);
+      const provider = yield* ProviderService.ProviderService.pipe(
+        Effect.provide(yield* Layer.build(Layer.fresh(first.layer))),
+      );
+      const external = yield* ProviderService.ProviderService.pipe(
+        Effect.provide(yield* Layer.build(Layer.fresh(second.layer))),
+      );
+      const threadId = asThreadId("normal-before-continuation");
+      yield* provider.startSession(threadId, {
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      yield* second.codex.startSession({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      const before = Option.getOrThrow(yield* directory.getBinding(threadId));
+      const key = `server-update:${threadId}:old-turn`;
+      yield* directory.upsert({
+        ...before,
+        runtimePayload: {
+          activeTurnId: null,
+          continueAfterServerUpdate: "old-turn",
+          continueAfterServerUpdatePrepared: true,
+          axisContinuationEffect: {
+            key,
+            status: "prepared",
+            providerInstanceId: codexInstanceId,
+            driverKind: CODEX_DRIVER,
+          },
+        },
+      });
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      first.codex.sendTurn.mockImplementationOnce((input) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(release);
+          return { threadId: input.threadId, turnId: asTurnId("normal-turn") };
+        }),
+      );
+      const normal = yield* provider
+        .sendTurn({ threadId, input: "Normal first" })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* Effect.gen(function* () {
+        const pending = Option.getOrThrow(yield* directory.getBinding(threadId));
+        assert.propertyVal(
+          readRuntimePayloadForTest(pending.runtimePayload).axisNormalTurnEffect,
+          "status",
+          "pending",
+        );
+        assert.instanceOf(
+          yield* Effect.flip(
+            external.sendTurn({
+              threadId,
+              continuation: true,
+              continuationFence: {
+                providerInstanceId: codexInstanceId,
+                driverKind: CODEX_DRIVER,
+                idempotencyKey: key,
+              },
+            }),
+          ),
+          ProviderValidationError,
+        );
+        assert.instanceOf(
+          yield* Effect.flip(external.sendTurn({ threadId, input: "Another normal" })),
+          ProviderValidationError,
+        );
+        assert.equal(second.codex.sendTurn.mock.calls.length, 0);
+        assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)), pending);
+      }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      yield* Fiber.join(normal);
+      const after = Option.getOrThrow(yield* directory.getBinding(threadId));
+      assert.propertyVal(after.runtimePayload, "axisNormalTurnEffect", null);
+      assert.propertyVal(after.runtimePayload, "activeTurnId", "normal-turn");
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+continuationClaimLifecycle.layer("ProviderServiceLive continuation lifecycle", (it) => {
+  for (const claimCase of [
+    "missing-identity",
+    "scalar",
+    "instance",
+    "driver",
+    "digest",
+    "malformed-digest",
+  ] as const)
+    it.effect(
+      `blocks normal and continuation dispatch for an unreadable or mismatched claim (${claimCase})`,
+      () =>
+        Effect.gen(function* () {
+          const provider = yield* ProviderService.ProviderService;
+          const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+          const threadId = asThreadId(`invalid-claim-${claimCase}`);
+          yield* provider.startSession(threadId, {
+            threadId,
+            provider: CODEX_DRIVER,
+            providerInstanceId: codexInstanceId,
+            runtimeMode: "full-access",
+          });
+          const key = `server-update:${threadId}:source-turn`;
+          const valid = {
+            key,
+            status: "prepared",
+            providerInstanceId: codexInstanceId,
+            driverKind: CODEX_DRIVER,
+          };
+          const claim =
+            claimCase === "missing-identity"
+              ? { key, status: "pending" }
+              : claimCase === "scalar"
+                ? "pending"
+                : claimCase === "instance"
+                  ? { ...valid, providerInstanceId: "another-instance" }
+                  : claimCase === "driver"
+                    ? { ...valid, driverKind: CLAUDE_AGENT_DRIVER }
+                    : {
+                        ...valid,
+                        axisContextDigest: claimCase === "digest" ? "another-context" : 42,
+                      };
+          const before = Option.getOrThrow(yield* directory.getBinding(threadId));
+          yield* directory.upsert({
+            ...before,
+            runtimePayload: {
+              activeTurnId: null,
+              continueAfterServerUpdate: "source-turn",
+              continueAfterServerUpdatePrepared: true,
+              axisContinuationEffect: claim,
+            },
+          });
+          const captured = Option.getOrThrow(yield* directory.getBinding(threadId));
+          const sends = continuationClaimLifecycle.codex.sendTurn.mock.calls.length;
+          for (const request of [
+            { threadId, input: "Start a normal turn" },
+            {
+              threadId,
+              continuation: true,
+              continuationFence: {
+                providerInstanceId: codexInstanceId,
+                driverKind: CODEX_DRIVER,
+                idempotencyKey: key,
+              },
+            },
+          ]) {
+            const failure = yield* Effect.flip(provider.sendTurn(request));
+            assert.instanceOf(failure, ProviderValidationError);
+            assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)), captured);
+            assert.equal(continuationClaimLifecycle.codex.sendTurn.mock.calls.length, sends);
+          }
+        }),
+    );
+  for (const claimStatus of ["pending", "unknown", "accepted"] as const)
+    it.effect(
+      `new normal turn preserves uncertain claims and supersedes consumed acceptance (${claimStatus})`,
+      () =>
+        Effect.gen(function* () {
+          const provider = yield* ProviderService.ProviderService;
+          const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+          const threadId = asThreadId(`normal-after-${claimStatus}`);
+          yield* provider.startSession(threadId, {
+            threadId,
+            provider: CODEX_DRIVER,
+            providerInstanceId: codexInstanceId,
+            runtimeMode: "full-access",
+          });
+          const before = Option.getOrThrow(yield* directory.getBinding(threadId));
+          yield* directory.upsert({
+            ...before,
+            runtimePayload: {
+              activeTurnId: "old-turn",
+              continueAfterServerUpdate: claimStatus === "accepted" ? null : "old-turn",
+              continueAfterServerUpdatePrepared: claimStatus === "accepted" ? null : true,
+              axisContinuationEffect: {
+                key: `server-update:${threadId}:old-turn`,
+                status: claimStatus,
+                providerInstanceId: codexInstanceId,
+                driverKind: CODEX_DRIVER,
+                ...(claimStatus === "accepted" ? { turnId: "accepted-old-turn" } : {}),
+              },
+            },
+          });
+          if (claimStatus !== "accepted") {
+            const captured = Option.getOrThrow(yield* directory.getBinding(threadId));
+            const sends = continuationClaimLifecycle.codex.sendTurn.mock.calls.length;
+            const failure = yield* Effect.flip(
+              provider.sendTurn({ threadId, input: "Start a new turn" }),
+            );
+            assert.instanceOf(failure, ProviderValidationError);
+            assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)), captured);
+            assert.equal(continuationClaimLifecycle.codex.sendTurn.mock.calls.length, sends);
+            return;
+          }
+          const turn = yield* provider.sendTurn({ threadId, input: "Start a new turn" });
+          const after = Option.getOrThrow(yield* directory.getBinding(threadId));
+          assert.propertyVal(after.runtimePayload, "activeTurnId", turn.turnId);
+          assert.propertyVal(after.runtimePayload, "axisContinuationEffect", null);
+          assert.propertyVal(after.runtimePayload, "continueAfterServerUpdate", null);
+          const sendsBeforeReplay = continuationClaimLifecycle.codex.sendTurn.mock.calls.length;
+          const oldFence = yield* provider
+            .sendTurn({
+              threadId,
+              input: "Replay the old continuation",
+              continuationFence: {
+                providerInstanceId: codexInstanceId,
+                driverKind: CODEX_DRIVER,
+                idempotencyKey: `server-update:${threadId}:old-turn`,
+              },
+            })
+            .pipe(Effect.exit);
+          assert.equal(Exit.isFailure(oldFence), true);
+          assert.equal(
+            continuationClaimLifecycle.codex.sendTurn.mock.calls.length,
+            sendsBeforeReplay,
+          );
+        }),
+    );
+});
 
 routing.layer("ProviderServiceLive routing", (it) => {
   it.effect("allows promptless continuation only for capable providers", () =>
@@ -3565,7 +4280,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
     }),
   );
 
-  it.effect("keeps overlapping request metadata with out-of-order adapter responses", () =>
+  it.effect("keeps serialized request metadata with out-of-order native completions", () =>
     Effect.gen(function* () {
       recordedTurnAnalytics.reset();
       const provider = yield* ProviderService.ProviderService;
@@ -3622,6 +4337,8 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
         })
         .pipe(Effect.forkChild);
       yield* Deferred.await(firstStarted);
+      yield* Deferred.succeed(firstRelease, undefined);
+      yield* Fiber.join(firstSend);
       const secondSend = yield* provider
         .sendTurn({
           threadId,
@@ -3659,8 +4376,6 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
         turnId: secondTurnId,
         payload: { model: "native-second", effort: "native-effort-second" },
       });
-      yield* Deferred.succeed(firstRelease, undefined);
-      yield* Fiber.join(firstSend);
       for (const [turnId, suffix] of [
         [secondTurnId, "second"],
         [firstTurnId, "first"],
@@ -3848,11 +4563,12 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
     }),
   );
 
-  it.effect("defers overlapping terminal analytics until exact request association", () =>
+  it.effect("defers concurrent threads' terminal analytics until exact request association", () =>
     Effect.gen(function* () {
       recordedTurnAnalytics.reset();
       const provider = yield* ProviderService.ProviderService;
       const threadId = asThreadId("thread-turn-analytics-overlap-fast-completion");
+      const secondThreadId = asThreadId("thread-turn-analytics-overlap-fast-second");
       const firstStarted = yield* Deferred.make<void>();
       const secondStarted = yield* Deferred.make<void>();
       const firstRelease = yield* Deferred.make<void>();
@@ -3863,6 +4579,12 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
         provider: CODEX_DRIVER,
         providerInstanceId: codexInstanceId,
         threadId,
+        runtimeMode: "full-access",
+      });
+      yield* provider.startSession(secondThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: secondThreadId,
         runtimeMode: "full-access",
       });
       primaryAnalyticsCodex.sendTurn
@@ -3877,7 +4599,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
           Effect.gen(function* () {
             yield* Deferred.succeed(secondStarted, undefined);
             yield* Deferred.await(secondRelease);
-            return { threadId, turnId: secondTurnId };
+            return { threadId: secondThreadId, turnId: secondTurnId };
           }),
         );
 
@@ -3898,7 +4620,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       yield* advanceTestClock(10);
       const secondSend = yield* provider
         .sendTurn({
-          threadId,
+          threadId: secondThreadId,
           input: "second fast completion",
           attachments: [],
           interactionMode: "plan",
@@ -3917,7 +4639,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
           eventId: asEventId(`evt-turn-analytics-overlap-fast-start-${suffix}`),
           provider: CODEX_DRIVER,
           createdAt: "2026-01-01T00:00:00.000Z",
-          threadId,
+          threadId: suffix === "first" ? threadId : secondThreadId,
           turnId,
           payload: { model: `native-${suffix}`, effort: `native-effort-${suffix}` },
         });
@@ -3926,7 +4648,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
           eventId: asEventId(`evt-turn-analytics-overlap-fast-complete-${suffix}`),
           provider: CODEX_DRIVER,
           createdAt: "2026-01-01T00:00:00.000Z",
-          threadId,
+          threadId: suffix === "first" ? threadId : secondThreadId,
           turnId,
           payload: { state: "completed" },
         });
@@ -3964,6 +4686,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       recordedTurnAnalytics.reset();
       const provider = yield* ProviderService.ProviderService;
       const threadId = asThreadId("thread-turn-analytics-canceled-send");
+      const nextThreadId = asThreadId("thread-turn-analytics-after-uncertain-send");
       const canceledStarted = yield* Deferred.make<void>();
       const canceledRelease = yield* Deferred.make<void>();
       const nextReturnRelease = yield* Deferred.make<void>();
@@ -3989,7 +4712,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
               eventId: asEventId("evt-turn-analytics-after-canceled-start"),
               provider: CODEX_DRIVER,
               createdAt: "2026-01-01T00:00:00.000Z",
-              threadId,
+              threadId: nextThreadId,
               turnId: nextTurnId,
               payload: { model: "native-next", effort: "high" },
             });
@@ -3998,12 +4721,12 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
               eventId: asEventId("evt-turn-analytics-after-canceled-complete"),
               provider: CODEX_DRIVER,
               createdAt: "2026-01-01T00:00:00.000Z",
-              threadId,
+              threadId: nextThreadId,
               turnId: nextTurnId,
               payload: { state: "completed" },
             });
             yield* Deferred.await(nextReturnRelease);
-            return { threadId, turnId: nextTurnId };
+            return { threadId: nextThreadId, turnId: nextTurnId };
           }),
         );
 
@@ -4018,6 +4741,17 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       yield* Deferred.await(canceledStarted);
       yield* Fiber.interrupt(canceledSend);
 
+      assert.instanceOf(
+        yield* Effect.flip(provider.sendTurn({ threadId, input: "Unsafe replay" })),
+        ProviderValidationError,
+      );
+      yield* provider.startSession(nextThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: nextThreadId,
+        runtimeMode: "full-access",
+      });
+
       const terminalReceipt = yield* provider.streamEvents.pipe(
         Stream.filter((event) => event.type === "turn.completed"),
         Stream.runHead,
@@ -4026,7 +4760,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       yield* Effect.yieldNow;
       const nextSend = yield* provider
         .sendTurn({
-          threadId,
+          threadId: nextThreadId,
           input: "measure the next request",
           attachments: [],
           interactionMode: "plan",
@@ -4062,44 +4796,33 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       const turnIds = Array.from({ length: 9 }, (_, index) =>
         asTurnId(`turn-analytics-bounded-deferred-${index + 1}`),
       );
-      let startedCount = 0;
       yield* provider.startSession(threadId, {
         provider: CODEX_DRIVER,
         providerInstanceId: codexInstanceId,
         threadId,
         runtimeMode: "full-access",
       });
-      for (const turnId of turnIds) {
-        primaryAnalyticsCodex.sendTurn.mockImplementationOnce((input) =>
-          Effect.gen(function* () {
-            startedCount += 1;
-            if (startedCount === turnIds.length) {
-              yield* Deferred.succeed(allStarted, undefined);
-            }
-            yield* Deferred.await(sendRelease);
-            return { threadId: input.threadId, turnId };
-          }),
-        );
-      }
+      primaryAnalyticsCodex.sendTurn.mockImplementationOnce((input) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(allStarted, undefined);
+          yield* Deferred.await(sendRelease);
+          return { threadId: input.threadId, turnId: turnIds[0]! };
+        }),
+      );
 
       const runtimeEvents = yield* Stream.take(provider.streamEvents, turnIds.length * 2).pipe(
         Stream.runDrain,
         Effect.forkChild,
       );
       yield* Effect.yieldNow;
-      const sends = [];
-      for (let index = 0; index < turnIds.length; index += 1) {
-        sends.push(
-          yield* provider
-            .sendTurn({
-              threadId,
-              input: `bounded deferred ${index + 1}`,
-              attachments: [],
-              interactionMode: index % 2 === 0 ? "default" : "plan",
-            })
-            .pipe(Effect.forkChild),
-        );
-      }
+      const send = yield* provider
+        .sendTurn({
+          threadId,
+          input: "Hold deferred completions",
+          attachments: [],
+          interactionMode: "default",
+        })
+        .pipe(Effect.forkChild);
       yield* Deferred.await(allStarted);
 
       for (const [index, turnId] of turnIds.entries()) {
@@ -4125,9 +4848,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       yield* Fiber.join(runtimeEvents);
       assert.equal(recordedTurnAnalytics.eventsByName("provider.turn.completed").length, 1);
 
-      for (const send of sends) {
-        yield* Fiber.interrupt(send);
-      }
+      yield* Fiber.interrupt(send);
       assert.equal(recordedTurnAnalytics.eventsByName("provider.turn.completed").length, 9);
     }),
   );
@@ -4138,7 +4859,6 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       const provider = yield* ProviderService.ProviderService;
       const threadId = asThreadId("thread-turn-analytics-stop-deferred");
       const firstStarted = yield* Deferred.make<void>();
-      const secondStarted = yield* Deferred.make<void>();
       const sendRelease = yield* Deferred.make<void>();
       const turnId = asTurnId("turn-analytics-stop-deferred");
       yield* provider.startSession(threadId, {
@@ -4147,30 +4867,18 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
         threadId,
         runtimeMode: "full-access",
       });
-      primaryAnalyticsCodex.sendTurn
-        .mockImplementationOnce(() =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(firstStarted, undefined);
-            yield* Deferred.await(sendRelease);
-            return { threadId, turnId };
-          }),
-        )
-        .mockImplementationOnce(() =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(secondStarted, undefined);
-            yield* Deferred.await(sendRelease);
-            return { threadId, turnId: asTurnId("turn-analytics-stop-other") };
-          }),
-        );
+      primaryAnalyticsCodex.sendTurn.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(firstStarted, undefined);
+          yield* Deferred.await(sendRelease);
+          return { threadId, turnId };
+        }),
+      );
 
       const firstSend = yield* provider
         .sendTurn({ threadId, input: "first", attachments: [] })
         .pipe(Effect.forkChild);
       yield* Deferred.await(firstStarted);
-      const secondSend = yield* provider
-        .sendTurn({ threadId, input: "second", attachments: [] })
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(secondStarted);
 
       const runtimeEvents = yield* Stream.take(provider.streamEvents, 2).pipe(
         Stream.runDrain,
@@ -4203,7 +4911,6 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       assert.equal(completed.length, 1);
       assert.equal(completed[0]?.properties?.model, "native-stop");
       yield* Fiber.interrupt(firstSend);
-      yield* Fiber.interrupt(secondSend);
     }),
   );
 
