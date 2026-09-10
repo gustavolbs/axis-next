@@ -422,6 +422,38 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it.each(["interrupted", "cancelled"] as const)(
+    "preserves %s provider completion as interruption",
+    async (state) => {
+      const harness = await createHarness();
+      const threadId = asThreadId("thread-1");
+      const turnId = asTurnId(`codex-${state}`);
+      const base = {
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        turnId,
+        createdAt: "2026-01-01T00:00:01.000Z",
+      };
+      harness.emit({ ...base, type: "turn.started", eventId: asEventId("cancel-started") });
+      await harness.drain();
+      harness.emit({
+        ...base,
+        type: "turn.completed",
+        eventId: asEventId("cancel-confirmed"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+        payload: { state },
+      });
+      await harness.drain();
+      const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+      expect(thread?.session).toMatchObject({
+        status: "interrupted",
+        activeTurnId: null,
+        lastError: null,
+      });
+      expect(thread?.latestTurn).toMatchObject({ turnId, state: "interrupted" });
+    },
+  );
+
   it.each([
     { delivery: "buffered", enableLegacyTokenStreaming: false },
     { delivery: "streamed", enableLegacyTokenStreaming: true },

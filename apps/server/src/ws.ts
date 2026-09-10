@@ -21,6 +21,7 @@ import {
   AxisProjectProfileValidationError,
   AxisLearningProposalId,
   AxisTaskValidationError,
+  AxisTaskWorkflowServiceError,
   AxisLearningVersionId,
   AxisOnboardingRpcError,
   type AxisContextId,
@@ -175,6 +176,7 @@ import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActiv
 import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
 import { AxisLearningService } from "./axis/learning/AxisLearningService.ts";
 import { AxisTaskStore } from "./axis/tasks/AxisTaskStore.ts";
+import { AxisTaskWorkflowService } from "./axis/tasks/AxisTaskWorkflowService.ts";
 import { AxisWorkHubSourceSync } from "./axis/workHub/AxisWorkHubSourceSync.ts";
 import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { AxisScratchChatRunner } from "./axis/scratch/AxisScratchChatRunner.ts";
@@ -594,6 +596,7 @@ const makeWsRpcLayer = (
       const axisLearning = yield* AxisLearningStore;
       const axisLearningService = yield* Effect.serviceOption(AxisLearningService);
       const axisTasks = yield* AxisTaskStore;
+      const axisWorkflow = yield* Effect.serviceOption(AxisTaskWorkflowService);
       const axisOnboarding = yield* Effect.serviceOption(AxisOnboardingService);
       const axisProjectProfile = yield* Effect.serviceOption(AxisProjectProfileStore);
       const axisProjectScope = yield* Effect.serviceOption(AxisProjectScope);
@@ -669,6 +672,38 @@ const makeWsRpcLayer = (
             )
           : Effect.succeed(axisOnboarding.value);
       const serverEnvironmentId = serverEnv.getEnvironmentId;
+      const workflowContext = Effect.fn("ws.workflowContext")(function* (
+        scope: AxisContextProjectScope,
+      ) {
+        if (Option.isNone(axisWorkflow)) {
+          return yield* new AxisTaskWorkflowServiceError({
+            reason: "invalid_input",
+            message: "Task workflow execution is unavailable.",
+          });
+        }
+        const environmentId = yield* serverEnvironmentId;
+        const catalog = yield* axisContextCatalog.get.pipe(
+          Effect.mapError(
+            () =>
+              new AxisTaskWorkflowServiceError({
+                reason: "scope_denied",
+                message: "Cannot resolve the authenticated project context.",
+              }),
+          ),
+        );
+        const contextId = resolveAxisCallerContextId(
+          currentSession,
+          catalog.catalog.contexts,
+          scope.contextId,
+        );
+        if (contextId === undefined) {
+          return yield* new AxisTaskWorkflowServiceError({
+            reason: "scope_denied",
+            message: "The authenticated caller has no Axis context.",
+          });
+        }
+        return { caller: { environmentId, contextId }, service: axisWorkflow.value };
+      });
       const validateProjectScope = (scope: AxisContextProjectScope, operation: "read" | "write") =>
         requireProjectScope().pipe(
           Effect.flatMap((resolver) =>
@@ -2811,6 +2846,38 @@ const makeWsRpcLayer = (
             WS_METHODS.axisTasksList,
             validateTaskProjectScope(scope, "read").pipe(
               Effect.flatMap((resolved) => axisTasks.list(resolved)),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisWorkflowStart]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisWorkflowStart,
+            workflowContext(input.scope).pipe(
+              Effect.flatMap(({ caller, service }) => service.start(caller, input)),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisWorkflowGet]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisWorkflowGet,
+            workflowContext(input.scope).pipe(
+              Effect.flatMap(({ caller, service }) => service.get(caller, input)),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisWorkflowCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisWorkflowCancel,
+            workflowContext(input.scope).pipe(
+              Effect.flatMap(({ caller, service }) => service.cancel(caller, input)),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisWorkflowRetry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisWorkflowRetry,
+            workflowContext(input.scope).pipe(
+              Effect.flatMap(({ caller, service }) => service.retry(caller, input)),
             ),
             { "rpc.aggregate": "axis" },
           ),

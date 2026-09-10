@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.0] - 2026-09-10
+
+### Added
+
+- Run project task intake, impact analysis and planning with durable attempts, canonical document artifacts, explicit cancellation and failure retry from Overview.
+
 ## [0.8.0] - 2026-09-10
 
 ### Added

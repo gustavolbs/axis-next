@@ -69,6 +69,14 @@ import {
   AxisTaskStoreError,
 } from "./axisTask.ts";
 import {
+  AxisWorkflowAdmission,
+  AxisWorkflowLookup,
+  AxisWorkflowCancel,
+  AxisWorkflowRetryAdmission,
+  AxisWorkflowSnapshot,
+  AxisTaskWorkflowServiceError,
+} from "./axisTaskWorkflow.ts";
+import {
   AxisContextProjectScope,
   AxisProjectProfile,
   AxisProjectProfileError,
@@ -457,6 +465,10 @@ export const WS_METHODS = {
   axisTasksPause: "axis.tasks.pause",
   axisTasksReopen: "axis.tasks.reopen",
   axisTasksUnlinkSource: "axis.tasks.unlinkSource",
+  axisWorkflowStart: "axis.workflow.start",
+  axisWorkflowGet: "axis.workflow.get",
+  axisWorkflowCancel: "axis.workflow.cancel",
+  axisWorkflowRetry: "axis.workflow.retry",
   axisProjectProfileGet: "axis.projectProfile.get",
   axisProjectProfileReplace: "axis.projectProfile.replace",
   axisProjectProfileResetOverride: "axis.projectProfile.resetOverride",
@@ -912,6 +924,31 @@ export const WsAxisLearningRequestImprovementsRpc = Rpc.make(
 );
 
 const AxisTaskRpcError = Schema.Union([AxisTaskStoreError, EnvironmentAuthorizationError]);
+const AxisWorkflowRpcError = Schema.Union([
+  AxisTaskStoreError,
+  AxisTaskWorkflowServiceError,
+  EnvironmentAuthorizationError,
+]);
+export const WsAxisWorkflowStartRpc = Rpc.make(WS_METHODS.axisWorkflowStart, {
+  payload: AxisWorkflowAdmission,
+  success: AxisWorkflowSnapshot,
+  error: AxisWorkflowRpcError,
+});
+export const WsAxisWorkflowGetRpc = Rpc.make(WS_METHODS.axisWorkflowGet, {
+  payload: AxisWorkflowLookup,
+  success: AxisWorkflowSnapshot,
+  error: AxisWorkflowRpcError,
+});
+export const WsAxisWorkflowCancelRpc = Rpc.make(WS_METHODS.axisWorkflowCancel, {
+  payload: AxisWorkflowCancel,
+  success: AxisWorkflowSnapshot,
+  error: AxisWorkflowRpcError,
+});
+export const WsAxisWorkflowRetryRpc = Rpc.make(WS_METHODS.axisWorkflowRetry, {
+  payload: AxisWorkflowRetryAdmission,
+  success: AxisWorkflowSnapshot,
+  error: AxisWorkflowRpcError,
+});
 export const WsAxisTasksListRpc = Rpc.make(WS_METHODS.axisTasksList, {
   payload: Schema.Struct({ scope: AxisContextProjectScope }),
   success: Schema.Array(AxisTaskExtension),
@@ -1746,6 +1783,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsAxisTasksPauseRpc,
   WsAxisTasksReopenRpc,
   WsAxisTasksUnlinkSourceRpc,
+  WsAxisWorkflowStartRpc,
+  WsAxisWorkflowGetRpc,
+  WsAxisWorkflowCancelRpc,
+  WsAxisWorkflowRetryRpc,
   WsAxisProjectProfileGetRpc,
   WsAxisProjectProfileReplaceRpc,
   WsAxisProjectProfileResetOverrideRpc,
