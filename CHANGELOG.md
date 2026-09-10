@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.2] - 2026-09-10
+
+### Fixed
+
+- Normalize WorkHub source formatting reported by CI and use the Effect test harness for the Codex fallback-model regression.
+
 ## [0.6.1] - 2026-09-10
 
 ### Fixed

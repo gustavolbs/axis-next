@@ -605,7 +605,9 @@ export const make = (
           : execution.pipe(Effect.raceFirst(cancelledBySignal(cancellation.signal)));
       return bounded as unknown as Effect.Effect<
         unknown,
-        AxisLearningEngineCancelledError | AxisLearningEngineExecutionError | AxisLearningEngineDeadlineExceededError
+        | AxisLearningEngineCancelledError
+        | AxisLearningEngineExecutionError
+        | AxisLearningEngineDeadlineExceededError
       >;
     };
 

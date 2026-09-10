@@ -1,5 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { AxisContextId, AxisWorkflowStepId, EnvironmentId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AxisContextId,
+  AxisWorkflowStepId,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 
 import type { AxisEffectiveContextResult } from "../../axis/projects/AxisEffectiveContext.ts";
 import { formatAxisEffectiveContextInstructions } from "./ProviderCommandReactor.ts";

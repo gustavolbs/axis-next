@@ -225,17 +225,12 @@ const scoped = (
   scope: AxisContextProjectScope,
 ) =>
   candidate?.project !== undefined &&
-  sameScope(
-    { contextId: candidate.contextId, project: candidate.project },
-    scope,
-  );
+  sameScope({ contextId: candidate.contextId, project: candidate.project }, scope);
 
 const evidenceScope = (evidence: AxisLearningEvidence) => evidence.provenance.scope;
 
-const projectEvidence = (
-  evidence: AxisLearningEvidence,
-  scope: AxisContextProjectScope,
-) => scoped(evidenceScope(evidence), scope);
+const projectEvidence = (evidence: AxisLearningEvidence, scope: AxisContextProjectScope) =>
+  scoped(evidenceScope(evidence), scope);
 
 const projectLearningRecord = (
   record: {
@@ -248,10 +243,8 @@ const projectLearningRecord = (
   scope: AxisContextProjectScope,
 ) => record.contextId === scope.contextId && scoped(record.scope, scope);
 
-const projectActiveState = (
-  record: AxisLearningActivationState,
-  scope: AxisContextProjectScope,
-) => scoped(record.scope, scope);
+const projectActiveState = (record: AxisLearningActivationState, scope: AxisContextProjectScope) =>
+  scoped(record.scope, scope);
 
 const projectTask = (task: AxisTaskExtension, scope: AxisContextProjectScope) =>
   scoped(task.scope, scope);
@@ -297,7 +290,10 @@ const defaultPolicy = (scope: AxisContextProjectScope) => axisProjectDataLifecyc
 
 export const authorizeAxisProjectDataLifecycleAction = (
   request: AxisProjectDataLifecycleAuthorizationRequest,
-): Effect.Effect<AxisProjectDataLifecycleAuthorization, AxisProjectDataLifecycleAuthorizationError> => {
+): Effect.Effect<
+  AxisProjectDataLifecycleAuthorization,
+  AxisProjectDataLifecycleAuthorizationError
+> => {
   const policy = request.policy ?? defaultPolicy(request.scope);
   if (!sameScope(policy.scope, request.scope)) {
     return Effect.fail(
@@ -456,7 +452,9 @@ export const planAxisProjectDataPurge = (
       const learningError = validateLearningSnapshot(dataset.learning, authorization.scope);
       if (learningError !== undefined) return Effect.fail(learningError);
       const learning = filteredLearning(dataset.learning, authorization.scope);
-      const expired = learning.evidence.filter((item) => Date.parse(item.expiresAt) <= Date.parse(now));
+      const expired = learning.evidence.filter(
+        (item) => Date.parse(item.expiresAt) <= Date.parse(now),
+      );
       const references = expired.map((item) => ({
         evidenceId: item.id,
         availability: "unavailable" as const,
@@ -484,7 +482,9 @@ export const planAxisProjectDataDelete = (
       const learning = filteredLearning(dataset.learning, authorization.scope);
       const retainedProposalIds = new Set([
         ...learning.versions.map((item) => item.proposalId),
-        ...learning.lifecycle.flatMap((item) => (item.proposalId === null ? [] : [item.proposalId])),
+        ...learning.lifecycle.flatMap((item) =>
+          item.proposalId === null ? [] : [item.proposalId],
+        ),
       ]);
       return Effect.succeed(
         cloneAndFreeze({
@@ -529,7 +529,10 @@ export const planAxisProjectDataDelete = (
 export interface AxisProjectDataLifecycleService {
   readonly authorize: (
     request: AxisProjectDataLifecycleAuthorizationRequest,
-  ) => Effect.Effect<AxisProjectDataLifecycleAuthorization, AxisProjectDataLifecycleAuthorizationError>;
+  ) => Effect.Effect<
+    AxisProjectDataLifecycleAuthorization,
+    AxisProjectDataLifecycleAuthorizationError
+  >;
   readonly export: (
     authorization: AxisProjectDataLifecycleAuthorization,
     dataset: AxisProjectDataLifecycleDataset,

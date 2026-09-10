@@ -190,11 +190,13 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         sessionId: "mock-session-1",
       });
 
-      const policyError = yield* adapter.sendTurn({
-        threadId,
-        input: "Apply project rules",
-        axisContextInstructions: "Never modify billing records",
-      }).pipe(Effect.flip);
+      const policyError = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "Apply project rules",
+          axisContextInstructions: "Never modify billing records",
+        })
+        .pipe(Effect.flip);
       assert.equal(policyError._tag, "ProviderAdapterValidationError");
 
       yield* adapter.sendTurn({

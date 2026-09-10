@@ -321,7 +321,12 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  return { get, replace, replaceSnapshot, resetOverride } satisfies AxisProjectProfileStore["Service"];
+  return {
+    get,
+    replace,
+    replaceSnapshot,
+    resetOverride,
+  } satisfies AxisProjectProfileStore["Service"];
 });
 
 export const layer = Layer.effect(AxisProjectProfileStore, make);

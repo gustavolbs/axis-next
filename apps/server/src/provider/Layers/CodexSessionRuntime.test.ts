@@ -253,7 +253,8 @@ describe("buildTurnStartParams", () => {
         runtimeMode: "full-access",
         prompt: "Implement it",
         interactionMode: "default",
-        additionalInstructions: "## Axis effective context (digest: axis-digest)\nRun focused tests.",
+        additionalInstructions:
+          "## Axis effective context (digest: axis-digest)\nRun focused tests.",
       }),
     );
 
@@ -285,21 +286,21 @@ describe("buildTurnStartParams", () => {
     );
   });
 
-  it("reports the same fallback model and effort in settings and instructions", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("reports the same fallback model and effort in settings and instructions", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
         prompt: "Go",
         interactionMode: "default",
-      }),
-    );
+      });
 
-    const settings = params.collaborationMode?.settings;
-    NodeAssert.equal(settings?.model, DEFAULT_MODEL);
-    NodeAssert.equal(settings?.reasoning_effort, "medium");
-    NodeAssert.ok(settings?.developer_instructions?.includes(`as ${DEFAULT_MODEL} with medium`));
-  });
+      const settings = params.collaborationMode?.settings;
+      NodeAssert.equal(settings?.model, DEFAULT_MODEL);
+      NodeAssert.equal(settings?.reasoning_effort, "medium");
+      NodeAssert.ok(settings?.developer_instructions?.includes(`as ${DEFAULT_MODEL} with medium`));
+    }),
+  );
 
   it.effect("routes approvals to the auto reviewer in auto mode", () =>
     Effect.gen(function* () {

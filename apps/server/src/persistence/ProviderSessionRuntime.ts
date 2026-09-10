@@ -305,9 +305,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const compareAndSet: ProviderSessionRuntimeRepository["Service"]["compareAndSet"] = (
-    input,
-  ) =>
+  const compareAndSet: ProviderSessionRuntimeRepository["Service"]["compareAndSet"] = (input) =>
     compareAndSetRuntimeRow(input).pipe(
       Effect.map(Option.isSome),
       Effect.mapError(
@@ -323,31 +321,33 @@ export const make = Effect.gen(function* () {
     expected,
     effect,
   }) =>
-    sql.withTransaction(
-      compareAndSetRuntimeRow({ expected, next: expected }).pipe(
-        Effect.map(Option.isSome),
-        Effect.mapError(
-          toPersistenceSqlOrDecodeError(
-            "ProviderSessionRuntimeRepository.withLease:query",
-            "ProviderSessionRuntimeRepository.withLease:encodeRequest",
-            { threadId: expected.threadId },
+    sql
+      .withTransaction(
+        compareAndSetRuntimeRow({ expected, next: expected }).pipe(
+          Effect.map(Option.isSome),
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProviderSessionRuntimeRepository.withLease:query",
+              "ProviderSessionRuntimeRepository.withLease:encodeRequest",
+              { threadId: expected.threadId },
+            ),
+          ),
+          Effect.flatMap((acquired) =>
+            acquired ? Effect.map(effect, Option.some) : Effect.succeed(Option.none()),
           ),
         ),
-        Effect.flatMap((acquired) =>
-          acquired ? Effect.map(effect, Option.some) : Effect.succeed(Option.none()),
+      )
+      .pipe(
+        Effect.catchTag("SqlError", (cause) =>
+          Effect.fail(
+            toPersistenceSqlOrDecodeError(
+              "ProviderSessionRuntimeRepository.withLease:transaction",
+              "ProviderSessionRuntimeRepository.withLease:transaction",
+              { threadId: expected.threadId },
+            )(cause),
+          ),
         ),
-      ),
-    ).pipe(
-      Effect.catchTag("SqlError", (cause) =>
-        Effect.fail(
-          toPersistenceSqlOrDecodeError(
-            "ProviderSessionRuntimeRepository.withLease:transaction",
-            "ProviderSessionRuntimeRepository.withLease:transaction",
-            { threadId: expected.threadId },
-          )(cause),
-        ),
-      ),
-    );
+      );
 
   const getByThreadId: ProviderSessionRuntimeRepository["Service"]["getByThreadId"] = (input) =>
     getRuntimeRowByThreadId(input).pipe(

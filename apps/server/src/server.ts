@@ -497,7 +497,6 @@ const AxisEffectiveContextLayerLive = AxisEffectiveContext.layer.pipe(
   Layer.provide(AxisProjectScopeLayerLive),
 );
 
-
 const AxisWorkHubSourceSyncLayerLive = AxisWorkHubSourceSync.layer.pipe(
   Layer.provide(AxisContextCatalogLayerLive),
   Layer.provide(AxisWorkHubCacheLayerLive),

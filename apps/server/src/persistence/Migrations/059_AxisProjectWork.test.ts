@@ -65,22 +65,29 @@ it.effect("isolates profiles and task extensions by physical project scope", () 
       const taskColumns = yield* sql<{ readonly name: string }>`
         SELECT name FROM pragma_table_info('axis_task_extensions') ORDER BY cid
       `;
-      assert.deepEqual(taskColumns.map((column) => column.name), [
-        "id",
-        "context_id",
-        "environment_id",
-        "project_id",
-        "scope_key",
-        "thread_id",
-        "task_json",
-        "created_at",
-        "updated_at",
-        "revision",
-      ]);
-      assert.equal(taskColumns.some((column) => column.name === "messages_json"), false);
-      assert.equal(taskColumns.some((column) => column.name === "events_json"), false);
-    }).pipe(
-      Effect.provide(NodeSqliteClient.layer({ filename: databasePath })),
-    );
+      assert.deepEqual(
+        taskColumns.map((column) => column.name),
+        [
+          "id",
+          "context_id",
+          "environment_id",
+          "project_id",
+          "scope_key",
+          "thread_id",
+          "task_json",
+          "created_at",
+          "updated_at",
+          "revision",
+        ],
+      );
+      assert.equal(
+        taskColumns.some((column) => column.name === "messages_json"),
+        false,
+      );
+      assert.equal(
+        taskColumns.some((column) => column.name === "events_json"),
+        false,
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: databasePath })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

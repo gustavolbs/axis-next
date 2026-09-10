@@ -89,5 +89,4 @@ export default Effect.gen(function* () {
     CREATE INDEX axis_learning_active_versions_scope
     ON axis_learning_active_versions (context_id, scope_key, target_key)
   `;
-
 });
