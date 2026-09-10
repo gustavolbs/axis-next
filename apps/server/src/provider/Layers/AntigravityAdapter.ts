@@ -1021,7 +1021,8 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       return yield* new ProviderAdapterValidationError({
         provider: PROVIDER,
         operation: "sendTurn",
-        issue: "Antigravity ACP does not support a protected channel for Axis project rules. Choose a provider that supports Axis project instructions.",
+        issue:
+          "Antigravity ACP does not support a protected channel for Axis project rules. Choose a provider that supports Axis project instructions.",
       });
     }
     const context = yield* requireSession(input.threadId);

@@ -452,7 +452,7 @@ describe("buildClaudeWorkHubToolArgs", () => {
       "Trello",
     );
     expect(args.join(" ")).toContain('mcp_servers."Trello".enabled_tools=["get_cards"');
-    expect(args.join(" ")).not.toContain("enabled_tools=\"*");
+    expect(args.join(" ")).not.toContain('enabled_tools="*');
     expect(args).toContain('mcp_servers."Other".enabled=false');
   });
 });

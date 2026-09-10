@@ -119,9 +119,10 @@ export function AxisLearningSettings({
           (binding) =>
             `${binding.project.environmentId}:${binding.project.projectId}` === selectedProjectKey,
         )?.project;
-  const learningScope = contextId === null || selectedProject === undefined
-    ? undefined
-    : { contextId, project: selectedProject };
+  const learningScope =
+    contextId === null || selectedProject === undefined
+      ? undefined
+      : { contextId, project: selectedProject };
 
   const query = useEnvironmentQuery(
     contextId === null
@@ -382,21 +383,23 @@ export function AxisLearningSettings({
               setSelectedContextId(AxisContextId.make(value));
               setSelectedProjectKey(null);
             }}
-        >
-          <SelectTrigger size="xs" className="w-40" aria-label="Learning context">
-            <SelectValue placeholder="Context" />
-          </SelectTrigger>
-          <SelectPopup>
-            {contexts.map((context) => (
-              <SelectItem key={context.id} value={context.id}>
-                {context.name}
-              </SelectItem>
-            ))}
-          </SelectPopup>
+          >
+            <SelectTrigger size="xs" className="w-40" aria-label="Learning context">
+              <SelectValue placeholder="Context" />
+            </SelectTrigger>
+            <SelectPopup>
+              {contexts.map((context) => (
+                <SelectItem key={context.id} value={context.id}>
+                  {context.name}
+                </SelectItem>
+              ))}
+            </SelectPopup>
           </Select>
           <Select
             value={selectedProjectKey ?? "context-only"}
-            onValueChange={(value) => setSelectedProjectKey(value === "context-only" ? null : (value ?? null))}
+            onValueChange={(value) =>
+              setSelectedProjectKey(value === "context-only" ? null : (value ?? null))
+            }
           >
             <SelectTrigger size="xs" className="w-48" aria-label="Learning project">
               <SelectValue placeholder="Context only" />

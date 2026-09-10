@@ -42,7 +42,10 @@ const target = new PrimaryConnectionTarget({
 
 const scope = (projectId: string): AxisContextProjectScope => ({
   contextId: "company" as AxisContextProjectScope["contextId"],
-  project: { environmentId, projectId: projectId as AxisContextProjectScope["project"]["projectId"] },
+  project: {
+    environmentId,
+    projectId: projectId as AxisContextProjectScope["project"]["projectId"],
+  },
 });
 
 const task = (projectId: string, revision: number): AxisTaskExtension => ({

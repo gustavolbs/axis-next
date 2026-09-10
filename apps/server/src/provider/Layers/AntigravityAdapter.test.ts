@@ -312,11 +312,13 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         modelSelection: { instanceId, model: nativeAlternative },
       });
       const callsBefore = [...h.calls];
-      const error = yield* h.adapter.sendTurn({
-        threadId,
-        input: "Apply project rules",
-        axisContextInstructions: "Never modify billing records",
-      }).pipe(Effect.flip);
+      const error = yield* h.adapter
+        .sendTurn({
+          threadId,
+          input: "Apply project rules",
+          axisContextInstructions: "Never modify billing records",
+        })
+        .pipe(Effect.flip);
       expect(error._tag).toBe("ProviderAdapterValidationError");
       expect(h.calls).toEqual(callsBefore);
       expect(h.hasActivePrompt()).toBe(false);

@@ -246,7 +246,11 @@ it.effect("rejects an MCP capability whose driver allowlist excludes the instanc
     assert.equal(collect.mock.calls.length, 0);
   }).pipe(
     Effect.provide(
-      makeLayer(collect, { get: () => Effect.succeed(null), replace: () => Effect.void }, incompatibleCatalog),
+      makeLayer(
+        collect,
+        { get: () => Effect.succeed(null), replace: () => Effect.void },
+        incompatibleCatalog,
+      ),
     ),
   );
 });

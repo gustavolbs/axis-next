@@ -74,7 +74,8 @@ export class AxisEffectiveContextValidationError extends Schema.TaggedErrorClass
   { message: Schema.String },
 ) {}
 
-const normalizeRelativePath = (path: string) => path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+const normalizeRelativePath = (path: string) =>
+  path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
 
 const pathApplies = (rule: AxisProjectRuleType, requestedPaths: ReadonlyArray<string>) => {
   if (rule.paths.length === 0 || requestedPaths.length === 0) return true;
@@ -142,10 +143,8 @@ const tokenEfficiencyPolicyKey = (policy: TokenEfficiencyPolicy) =>
     mode: policy.mode,
   });
 
-const chooseTokenEfficiencyPolicy = (
-  left: TokenEfficiencyPolicy,
-  right: TokenEfficiencyPolicy,
-) => (tokenEfficiencyPolicyKey(left).localeCompare(tokenEfficiencyPolicyKey(right)) <= 0 ? left : right);
+const chooseTokenEfficiencyPolicy = (left: TokenEfficiencyPolicy, right: TokenEfficiencyPolicy) =>
+  tokenEfficiencyPolicyKey(left).localeCompare(tokenEfficiencyPolicyKey(right)) <= 0 ? left : right;
 
 const learningStateKey = (state: AxisLearningSnapshot["activeStates"][number]) =>
   `${state.targetKey}\u0000${state.versionId ?? ""}`;
@@ -232,7 +231,9 @@ const applyLearningChanges = (
       }
     } else if (change.op === "set-provider-instruction") {
       if (!availableCapabilityIds.has(change.capabilityId)) {
-        conflicts.push(`Learned provider instruction targets unavailable capability ${change.capabilityId}.`);
+        conflicts.push(
+          `Learned provider instruction targets unavailable capability ${change.capabilityId}.`,
+        );
         continue;
       }
       providerInstructions.set(change.capabilityId, change.instruction);
@@ -268,12 +269,16 @@ const applyLearningChanges = (
     .sort((left, right) => left.id.localeCompare(right.id));
   return {
     rules: filteredRules,
-    workflow: [...workflow.values()].sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)),
+    workflow: [...workflow.values()].sort(
+      (left, right) => left.order - right.order || left.id.localeCompare(right.id),
+    ),
     providerInstructions: [...providerInstructions.entries()]
       .map(([capabilityId, instruction]) => ({ capabilityId, instruction }))
       .sort((left, right) => left.capabilityId.localeCompare(right.capabilityId)),
-    tokenEfficiencyPolicies: [...tokenEfficiencyPolicies.values()].sort((left, right) =>
-      left.providerInstanceId.localeCompare(right.providerInstanceId) || left.model.localeCompare(right.model),
+    tokenEfficiencyPolicies: [...tokenEfficiencyPolicies.values()].sort(
+      (left, right) =>
+        left.providerInstanceId.localeCompare(right.providerInstanceId) ||
+        left.model.localeCompare(right.model),
     ),
     sourceRefs: [...sourceRefs].sort(),
     conflicts,
@@ -301,19 +306,25 @@ export const make = Effect.gen(function* () {
 
   const resolve: AxisEffectiveContext["Service"]["resolve"] = (input) =>
     Effect.gen(function* () {
-      yield* projectScope.resolve({
-        caller: input.caller,
-        operation: "execute",
-        scope: input.scope,
-        provider: input.provider,
-      }).pipe(
-        Effect.mapError((error: AxisProjectScopeResolutionError) =>
-          new AxisEffectiveContextValidationError({ message: error.message }),
-        ),
-      );
+      yield* projectScope
+        .resolve({
+          caller: input.caller,
+          operation: "execute",
+          scope: input.scope,
+          provider: input.provider,
+        })
+        .pipe(
+          Effect.mapError(
+            (error: AxisProjectScopeResolutionError) =>
+              new AxisEffectiveContextValidationError({ message: error.message }),
+          ),
+        );
       const profile = yield* profiles.get(input.scope).pipe(
         Effect.mapError(
-          () => new AxisEffectiveContextValidationError({ message: "Project profile could not be read." }),
+          () =>
+            new AxisEffectiveContextValidationError({
+              message: "Project profile could not be read.",
+            }),
         ),
       );
       if (input.profileRevision !== undefined && input.profileRevision !== profile.revision) {
@@ -323,20 +334,28 @@ export const make = Effect.gen(function* () {
       }
       const snapshot = yield* learning.getSnapshot(input.scope.contextId, input.scope).pipe(
         Effect.mapError(
-          () => new AxisEffectiveContextValidationError({ message: "Learning snapshot could not be read." }),
+          () =>
+            new AxisEffectiveContextValidationError({
+              message: "Learning snapshot could not be read.",
+            }),
         ),
       );
       const catalog = yield* catalogs.get.pipe(
         Effect.mapError(
-          () => new AxisEffectiveContextValidationError({ message: "Axis context catalog could not be read." }),
+          () =>
+            new AxisEffectiveContextValidationError({
+              message: "Axis context catalog could not be read.",
+            }),
         ),
       );
-      const capabilities = [...resolveAxisContextCapabilities({
-        catalog: catalog.catalog,
-        contextId: input.scope.contextId,
-        provider: input.provider,
-        driver: input.driver,
-      })].sort((left, right) => left.id.localeCompare(right.id));
+      const capabilities = [
+        ...resolveAxisContextCapabilities({
+          catalog: catalog.catalog,
+          contextId: input.scope.contextId,
+          provider: input.provider,
+          driver: input.driver,
+        }),
+      ].sort((left, right) => left.id.localeCompare(right.id));
       const merged = applyLearningChanges(
         profile,
         snapshot,

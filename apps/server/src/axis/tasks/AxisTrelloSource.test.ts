@@ -130,10 +130,7 @@ describe("AxisTrelloSource", () => {
       const result = yield* readAxisTrelloSource({ config, binding: binding(readCards) });
       assert.deepEqual(
         result.items.map((item) => item.nativeId),
-        [
-          "card-a",
-          "card-b",
-        ],
+        ["card-a", "card-b"],
       );
     });
   });
@@ -170,21 +167,29 @@ describe("AxisTrelloSource", () => {
       attempts += 1;
       return attempts === 1
         ? Effect.fail(new AxisTrelloMcpReadError({ message: "401 Unauthorized" }))
-        : Effect.succeed({ cards: [{ id: "card-1", name: "Recovered", labels: [] }], cursor: "next" });
+        : Effect.succeed({
+            cards: [{ id: "card-1", name: "Recovered", labels: [] }],
+            cursor: "next",
+          });
     });
     const source = makeAxisTrelloSource();
     return Effect.gen(function* () {
       const confirmed = yield* source.read({
         config,
         binding: binding(() =>
-          Effect.succeed({ cards: [{ id: "old", name: "Previous", labels: [] }], cursor: "old-cursor" }),
+          Effect.succeed({
+            cards: [{ id: "old", name: "Previous", labels: [] }],
+            cursor: "old-cursor",
+          }),
         ),
       });
       expect(confirmed.cursor).toBe("old-cursor");
-      const firstFailure = yield* source.read({
-        config,
-        binding: binding(readCards),
-      }).pipe(Effect.flip);
+      const firstFailure = yield* source
+        .read({
+          config,
+          binding: binding(readCards),
+        })
+        .pipe(Effect.flip);
       expect(firstFailure.code).toBe("authorization");
       expect(source.getSnapshot()?.items[0]?.nativeId).toBe("old");
 

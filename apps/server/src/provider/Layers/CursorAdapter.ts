@@ -938,7 +938,8 @@ export function makeCursorAdapter(
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
             operation: "sendTurn",
-            issue: "Cursor ACP does not support a protected channel for Axis project rules. Choose a provider that supports Axis project instructions.",
+            issue:
+              "Cursor ACP does not support a protected channel for Axis project rules. Choose a provider that supports Axis project instructions.",
           });
         }
         const ctx = yield* requireSession(input.threadId);

@@ -157,7 +157,8 @@ export function formatAxisEffectiveContextInstructions(
       ? [
           "### Workflow",
           ...context.workflow.map(
-            (step) => `- ${step.order + 1}. ${step.title}: ${step.instruction}${step.required ? " (required)" : ""}`,
+            (step) =>
+              `- ${step.order + 1}. ${step.title}: ${step.instruction}${step.required ? " (required)" : ""}`,
           ),
         ].join("\n")
       : undefined,
@@ -580,7 +581,11 @@ const make = Effect.gen(function* () {
     const effectiveContext = yield* Effect.serviceOption(AxisEffectiveContext);
     const catalogStore = yield* Effect.serviceOption(AxisContextCatalogStore);
     const environment = yield* Effect.serviceOption(ServerEnvironment);
-    if (Option.isNone(effectiveContext) || Option.isNone(catalogStore) || Option.isNone(environment)) {
+    if (
+      Option.isNone(effectiveContext) ||
+      Option.isNone(catalogStore) ||
+      Option.isNone(environment)
+    ) {
       return undefined;
     }
 

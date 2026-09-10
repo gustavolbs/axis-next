@@ -72,7 +72,10 @@ describe("Axis Learning settings logic", () => {
   it("preserves an explicitly selected project scope on manual evidence and proposals", () => {
     const scope = {
       contextId,
-      project: { environmentId: EnvironmentId.make("laptop"), projectId: ProjectId.make("project-a") },
+      project: {
+        environmentId: EnvironmentId.make("laptop"),
+        projectId: ProjectId.make("project-a"),
+      },
     };
     const evidence = buildManualLearningEvidence({
       contextId,
@@ -114,7 +117,10 @@ describe("Axis Learning settings logic", () => {
     expect(proposal.contextId).toBe(contextId);
     expect(proposal.targetKey).toBe("skill:review");
     expect(proposal).not.toHaveProperty("status");
-    expect(proposal.change).toMatchObject({ op: "set-rule", rule: { text: "Prefer focused diffs." } });
+    expect(proposal.change).toMatchObject({
+      op: "set-rule",
+      rule: { text: "Prefer focused diffs." },
+    });
   });
 
   it("requires explicit activation and identifies switches as rollbacks", () => {

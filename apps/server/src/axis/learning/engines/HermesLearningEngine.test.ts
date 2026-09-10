@@ -246,7 +246,10 @@ it.effect("invokes the pinned native runtime with bounded stdin and no secret pa
     expect(NodeFS.existsSync(firstInvocation?.cwd as string)).toBe(false);
     expect(NodeFS.existsSync(firstInvocation?.env?.HERMES_HOME as string)).toBe(false);
     const secondResult = yield* executor.run(request, {});
-    expect(secondResult).toEqual({ status: "no-change", reason: "No repeated improvement was found." });
+    expect(secondResult).toEqual({
+      status: "no-change",
+      reason: "No repeated improvement was found.",
+    });
     expect(invocations).toHaveLength(2);
     expect(invocations[0]?.cwd).not.toBe(invocations[1]?.cwd);
     expect(invocations[0]?.env?.HERMES_HOME).not.toBe(invocations[1]?.env?.HERMES_HOME);
@@ -289,8 +292,8 @@ it.effect("invokes the pinned native runtime with bounded stdin and no secret pa
     expect(bridgeSourceForTest).toContain(HERMES_AGENT_SOURCE_DIGESTS.interruptControl);
     expect(bridgeSourceForTest).toContain('package_distribution("hermes-agent")');
     expect(bridgeSourceForTest).toContain('read_text("direct_url.json")');
-    expect(bridgeSourceForTest).toContain("vcs_info.get(\"commit_id\") != expected_commit");
-    expect(bridgeSourceForTest).toContain("request.get(\"agentCommit\") != expected_commit");
+    expect(bridgeSourceForTest).toContain('vcs_info.get("commit_id") != expected_commit');
+    expect(bridgeSourceForTest).toContain('request.get("agentCommit") != expected_commit');
     expect(bridgeSourceForTest).toContain(HERMES_AGENT_REPOSITORY);
     expect(bridgeSourceForTest).toContain("AXIS_HERMES_RUN_ROOT");
     expect(bridgeSourceForTest).toContain("stat.S_IMODE");
@@ -364,13 +367,16 @@ it.effect("honors cancellation at the Hermes executor boundary", () =>
       Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
     );
     const controller = new AbortController();
-    const fiber = yield* executor.run(request, { signal: controller.signal }).pipe(Effect.forkChild);
+    const fiber = yield* executor
+      .run(request, { signal: controller.signal })
+      .pipe(Effect.forkChild);
     yield* Deferred.await(started);
     controller.abort();
     const result = yield* Fiber.join(fiber).pipe(Effect.result);
 
     expect(Result.isFailure(result)).toBe(true);
-    if (Result.isFailure(result)) expect(result.failure._tag).toBe("AxisLearningEngineCancelledError");
+    if (Result.isFailure(result))
+      expect(result.failure._tag).toBe("AxisLearningEngineCancelledError");
   }),
 );
 

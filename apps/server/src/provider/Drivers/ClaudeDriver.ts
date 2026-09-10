@@ -301,10 +301,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
             );
-      const discoverMcpServersAt = (
-        discoveryCwd: string,
-        claudeEnvironment: NodeJS.ProcessEnv,
-      ) =>
+      const discoverMcpServersAt = (discoveryCwd: string, claudeEnvironment: NodeJS.ProcessEnv) =>
         discoverProviderMcpServers({
           binaryPath: effectiveConfig.binaryPath,
           args: ["mcp", "list"],

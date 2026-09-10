@@ -167,9 +167,25 @@ layer("AxisProjectProfileStore", (it) => {
       const snapshot = decodeProfile({
         ...initial,
         revision: 999,
-        sources: [{ id: "source-a", kind: "manifest", path: "AGENTS.md", digest: "sha256:a", observedAt: "2026-09-10T10:00:00.000Z" }],
+        sources: [
+          {
+            id: "source-a",
+            kind: "manifest",
+            path: "AGENTS.md",
+            digest: "sha256:a",
+            observedAt: "2026-09-10T10:00:00.000Z",
+          },
+        ],
         facts: [{ kind: "value", key: "package-manager", value: "bun", sourceRef: "source-a" }],
-        manualDecisions: [{ id: "decision-a", question: "Use bun?", decision: "accept", note: null, decidedAt: "2026-09-10T10:00:00.000Z" }],
+        manualDecisions: [
+          {
+            id: "decision-a",
+            question: "Use bun?",
+            decision: "accept",
+            note: null,
+            decidedAt: "2026-09-10T10:00:00.000Z",
+          },
+        ],
       });
 
       const saved = yield* store.replaceSnapshot!(snapshotScope, initial.revision, snapshot);

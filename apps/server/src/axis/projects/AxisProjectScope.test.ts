@@ -17,35 +17,52 @@ import {
 
 const catalog = Schema.decodeUnknownSync(AxisContextCatalog)({
   contexts: [
-    { id: "personal", kind: "personal", name: "Personal", createdAt: "2026-09-05T00:00:00.000Z", updatedAt: "2026-09-05T00:00:00.000Z" },
-    { id: "company", kind: "company", name: "Company", createdAt: "2026-09-05T00:00:00.000Z", updatedAt: "2026-09-05T00:00:00.000Z" },
+    {
+      id: "personal",
+      kind: "personal",
+      name: "Personal",
+      createdAt: "2026-09-05T00:00:00.000Z",
+      updatedAt: "2026-09-05T00:00:00.000Z",
+    },
+    {
+      id: "company",
+      kind: "company",
+      name: "Company",
+      createdAt: "2026-09-05T00:00:00.000Z",
+      updatedAt: "2026-09-05T00:00:00.000Z",
+    },
   ],
-  projectBindings: [{ contextId: "company", project: { environmentId: "env", projectId: "project" } }],
+  projectBindings: [
+    { contextId: "company", project: { environmentId: "env", projectId: "project" } },
+  ],
   providerOwnerships: [
     { contextId: "personal", provider: { environmentId: "env", instanceId: "codex" } },
     { contextId: "company", provider: { environmentId: "env", instanceId: "enterprise" } },
   ],
-  providerAccessGrants: [{
-    id: "grant",
-    ownerContextId: "personal",
-    targetContextId: "company",
-    provider: { environmentId: "env", instanceId: "codex" },
-    status: "active",
-    createdAt: "2026-09-05T00:00:00.000Z",
-    updatedAt: "2026-09-05T00:00:00.000Z",
-    revokedAt: null,
-  }],
+  providerAccessGrants: [
+    {
+      id: "grant",
+      ownerContextId: "personal",
+      targetContextId: "company",
+      provider: { environmentId: "env", instanceId: "codex" },
+      status: "active",
+      createdAt: "2026-09-05T00:00:00.000Z",
+      updatedAt: "2026-09-05T00:00:00.000Z",
+      revokedAt: null,
+    },
+  ],
   capabilities: [],
   workHubSources: [],
 });
 
 const decodeRequest = Schema.decodeUnknownSync(AxisProjectScopeRequest);
-const request = (provider = "codex") => decodeRequest({
-  caller: { environmentId: "env", contextId: "company" },
-  operation: "execute" as const,
-  scope: { contextId: "company", project: { environmentId: "env", projectId: "project" } },
-  provider: { environmentId: "env", instanceId: provider },
-});
+const request = (provider = "codex") =>
+  decodeRequest({
+    caller: { environmentId: "env", contextId: "company" },
+    operation: "execute" as const,
+    scope: { contextId: "company", project: { environmentId: "env", projectId: "project" } },
+    provider: { environmentId: "env", instanceId: provider },
+  });
 
 const dependencies = Layer.mergeAll(
   Layer.succeed(ServerEnvironment, {
@@ -113,36 +130,38 @@ layer("AxisProjectScope", (it) => {
     }),
   );
 
-  it.effect("invalidates removal or rebinding from the current catalog without moving history", () =>
-    Effect.gen(function* () {
-      const catalogs = Layer.succeed(AxisContextCatalogStore, {
-        get: Effect.succeed({
-          revision: 2,
-          catalog: { ...catalog, projectBindings: [] },
-          updatedAt: "2026-09-06T00:00:00.000Z",
-        }),
-        replace: () => Effect.die("unused"),
-      });
-      const current = yield* Effect.flip(
-        Effect.gen(function* () {
-          const resolver = yield* make;
-          return yield* resolver.resolve(request());
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              Layer.succeed(ServerEnvironment, {
-                getEnvironmentId: Effect.succeed(EnvironmentId.make("env")),
-                getDescriptor: Effect.die("unused"),
-              }),
-              catalogs,
-              Layer.succeed(ProjectionSnapshotQuery, {
-                getProjectShellById: () => Effect.succeed(Option.some({} as never)),
-              } as never),
+  it.effect(
+    "invalidates removal or rebinding from the current catalog without moving history",
+    () =>
+      Effect.gen(function* () {
+        const catalogs = Layer.succeed(AxisContextCatalogStore, {
+          get: Effect.succeed({
+            revision: 2,
+            catalog: { ...catalog, projectBindings: [] },
+            updatedAt: "2026-09-06T00:00:00.000Z",
+          }),
+          replace: () => Effect.die("unused"),
+        });
+        const current = yield* Effect.flip(
+          Effect.gen(function* () {
+            const resolver = yield* make;
+            return yield* resolver.resolve(request());
+          }).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(ServerEnvironment, {
+                  getEnvironmentId: Effect.succeed(EnvironmentId.make("env")),
+                  getDescriptor: Effect.die("unused"),
+                }),
+                catalogs,
+                Layer.succeed(ProjectionSnapshotQuery, {
+                  getProjectShellById: () => Effect.succeed(Option.some({} as never)),
+                } as never),
+              ),
             ),
           ),
-        ),
-      );
-      assert.equal(current.reason, "project_not_bound");
-    }),
+        );
+        assert.equal(current.reason, "project_not_bound");
+      }),
   );
 });

@@ -417,7 +417,6 @@ describe("runProcess", () => {
       });
     }),
   );
-
 });
 
 describe("isWindowsCommandNotFound", () => {
