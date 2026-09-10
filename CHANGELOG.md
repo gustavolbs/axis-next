@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0] - 2026-09-10
+
+### Added
+
+- Open Project overview from both sidebar layouts and move between Overview, Patterns, and project settings while retaining the selected checkout.
+
+### Fixed
+
+- Show project connection and request failures, keep cancellation available during connected analysis, and disable unavailable project features.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added

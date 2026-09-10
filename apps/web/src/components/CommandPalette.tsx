@@ -1796,6 +1796,7 @@ function OpenCommandPaletteDialog(props: {
         await navigate({
           to: "/projects/$projectKey",
           params: { projectKey: contextualProjectGroup.projectKey },
+          search: { view: "settings" },
         });
       },
     });

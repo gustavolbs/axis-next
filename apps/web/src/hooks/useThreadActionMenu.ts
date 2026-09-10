@@ -204,6 +204,7 @@ export function useThreadActionMenu(input: {
             void router.navigate({
               to: "/projects/$projectKey",
               params: { projectKey },
+              search: { view: "settings" },
             });
             return;
           }

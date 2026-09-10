@@ -2210,6 +2210,7 @@ export default function Sidebar() {
       void router.navigate({
         to: "/projects/$projectKey",
         params: { projectKey: projectGroup.projectKey },
+        search: { view: "settings" },
       });
     },
     [isMobile, router, setOpenMobile],
@@ -2223,6 +2224,20 @@ export default function Sidebar() {
     },
     [openProjectSettings],
   );
+  const handleProjectOverview = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    projectGroup: SidebarProjectSnapshot,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dispatchProjectScopeMenu({ type: "project-settings-opened" });
+    if (isMobile) setOpenMobile(false);
+    void router.navigate({
+      to: "/projects/$projectKey",
+      params: { projectKey: projectGroup.projectKey },
+      search: { view: "overview" },
+    });
+  };
 
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells: no archived-snapshot
@@ -3753,7 +3768,7 @@ export default function Sidebar() {
                   </ComboboxTrigger>
                   <ComboboxPopup
                     align="start"
-                    className="w-(--anchor-width) min-w-0 overflow-hidden"
+                    className="w-(--anchor-width) min-w-80 overflow-hidden"
                   >
                     <div className="shrink-0 px-3 pt-2.5">
                       <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
@@ -3804,6 +3819,17 @@ export default function Sidebar() {
                               <FolderIcon className="size-4 shrink-0" />
                             )}
                             <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                            {project ? (
+                              <Button
+                                size="xs"
+                                variant="ghost-muted"
+                                aria-label={`Project overview for ${project.displayName}`}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => handleProjectOverview(event, project)}
+                              >
+                                Overview
+                              </Button>
+                            ) : null}
                             {project ? (
                               <Button
                                 size="icon-xs"
