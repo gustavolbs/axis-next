@@ -22,6 +22,7 @@ import * as AxisLearningService from "./axis/learning/AxisLearningService.ts";
 import * as AxisProjectProfileStore from "./axis/projects/AxisProjectProfileStore.ts";
 import * as AxisProjectScope from "./axis/projects/AxisProjectScope.ts";
 import * as AxisEffectiveContext from "./axis/projects/AxisEffectiveContext.ts";
+import * as AxisProjectContextPreview from "./axis/projects/AxisProjectContextPreview.ts";
 import * as AxisTaskStore from "./axis/tasks/AxisTaskStore.ts";
 import * as AxisTaskExecution from "./axis/tasks/AxisTaskExecution.ts";
 import * as AxisTaskWorkflow from "./axis/tasks/AxisTaskWorkflow.ts";
@@ -516,6 +517,9 @@ const AxisEffectiveContextLayerLive = AxisEffectiveContext.layer.pipe(
   Layer.provide(AxisContextCatalogLayerLive),
   Layer.provide(AxisProjectScopeLayerLive),
 );
+const AxisProjectContextPreviewLayerLive = AxisProjectContextPreview.layer.pipe(
+  Layer.provide(AxisEffectiveContextLayerLive),
+);
 
 const AxisWorkHubSourceSyncLayerLive = AxisWorkHubSourceSync.layer.pipe(
   Layer.provide(AxisContextCatalogLayerLive),
@@ -628,6 +632,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
       AxisLearningServiceLayerLive,
       AxisProjectProfileStoreLayerLive,
       AxisEffectiveContextLayerLive,
+      AxisProjectContextPreviewLayerLive,
       AxisProjectSourcesLayerLive,
       AxisOnboardingStoreLayerLive,
       AxisOnboardingServiceLayerLive,

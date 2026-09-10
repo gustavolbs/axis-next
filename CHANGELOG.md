@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.0] - 2026-09-10
+
+### Added
+
+- Preview the exact server-resolved project rules, source references, learning versions, conflicts, and digest for a provider, workflow step, and path selection.
+
 ## [0.9.0] - 2026-09-10
 
 ### Added

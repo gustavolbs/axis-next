@@ -1,4 +1,9 @@
 import * as Schema from "effect/Schema";
+import {
+  AxisProjectContextPreviewError,
+  AxisProjectContextPreviewInput,
+  AxisProjectContextPreviewResult,
+} from "./axisProjectContextPreview.ts";
 import * as Effect from "effect/Effect";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -467,6 +472,7 @@ export const WS_METHODS = {
   axisTasksUnlinkSource: "axis.tasks.unlinkSource",
   axisWorkflowStart: "axis.workflow.start",
   axisWorkflowGet: "axis.workflow.get",
+  axisProjectContextPreview: "axis.projectContext.preview",
   axisWorkflowCancel: "axis.workflow.cancel",
   axisWorkflowRetry: "axis.workflow.retry",
   axisProjectProfileGet: "axis.projectProfile.get",
@@ -929,6 +935,11 @@ const AxisWorkflowRpcError = Schema.Union([
   AxisTaskWorkflowServiceError,
   EnvironmentAuthorizationError,
 ]);
+export const WsAxisProjectContextPreviewRpc = Rpc.make(WS_METHODS.axisProjectContextPreview, {
+  payload: AxisProjectContextPreviewInput,
+  success: AxisProjectContextPreviewResult,
+  error: Schema.Union([AxisProjectContextPreviewError, EnvironmentAuthorizationError]),
+});
 export const WsAxisWorkflowStartRpc = Rpc.make(WS_METHODS.axisWorkflowStart, {
   payload: AxisWorkflowAdmission,
   success: AxisWorkflowSnapshot,
@@ -1784,6 +1795,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAxisTasksReopenRpc,
   WsAxisTasksUnlinkSourceRpc,
   WsAxisWorkflowStartRpc,
+  WsAxisProjectContextPreviewRpc,
   WsAxisWorkflowGetRpc,
   WsAxisWorkflowCancelRpc,
   WsAxisWorkflowRetryRpc,

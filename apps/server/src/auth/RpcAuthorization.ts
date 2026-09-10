@@ -87,6 +87,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.axisTasksUnlinkSource]: AuthOrchestrationOperateScope,
   [WS_METHODS.axisWorkflowStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.axisWorkflowGet]: AuthOrchestrationReadScope,
+  [WS_METHODS.axisProjectContextPreview]: AuthOrchestrationReadScope,
   [WS_METHODS.axisWorkflowCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.axisWorkflowRetry]: AuthOrchestrationOperateScope,
   [WS_METHODS.axisProjectProfileGet]: AuthOrchestrationReadScope,

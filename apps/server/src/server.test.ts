@@ -123,6 +123,8 @@ import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
 import { AxisLearningEngine } from "./axis/learning/AxisLearningEngine.ts";
 import * as AxisLearningService from "./axis/learning/AxisLearningService.ts";
 import { AxisProjectProfileStore } from "./axis/projects/AxisProjectProfileStore.ts";
+import { AxisProjectContextPreview } from "./axis/projects/AxisProjectContextPreview.ts";
+import { AxisEffectiveContextValidationError } from "./axis/projects/AxisEffectiveContext.ts";
 import {
   AxisProjectScope,
   make as makeAxisProjectScope,
@@ -582,6 +584,7 @@ const buildAppUnderTest = (options?: {
     axisLearningService?: Partial<AxisLearningService.AxisLearningService["Service"]>;
     axisProjectProfile?: Partial<AxisProjectProfileStore["Service"]>;
     axisProjectScope?: Partial<AxisProjectScope["Service"]>;
+    axisProjectContextPreview?: Partial<AxisProjectContextPreview["Service"]>;
     axisTaskWorkflow?: Partial<AxisTaskWorkflowService["Service"]>;
     axisScratchChats?: Partial<AxisScratchChatRunner["Service"]>;
     axisWorkHubSourceSync?: Partial<AxisWorkHubSourceSync["Service"]>;
@@ -893,6 +896,13 @@ const buildAppUnderTest = (options?: {
           Layer.mock(AxisProjectScope)({
             ...options?.layers?.axisProjectScope,
           }),
+          ...(options?.layers?.axisProjectContextPreview
+            ? [
+                Layer.mock(AxisProjectContextPreview)({
+                  ...options.layers.axisProjectContextPreview,
+                }),
+              ]
+            : []),
           Layer.mock(AxisTaskStore)({
             get: () => Effect.succeed(Option.none()),
             list: () => Effect.succeed([]),
@@ -5707,6 +5717,223 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           ),
         );
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes project context previews with session-owned caller and provider driver", () =>
+    Effect.gen(function* () {
+      const environmentId = testEnvironmentDescriptor.environmentId;
+      const scope = {
+        contextId: AxisContextId.make("company"),
+        project: { environmentId, projectId: defaultProjectId },
+      };
+      const provider = {
+        environmentId,
+        instanceId: ProviderInstanceId.make("configured-instance"),
+      };
+      const catalog = yield* decodeAxisContextCatalogSnapshot({
+        revision: 1,
+        updatedAt: "2026-09-10T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "personal",
+              kind: "personal",
+              name: "Personal",
+              createdAt: "2026-09-10T00:00:00.000Z",
+              updatedAt: "2026-09-10T00:00:00.000Z",
+            },
+            {
+              id: "company",
+              kind: "company",
+              name: "Company",
+              createdAt: "2026-09-10T00:00:00.000Z",
+              updatedAt: "2026-09-10T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      const resolve = vi.fn<AxisProjectContextPreview["Service"]["resolve"]>((input) =>
+        Effect.succeed({
+          scope: input.scope,
+          provider: input.provider,
+          ...(input.model === undefined ? {} : { model: input.model }),
+          step: input.step,
+          profileRevision: 3,
+          rules: [],
+          sources: [],
+          learningVersionIds: [],
+          conflicts: [],
+          digest: "preview-digest",
+        }),
+      );
+      const getInstanceInfo = vi.fn<ProviderService.ProviderService["Service"]["getInstanceInfo"]>(
+        (instanceId) =>
+          Effect.succeed({
+            instanceId,
+            driverKind: ProviderDriverKind.make("claude"),
+            displayName: "Configured Claude",
+            enabled: true,
+            continuationIdentity: {
+              driverKind: ProviderDriverKind.make("claude"),
+              continuationKey: "configured-instance",
+            },
+          }),
+      );
+      yield* buildAppUnderTest({
+        layers: {
+          axisContextCatalog: { get: Effect.succeed(catalog) },
+          axisProjectContextPreview: { resolve },
+          providerService: { getInstanceInfo },
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: ownerCookie },
+        body: yield* HttpBody.json({ scopes: [...AuthStandardClientScopes] }),
+      });
+      assert.equal(pairingResponse.status, 200);
+      const pairingBody = (yield* pairingResponse.json) as { readonly credential: string };
+      const wsUrl = yield* getWsServerUrl("/ws", { credential: pairingBody.credential });
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const result = yield* client[WS_METHODS.axisProjectContextPreview]({
+              scope,
+              provider,
+              model: "claude-test",
+              step: "implementation",
+              paths: ["apps/server/src/ws.ts"],
+            });
+            assert.equal(result.digest, "preview-digest");
+            assert.deepEqual(resolve.mock.calls[0]?.[0]?.caller, {
+              environmentId,
+              contextId: AxisContextId.make("personal"),
+            });
+            assert.equal(resolve.mock.calls[0]?.[0]?.driver, ProviderDriverKind.make("claude"));
+            assert.deepEqual(getInstanceInfo.mock.calls, [[provider.instanceId]]);
+
+            for (const invalidInput of [
+              {
+                scope: {
+                  ...scope,
+                  project: { ...scope.project, environmentId: EnvironmentId.make("foreign-scope") },
+                },
+                provider,
+              },
+              {
+                scope,
+                provider: { ...provider, environmentId: EnvironmentId.make("foreign-provider") },
+              },
+            ]) {
+              const error = yield* client[WS_METHODS.axisProjectContextPreview]({
+                ...invalidInput,
+                step: "implementation",
+                paths: [],
+              }).pipe(Effect.flip);
+              assert.equal(error._tag, "AxisProjectContextPreviewError");
+              assert.equal(
+                error.message,
+                "The selected project and provider must belong to this environment.",
+              );
+            }
+          }),
+        ),
+      );
+      assert.equal(resolve.mock.calls.length, 1);
+      assert.equal(getInstanceInfo.mock.calls.length, 1);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("sanitizes denied project context preview resolution over websocket rpc", () =>
+    Effect.gen(function* () {
+      const environmentId = testEnvironmentDescriptor.environmentId;
+      const scope = {
+        contextId: AxisContextId.make("company"),
+        project: { environmentId, projectId: defaultProjectId },
+      };
+      const provider = {
+        environmentId,
+        instanceId: ProviderInstanceId.make("configured-instance"),
+      };
+      const catalog = yield* decodeAxisContextCatalogSnapshot({
+        revision: 1,
+        updatedAt: "2026-09-10T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "personal",
+              kind: "personal",
+              name: "Personal",
+              createdAt: "2026-09-10T00:00:00.000Z",
+              updatedAt: "2026-09-10T00:00:00.000Z",
+            },
+            {
+              id: "company",
+              kind: "company",
+              name: "Company",
+              createdAt: "2026-09-10T00:00:00.000Z",
+              updatedAt: "2026-09-10T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      const resolve = vi.fn<AxisProjectContextPreview["Service"]["resolve"]>((input) => {
+        assert.deepEqual(input.caller, {
+          environmentId,
+          contextId: AxisContextId.make("personal"),
+        });
+        return Effect.fail(
+          new AxisEffectiveContextValidationError({
+            message: "Denied private/company-rules.md: foreign-source-content",
+          }),
+        );
+      });
+      yield* buildAppUnderTest({
+        layers: {
+          axisContextCatalog: { get: Effect.succeed(catalog) },
+          axisProjectContextPreview: { resolve },
+          providerService: {
+            getInstanceInfo: (instanceId) =>
+              Effect.succeed({
+                instanceId,
+                driverKind: ProviderDriverKind.make("claude"),
+                displayName: undefined,
+                enabled: true,
+                continuationIdentity: {
+                  driverKind: ProviderDriverKind.make("claude"),
+                  continuationKey: "configured-instance",
+                },
+              }),
+          },
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: ownerCookie },
+        body: yield* HttpBody.json({ scopes: [...AuthStandardClientScopes] }),
+      });
+      assert.equal(pairingResponse.status, 200);
+      const pairingBody = (yield* pairingResponse.json) as { readonly credential: string };
+      const wsUrl = yield* getWsServerUrl("/ws", { credential: pairingBody.credential });
+      const error = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.axisProjectContextPreview]({
+            scope,
+            provider,
+            step: "implementation",
+            paths: ["private/company-rules.md"],
+          }).pipe(Effect.flip),
+        ),
+      );
+
+      assert.equal(error._tag, "AxisProjectContextPreviewError");
+      assert.equal(error.message, "The selected project context is unavailable.");
+      assert.notInclude(error.message, "private/company-rules.md");
+      assert.notInclude(error.message, "foreign-source-content");
+      assert.equal(resolve.mock.calls.length, 1);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("keeps non-administrative Axis Learning sessions in their own context", () =>

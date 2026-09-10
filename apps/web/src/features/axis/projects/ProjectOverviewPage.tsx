@@ -37,6 +37,7 @@ import { resolveDefaultProviderModelSelection } from "~/providerInstances";
 import { useSettingsProjectGroups } from "~/components/settings/ProjectSettingsPanel";
 import { ProjectOnboardingPanel } from "./ProjectOnboardingPanel";
 import { ProjectPatternsPanel } from "./ProjectPatternsPanel";
+import { ProjectContextPreviewPanel } from "./ProjectContextPreviewPanel";
 import { ProjectWorkflowView } from "./ProjectWorkflowView";
 import { ProjectIntegrationsPanel } from "./ProjectIntegrationsPanel";
 import { AxisLearningSettings } from "../settings/AxisLearningSettings";
@@ -653,15 +654,24 @@ export function ProjectOverviewPage({
             />
           ) : null}
           {view === "patterns" && selectedScope !== null && selectedProject !== null ? (
-            <ProjectPatternsPanel
-              key={`${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
-              environmentId={selectedProject.environmentId}
-              scope={selectedScope}
-              connectionState={onboardingConnectionState}
-              {...(overviewGroup.selectedMember?.physicalProjectKey === undefined
-                ? {}
-                : { physicalProjectKey: overviewGroup.selectedMember.physicalProjectKey })}
-            />
+            <>
+              <ProjectContextPreviewPanel
+                key={`preview:${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
+                environmentId={selectedProject.environmentId}
+                scope={selectedScope}
+                modelSelection={onboardingModelSelection}
+                connectionState={onboardingConnectionState}
+              />
+              <ProjectPatternsPanel
+                key={`patterns:${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
+                environmentId={selectedProject.environmentId}
+                scope={selectedScope}
+                connectionState={onboardingConnectionState}
+                {...(overviewGroup.selectedMember?.physicalProjectKey === undefined
+                  ? {}
+                  : { physicalProjectKey: overviewGroup.selectedMember.physicalProjectKey })}
+              />
+            </>
           ) : null}
           {view === "learning" && selectedScope !== null && selectedProject !== null ? (
             <AxisLearningSettings
