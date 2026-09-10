@@ -37,6 +37,22 @@ export function filterProjectThreadTasks(
   );
 }
 
+export function preferObservedWorkflowTask(
+  listed: AxisTaskExtension | null,
+  observed: AxisTaskExtension | null,
+): AxisTaskExtension | null {
+  if (
+    listed === null ||
+    observed === null ||
+    observed.id !== listed.id ||
+    observed.threadId !== listed.threadId ||
+    !samePhysicalProjectScope(observed.scope, listed.scope) ||
+    observed.revision < listed.revision
+  )
+    return listed;
+  return observed;
+}
+
 export function canStartProjectWorkflow(input: {
   readonly connectionState: string;
   readonly threadId: AxisTaskExtension["threadId"] | null;

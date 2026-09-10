@@ -91,6 +91,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server persists Axis contexts and Work Hub cache data. Absent on older servers, so clients
       must show an update affordance instead of repeatedly sending unsupported Axis RPCs. */
   axis: Schema.optionalKey(Schema.Boolean),
+  /** Server exposes the Axis task and workflow RPCs. Absent on servers that
+      predate Work Hub workflow execution, so clients must not create its
+      task queries or commands under version skew. */
+  axisWorkflow: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.settle / thread.unsettle commands. Absent on
       pre-settlement servers, so clients treat missing as unsupported and
       never send the commands under version skew. */

@@ -196,10 +196,27 @@ export const make = Effect.gen(function* () {
     const row = rows.find(
       (candidate) => candidate.pendingMessageId === `axis-execution:${input.commandId}`,
     );
-    if (rows.length > 1 || row === undefined)
+    if (rows.length > 1)
       return state("unknown", "The dedicated attempt has missing or conflicting turn correlation.");
+    if (row === undefined) {
+      if (
+        rows.length === 0 &&
+        shell.value.session?.status === "interrupted" &&
+        shell.value.session.activeTurnId === null
+      )
+        return state(
+          "interrupted",
+          "The provider confirmed interruption before starting a turn. Retry explicitly with a new command.",
+        );
+      return state("unknown", "The dedicated attempt has missing or conflicting turn correlation.");
+    }
     execution.turnId = row.turnId;
-    if (row.state === "interrupted")
+    if (
+      row.state === "interrupted" ||
+      (row.state !== "completed" &&
+        shell.value.session?.status === "interrupted" &&
+        shell.value.session.activeTurnId === null)
+    )
       return state(
         "interrupted",
         "The provider confirmed interruption. Retry explicitly with a new command.",

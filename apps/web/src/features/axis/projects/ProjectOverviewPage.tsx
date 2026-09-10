@@ -46,7 +46,11 @@ import type {
   ProjectOnboardingQuery,
   ProjectOnboardingRun,
 } from "./projectOnboardingModel";
-import { buildProjectOverviewModel, type AxisProjectOverviewMember } from "./projectOverviewModel";
+import {
+  buildProjectOverviewModel,
+  isAxisWorkflowAvailable,
+  type AxisProjectOverviewMember,
+} from "./projectOverviewModel";
 import type { ProjectOverviewView } from "./projectOverviewRoute";
 
 const connectionState = (phase: string): EnvironmentConnectionState => {
@@ -174,6 +178,9 @@ export function ProjectOverviewPage({
   );
   const selectedEnvironment = environments.find(
     (environment) => environment.environmentId === selectedProject?.environmentId,
+  );
+  const workflowAvailable = isAxisWorkflowAvailable(
+    selectedEnvironment?.serverConfig?.environment.capabilities,
   );
   const catalogQuery = useEnvironmentQuery(
     selectedEnvironment?.serverConfig?.environment.capabilities.axis === true
@@ -667,7 +674,18 @@ export function ProjectOverviewPage({
               connectionState={learningConnectionState}
             />
           ) : null}
-          {view === "workflow" && selectedScope !== null && selectedProject !== null ? (
+          {view === "workflow" && selectedProject !== null && !workflowAvailable ? (
+            <SettingsSection title="Workflow">
+              <SettingsRow
+                title="Workflow requires a backend update"
+                description="Update the selected environment to use Work Hub workflows."
+              />
+            </SettingsSection>
+          ) : null}
+          {view === "workflow" &&
+          workflowAvailable &&
+          selectedScope !== null &&
+          selectedProject !== null ? (
             <ProjectWorkflowView
               key={`${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
               scope={selectedScope}

@@ -38,6 +38,7 @@ import {
   canStartProjectWorkflow,
   filterProjectThreadTasks,
   isSupportedAxisWorkflowSkill,
+  preferObservedWorkflowTask,
   workflowStatusLabel,
   workflowStepStatusLabel,
 } from "./projectWorkflowModel";
@@ -91,29 +92,35 @@ export function ProjectWorkflowPanel({
     () => filterProjectThreadTasks(tasksQuery.data ?? [], scope, threadId),
     [scope, tasksQuery.data, threadId],
   );
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null;
-  const selectedStep =
-    selectedTask?.steps.find((step) => step.id === selectedStepId) ??
-    selectedTask?.steps[0] ??
-    null;
+  const listedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null;
+  const listedStep =
+    listedTask?.steps.find((step) => step.id === selectedStepId) ?? listedTask?.steps[0] ?? null;
   const attemptQuery = useEnvironmentQuery(
     connected &&
-      selectedTask !== null &&
-      selectedStep?.commandId !== null &&
-      selectedStep?.commandId !== undefined &&
+      listedTask !== null &&
+      listedStep?.commandId !== null &&
+      listedStep?.commandId !== undefined &&
       threadId !== null
       ? serverEnvironment.axisWorkflowAttempt({
           environmentId,
           input: {
             scope,
             threadId,
-            taskId: selectedTask.id,
-            stepId: selectedStep.id,
-            commandId: selectedStep.commandId,
+            taskId: listedTask.id,
+            stepId: listedStep.id,
+            commandId: listedStep.commandId,
           },
         })
       : null,
   );
+  // axis.workflow.get may settle task metadata after a restart. Its returned
+  // task is newer than the independently refreshed task list for this attempt.
+  const selectedTask = preferObservedWorkflowTask(listedTask, attemptQuery.data?.task ?? null);
+  const selectedStep =
+    selectedTask?.steps.find((step) => step.id === selectedStepId) ??
+    selectedTask?.steps.find((step) => step.id === listedStep?.id) ??
+    selectedTask?.steps[0] ??
+    null;
   const createTask = useAtomCommand(serverEnvironment.createAxisTask, { reportFailure: false });
   const startWorkflow = useAtomCommand(serverEnvironment.startAxisWorkflow, {
     reportFailure: false,
