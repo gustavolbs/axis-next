@@ -7,6 +7,7 @@ export interface ProjectOnboardingSource {
   readonly path: string;
   readonly status: "read" | "absent" | "failed";
   readonly error: string | null;
+  readonly warning?: string;
 }
 
 export interface ProjectOnboardingCandidateRule {
@@ -40,7 +41,7 @@ export interface ProjectOnboardingRun {
   readonly scope: AxisContextProjectScope;
   readonly execution: {
     readonly threadId: string;
-    readonly turnId: string;
+    readonly turnId: string | null;
     readonly commandId: string;
   };
   readonly status: ProjectOnboardingRunStatus;
@@ -288,7 +289,11 @@ export function buildProjectOnboardingModel(
     error,
     revisionConflict: input.revisionConflict ?? null,
     applySucceeded,
-    canAnalyze: (input.analysisAvailable ?? true) && connected && scopeMatches && phase === "idle",
+    canAnalyze:
+      (input.analysisAvailable ?? true) &&
+      connected &&
+      scopeMatches &&
+      (phase === "idle" || phase === "applied"),
     canApply,
     canCancel: connected && scopeMatches && phase === "analyzing",
     canRetry:

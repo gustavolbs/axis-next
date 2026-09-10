@@ -18,6 +18,8 @@ import Migration0059 from "./Migrations/059_AxisProjectWork.ts";
 import Migration0060 from "./Migrations/060_AxisLearningProjectScope.ts";
 import Migration0061 from "./Migrations/061_AxisTaskCommands.ts";
 import Migration0062 from "./Migrations/062_AxisOnboardingRuns.ts";
+import Migration0063 from "./Migrations/063_AxisOnboardingPendingTurn.ts";
+import Migration0064 from "./Migrations/064_AxisOnboardingApplications.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -148,6 +150,8 @@ export const migrationEntries = [
   [60, "AxisLearningProjectScope", Migration0060],
   [61, "AxisTaskCommands", Migration0061],
   [62, "AxisOnboardingRuns", Migration0062],
+  [63, "AxisOnboardingPendingTurn", Migration0063],
+  [64, "AxisOnboardingApplications", Migration0064],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

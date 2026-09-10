@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0] - 2026-09-10
+
+### Added
+
+- Analyze project repositories through the selected provider, review sourced onboarding suggestions, and apply explicit decisions to the project profile.
+
+### Fixed
+
+- Preserve onboarding decisions and evidence atomically, distinguish interrupted analysis from completion, and retry with a separate execution.
+- Keep larger project manifests readable and show source truncation or parsing limitations during onboarding.
+
 ## [0.5.2] - 2026-09-10
 
 ### Fixed

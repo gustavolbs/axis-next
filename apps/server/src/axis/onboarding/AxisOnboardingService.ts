@@ -4,12 +4,15 @@ import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ThreadId } from "@t3tools/contracts";
 
 import {
   AxisOnboardingSourceId,
@@ -26,12 +29,14 @@ import type {
   AxisContextProjectScope,
   AxisProjectProfile,
   AxisProjectRuleId,
-  AxisTypedChange,
 } from "../../../../../packages/contracts/src/axisProjectProfile.ts";
 import * as AxisProjectProfileStore from "../projects/AxisProjectProfileStore.ts";
-import type * as AxisProjectScope from "../projects/AxisProjectScope.ts";
-import type { AxisOnboardingAnalysisResult } from "./AxisOnboardingAnalysis.ts";
-import { applyAxisOnboarding, AxisOnboardingApplyError } from "./AxisOnboardingApply.ts";
+import * as AxisProjectScope from "../projects/AxisProjectScope.ts";
+import { AxisTaskExecution } from "../tasks/AxisTaskExecution.ts";
+import { analyzeAxisOnboarding } from "./AxisOnboardingAnalysis.ts";
+import { onboardingPrompt } from "./AxisOnboardingPrompt.ts";
+import { AxisOnboardingApplyError } from "./AxisOnboardingApply.ts";
+import { applyAxisOnboardingPersistence } from "./AxisOnboardingPersistence.ts";
 import { deriveProjectFacts } from "./AxisProjectFacts.ts";
 import * as AxisProjectSources from "./AxisProjectSources.ts";
 import * as AxisOnboardingStore from "./AxisOnboardingStore.ts";
@@ -63,11 +68,6 @@ export interface AxisOnboardingApplyResponse {
   >;
 }
 
-const sameScope = (left: AxisContextProjectScope, right: AxisContextProjectScope) =>
-  left.contextId === right.contextId &&
-  left.project.environmentId === right.project.environmentId &&
-  left.project.projectId === right.project.projectId;
-
 const runKey = (scope: AxisContextProjectScope, runId: AxisOnboardingRunIdType) =>
   `${scope.contextId}:${scope.project.environmentId}:${scope.project.projectId}:${runId}`;
 
@@ -83,10 +83,10 @@ const sourceId = (path: string) =>
     `source-${NodeCrypto.createHash("sha256").update(path, "utf8").digest("hex").slice(0, 32)}`,
   );
 
-const inputScope = (scope: AxisContextProjectScope): AxisProjectScope.AxisResolvedProjectScope =>
-  scope as unknown as AxisProjectScope.AxisResolvedProjectScope;
-
 const diagnostic = (cause: unknown) => {
+  if (cause instanceof Error && /401|invalid_api_key|unauthorized/i.test(cause.message)) {
+    return "Provider authentication failed. Check this environment's provider credentials in Settings, then retry.";
+  }
   if (cause instanceof Error && cause.message.trim() !== "") return cause.message.slice(0, 8_000);
   if (typeof cause === "string" && cause.trim() !== "") return cause.slice(0, 8_000);
   return "Onboarding execution failed.";
@@ -131,12 +131,15 @@ const progressFor = (run: AxisOnboardingRunType): AxisOnboardingProgressType => 
       message: "Onboarding candidates are ready for review.",
     };
   }
-  if (run.facts.length > 0) {
+  if (run.sources.length > 0) {
     return {
       stage: "analyzing",
       completedSteps: 2,
       totalSteps: TOTAL_STEPS,
-      message: "Project facts were collected; onboarding analysis is in progress.",
+      message:
+        run.facts.length > 0
+          ? "Project facts were collected; onboarding analysis is in progress."
+          : "Sources were collected without structured facts; onboarding analysis is in progress.",
     };
   }
   return {
@@ -154,28 +157,6 @@ const snapshot = (run: AxisOnboardingRunType): AxisOnboardingRunSnapshot => ({
   run,
   progress: progressFor(run),
 });
-
-const changesFor = (
-  previousProfile: AxisProjectProfile,
-  nextProfile: AxisProjectProfile,
-): ReadonlyArray<AxisTypedChange> => {
-  const previous = new Map(previousProfile.rules.map((rule) => [rule.id, rule]));
-  const next = new Map(nextProfile.rules.map((rule) => [rule.id, rule]));
-  const changes: AxisTypedChange[] = [];
-
-  for (const rule of previousProfile.rules) {
-    if (!next.has(rule.id) && previous.has(rule.id)) {
-      changes.push({ op: "remove-rule", ruleId: rule.id });
-    }
-  }
-  for (const rule of next.values()) {
-    const existing = previous.get(rule.id);
-    if (existing === undefined || JSON.stringify(existing) !== JSON.stringify(rule)) {
-      changes.push({ op: "set-rule", rule });
-    }
-  }
-  return changes;
-};
 
 export class AxisOnboardingService extends Context.Service<
   AxisOnboardingService,
@@ -207,8 +188,13 @@ export class AxisOnboardingService extends Context.Service<
 export const make = Effect.gen(function* () {
   const runs = yield* AxisOnboardingStore.AxisOnboardingStore;
   const profiles = yield* AxisProjectProfileStore.AxisProjectProfileStore;
+  const sql = yield* SqlClient.SqlClient;
   const projectSources = yield* AxisProjectSources.AxisProjectSources;
+  const projectScope = yield* AxisProjectScope.AxisProjectScope;
+  const executor = yield* AxisTaskExecution;
+  const runtimeScope = yield* Effect.scope;
   const writes = yield* Semaphore.make(1);
+  const starts = yield* Semaphore.make(1);
   const activeRuns = new Map<string, Fiber.Fiber<unknown, unknown>>();
 
   const getRun = (
@@ -228,20 +214,29 @@ export const make = Effect.gen(function* () {
       );
 
   const list: AxisOnboardingService["Service"]["list"] = (scope) =>
-    runs.list(scope).pipe(Effect.map((items) => items.map(snapshot)));
+    runs.list(scope).pipe(
+      Effect.flatMap((items) => Effect.forEach(items, recoverInterruptedRun)),
+      Effect.map((items) => items.map(snapshot)),
+    );
 
   const get: AxisOnboardingService["Service"]["get"] = (scope, runId) =>
-    getRun(scope, runId).pipe(Effect.map(snapshot));
+    getRun(scope, runId).pipe(Effect.flatMap(recoverInterruptedRun), Effect.map(snapshot));
 
   const saveWhileRunning = (
     scope: AxisContextProjectScope,
     runId: AxisOnboardingRunIdType,
+    commandId: AxisOnboardingRunType["execution"]["commandId"],
     update: (run: AxisOnboardingRunType) => AxisOnboardingRunType,
   ) =>
     writes.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* runs.get(scope, runId);
-        if (Option.isNone(current) || current.value.status !== "running") return false;
+        if (
+          Option.isNone(current) ||
+          current.value.status !== "running" ||
+          current.value.execution.commandId !== commandId
+        )
+          return false;
         yield* runs.save(update(current.value));
         return true;
       }),
@@ -251,11 +246,17 @@ export const make = Effect.gen(function* () {
     scope: AxisContextProjectScope,
     runId: AxisOnboardingRunIdType,
     cause: unknown,
+    commandId?: AxisOnboardingRunType["execution"]["commandId"],
   ) =>
     writes.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* runs.get(scope, runId);
-        if (Option.isNone(current) || current.value.status !== "running") return;
+        if (
+          Option.isNone(current) ||
+          current.value.status !== "running" ||
+          (commandId !== undefined && current.value.execution.commandId !== commandId)
+        )
+          return;
         const failed: AxisOnboardingRunType = {
           ...current.value,
           status: "failed",
@@ -268,14 +269,38 @@ export const make = Effect.gen(function* () {
 
   const runPipeline = (initial: AxisOnboardingRunType) =>
     Effect.gen(function* () {
-      // AxisProjectSources currently consumes the resolved scope shape, while the
-      // public onboarding request intentionally carries only the project scope.
-      // Its live implementation reads the project by the nested scope fields.
-      const sourceScope = inputScope(initial.scope);
+      if (initial.modelSelection === undefined) {
+        return yield* validationError(
+          "This older run has no provider selection. Start a new analysis.",
+        );
+      }
+      const sourceScope = yield* projectScope.resolve({
+        caller: {
+          environmentId: initial.scope.project.environmentId,
+          contextId: initial.scope.contextId,
+        },
+        scope: initial.scope,
+        operation: "execute",
+        provider: {
+          environmentId: initial.scope.project.environmentId,
+          instanceId: initial.modelSelection.instanceId,
+        },
+      });
       const inventory = yield* projectSources.collect(sourceScope);
       const observedAt = DateTime.formatIso(yield* DateTime.now);
+      const factsResult = deriveProjectFacts(inventory, observedAt);
       const sources = inventory.sources.map((source) => {
-        const base = { id: sourceId(source.path), path: source.path, kind: source.kind };
+        const warning =
+          factsResult.diagnostics.find(
+            (item) => item.path === source.path && item.status === "invalid",
+          )?.message ??
+          (source.truncated ? "Source content was truncated to the collection limit." : undefined);
+        const base = {
+          id: sourceId(source.path),
+          path: source.path,
+          kind: source.kind,
+          ...(warning ? { warning } : {}),
+        };
         if (source.status === "read") {
           return { ...base, status: "read" as const, error: null };
         }
@@ -288,7 +313,6 @@ export const make = Effect.gen(function* () {
           error: source.error ?? "The source could not be read.",
         };
       });
-      const factsResult = deriveProjectFacts(inventory, observedAt);
       const profile = yield* profiles.get(initial.scope);
       const collected: AxisOnboardingRunType = {
         ...initial,
@@ -296,85 +320,146 @@ export const make = Effect.gen(function* () {
         digests: factsResult.digests,
         facts: factsResult.facts,
       };
-      if (!(yield* saveWhileRunning(initial.scope, initial.id, () => collected))) {
+      if (
+        !(yield* saveWhileRunning(
+          initial.scope,
+          initial.id,
+          initial.execution.commandId,
+          () => collected,
+        ))
+      ) {
         return;
       }
 
-      // No provider output is part of AxisOnboardingStartRequest yet. A safe,
-      // explicit no-candidate result keeps observed facts reviewable without
-      // inventing policy from repository metadata.
-      const analysis: AxisOnboardingAnalysisResult = {
+      const analysisInput = {
         scope: initial.scope,
-        candidateRules: [],
-        conflicts: [],
-        branch: {
-          sourceFacts: factsResult.facts,
-          pullRequestPolicies: profile.rules,
-        },
+        sources: sources.map((source, index) => ({
+          ...source,
+          content: inventory.sources[index]?.content ?? null,
+        })),
+        facts: factsResult.facts,
+        effectiveContext: { scope: initial.scope, rules: profile.rules },
       };
+      const output = yield* executor.execute({
+        scope: initial.scope,
+        threadId: initial.execution.threadId,
+        commandId: initial.execution.commandId,
+        modelSelection: initial.modelSelection,
+        prompt: onboardingPrompt(analysisInput),
+        runtimeMode: "approval-required",
+        onTurnStarted: (execution) =>
+          saveWhileRunning(initial.scope, initial.id, initial.execution.commandId, (current) => ({
+            ...current,
+            execution,
+          })).pipe(Effect.asVoid),
+      });
+      const analysis = yield* Effect.try({
+        try: () => analyzeAxisOnboarding({ ...analysisInput, modelOutput: output.text }),
+        catch: (error) => validationError(diagnostic(error)),
+      });
       const completed: AxisOnboardingRunType = {
         ...collected,
+        execution: output.execution,
         candidateRules: analysis.candidateRules,
         conflicts: analysis.conflicts,
         status: "completed",
         error: null,
         finishedAt: DateTime.formatIso(yield* DateTime.now),
       };
-      yield* saveWhileRunning(initial.scope, initial.id, () => completed);
+      yield* saveWhileRunning(
+        initial.scope,
+        initial.id,
+        initial.execution.commandId,
+        () => completed,
+      );
     }).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
-          ? Effect.void
-          : markFailed(initial.scope, initial.id, Cause.pretty(cause)),
+          ? markFailed(
+              initial.scope,
+              initial.id,
+              "Analysis was interrupted before completion. Review its thread before retrying.",
+              initial.execution.commandId,
+            )
+          : markFailed(initial.scope, initial.id, Cause.squash(cause), initial.execution.commandId),
       ),
       Effect.ensuring(Effect.sync(() => activeRuns.delete(runKey(initial.scope, initial.id)))),
     );
 
+  const recoverInterruptedRun = (run: AxisOnboardingRunType) =>
+    run.status !== "running" || activeRuns.has(runKey(run.scope, run.id))
+      ? Effect.succeed(run)
+      : markFailed(
+          run.scope,
+          run.id,
+          "The server restarted before this analysis settled. Review its thread, then retry explicitly.",
+          run.execution.commandId,
+        ).pipe(Effect.andThen(getRun(run.scope, run.id)));
+
   const launch = (run: AxisOnboardingRunType) => {
     const key = runKey(run.scope, run.id);
     if (activeRuns.has(key)) return Effect.void;
-    return runPipeline(run).pipe(
-      Effect.forkDetach,
-      Effect.tap((fiber) => Effect.sync(() => activeRuns.set(key, fiber))),
-      Effect.asVoid,
-    );
+    return Effect.gen(function* () {
+      const ready = yield* Deferred.make<void>();
+      const fiber = yield* Deferred.await(ready).pipe(
+        Effect.andThen(runPipeline(run)),
+        Effect.forkIn(runtimeScope),
+      );
+      activeRuns.set(key, fiber);
+      yield* Deferred.succeed(ready, undefined);
+    });
   };
 
   const start: AxisOnboardingService["Service"]["start"] = (input) =>
-    Effect.gen(function* () {
-      const id = makeRunId(input);
-      const existing = yield* runs.get(input.scope, id);
-      if (Option.isSome(existing)) {
-        if (existing.value.status === "running" && !activeRuns.has(runKey(input.scope, id))) {
-          yield* launch(existing.value);
+    starts.withPermits(1)(
+      Effect.gen(function* () {
+        const id = makeRunId(input);
+        const existing = yield* runs.get(input.scope, id);
+        if (Option.isSome(existing)) {
+          if (existing.value.status === "running" && !activeRuns.has(runKey(input.scope, id))) {
+            yield* markFailed(
+              input.scope,
+              id,
+              "The server restarted before this analysis settled. Review its thread, then retry explicitly.",
+            );
+            return yield* get(input.scope, id);
+          }
+          return snapshot(existing.value);
         }
-        return snapshot(existing.value);
-      }
 
-      const startedAt = DateTime.formatIso(yield* DateTime.now);
-      const run: AxisOnboardingRunType = {
-        id,
-        scope: input.scope,
-        execution: input.execution,
-        status: "running",
-        sources: [],
-        digests: [],
-        facts: [],
-        candidateRules: [],
-        conflicts: [],
-        decisions: [],
-        error: null,
-        startedAt,
-        finishedAt: null,
-      };
-      const started = yield* runs.start({ run });
-      yield* launch(started);
-      return snapshot(started);
-    });
+        const startedAt = DateTime.formatIso(yield* DateTime.now);
+        const run: AxisOnboardingRunType = {
+          id,
+          scope: input.scope,
+          execution: {
+            threadId: ThreadId.make(`${id}-thread`),
+            turnId: null,
+            commandId: input.commandId,
+          },
+          modelSelection: input.modelSelection,
+          status: "running",
+          sources: [],
+          digests: [],
+          facts: [],
+          candidateRules: [],
+          conflicts: [],
+          decisions: [],
+          error: null,
+          startedAt,
+          finishedAt: null,
+        };
+        const started = yield* runs.start({ run });
+        yield* launch(started);
+        return snapshot(started);
+      }),
+    );
 
   const cancel: AxisOnboardingService["Service"]["cancel"] = (scope, input) =>
     Effect.gen(function* () {
       const cancelled = yield* writes.withPermits(1)(runs.cancel(scope, input));
+      // A replay returns the current run, which may already be a new attempt.
+      // The old cancellation receipt does not authorize interrupting that attempt.
+      if (cancelled.status !== "cancelled") return snapshot(cancelled);
       const fiber = activeRuns.get(runKey(scope, input.runId));
       if (fiber !== undefined) {
         yield* Fiber.interrupt(fiber).pipe(Effect.ignore);
@@ -384,61 +469,36 @@ export const make = Effect.gen(function* () {
     });
 
   const retry: AxisOnboardingService["Service"]["retry"] = (scope, input) =>
-    Effect.gen(function* () {
-      const retried = yield* runs.retry(scope, input);
-      const reset: AxisOnboardingRunType = {
-        ...retried,
-        sources: [],
-        digests: [],
-        facts: [],
-        candidateRules: [],
-        conflicts: [],
-        decisions: [],
-      };
-      yield* writes.withPermits(1)(runs.save(reset));
-      yield* launch(reset);
-      return snapshot(reset);
-    });
+    writes.withPermits(1)(
+      Effect.gen(function* () {
+        if (activeRuns.has(runKey(scope, input.runId))) {
+          return yield* validationError(
+            "The previous analysis is still stopping. Retry after cancellation completes.",
+          );
+        }
+        const current = yield* getRun(scope, input.runId);
+        if (current.modelSelection === undefined) {
+          return yield* validationError(
+            "This older run has no provider selection. Start a new analysis.",
+          );
+        }
+        const retried = yield* runs.retry(scope, input);
+        // A replay may return a later terminal run. Never repeat provider effects.
+        if (retried.status === "running" && current.execution.commandId !== input.commandId) {
+          yield* launch(retried);
+        }
+        return snapshot(retried);
+      }),
+    );
 
   const apply: AxisOnboardingService["Service"]["apply"] = (input) =>
     Effect.gen(function* () {
-      const run = yield* getRun(input.scope, input.runId);
-      if (!sameScope(run.scope, input.scope)) {
-        return yield* validationError("The onboarding run belongs to another project.");
-      }
-      const profile = yield* profiles.get(input.scope);
       const decidedAt = DateTime.formatIso(yield* DateTime.now);
-      const result = yield* Effect.try({
-        try: () =>
-          applyAxisOnboarding({
-            profile,
-            run,
-            decisions: input.decisions,
-            expectedProfileRevision: input.expectedProfileRevision,
-            decidedAt,
-          }),
-        catch: (cause) =>
-          cause instanceof AxisOnboardingApplyError
-            ? cause
-            : new AxisOnboardingApplyError(
-                "invalid_run",
-                "The onboarding result could not be applied.",
-              ),
-      });
-
-      const changes = changesFor(profile, result.profile);
-      const savedProfile =
-        changes.length === 0
-          ? profile
-          : yield* profiles.replace(input.scope, input.expectedProfileRevision, changes);
-      const savedRun: AxisOnboardingRunType = { ...run, decisions: [...input.decisions] };
-      yield* runs.save(savedRun);
-      return {
-        run: snapshot(savedRun),
-        profile: savedProfile,
-        invalidatedRuleIds: result.invalidatedRuleIds,
-        acceptedCandidateIds: result.acceptedCandidateIds,
-      } satisfies AxisOnboardingApplyResponse;
+      return yield* applyAxisOnboardingPersistence({ ...input, decidedAt }).pipe(
+        Effect.provideService(AxisOnboardingStore.AxisOnboardingStore, runs),
+        Effect.provideService(AxisProjectProfileStore.AxisProjectProfileStore, profiles),
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
     });
 
   return { list, get, start, cancel, retry, apply } satisfies AxisOnboardingService["Service"];

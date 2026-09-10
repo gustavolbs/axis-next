@@ -13,7 +13,7 @@ layer("062_AxisOnboardingRuns", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 61 });
-      const executed = yield* runMigrations();
+      const executed = yield* runMigrations({ toMigrationInclusive: 62 });
       const scopedKey = 'project:["laptop","project-a"]';
 
       assert.deepEqual(executed, [[62, "AxisOnboardingRuns"]]);

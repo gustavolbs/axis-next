@@ -8,6 +8,7 @@ import {
   AxisProjectRule,
   AxisProjectRuleId,
   AxisProjectTokenEfficiencyPolicy,
+  AxisProjectProfile,
   AxisTypedChange,
 } from "../../../../../packages/contracts/src/axisProjectProfile.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -27,6 +28,7 @@ const decodeScope = Schema.decodeUnknownSync(AxisContextProjectScope);
 const decodeRule = Schema.decodeUnknownSync(AxisProjectRule);
 const decodeChange = Schema.decodeUnknownSync(AxisTypedChange);
 const decodeTokenEfficiencyPolicy = Schema.decodeUnknownSync(AxisProjectTokenEfficiencyPolicy);
+const decodeProfile = Schema.decodeUnknownSync(AxisProjectProfile);
 
 const scopeA = decodeScope({
   contextId: "company_a",
@@ -151,6 +153,34 @@ layer("AxisProjectProfileStore", (it) => {
       const record = decodeChange({ ...compress, mode: "record" });
       const replaced = yield* store.replace(policyScope, updated.revision, [record]);
       assert.deepEqual(replaced.tokenEfficiencyPolicies, [{ ...expectedPolicy, mode: "record" }]);
+    }),
+  );
+
+  it.effect("replaces the complete snapshot and assigns its server revision", () =>
+    Effect.gen(function* () {
+      const store = yield* AxisProjectProfileStore;
+      const snapshotScope = decodeScope({
+        contextId: "company_a_snapshot",
+        project: { environmentId: "laptop", projectId: "project-a" },
+      });
+      const initial = yield* store.get(snapshotScope);
+      const snapshot = decodeProfile({
+        ...initial,
+        revision: 999,
+        sources: [{ id: "source-a", kind: "manifest", path: "AGENTS.md", digest: "sha256:a", observedAt: "2026-09-10T10:00:00.000Z" }],
+        facts: [{ kind: "value", key: "package-manager", value: "bun", sourceRef: "source-a" }],
+        manualDecisions: [{ id: "decision-a", question: "Use bun?", decision: "accept", note: null, decidedAt: "2026-09-10T10:00:00.000Z" }],
+      });
+
+      const saved = yield* store.replaceSnapshot!(snapshotScope, initial.revision, snapshot);
+      assert.equal(saved.revision, 1);
+      assert.deepEqual(saved.sources, snapshot.sources);
+      assert.deepEqual(saved.facts, snapshot.facts);
+      assert.deepEqual(saved.manualDecisions, snapshot.manualDecisions);
+      assert.equal((yield* store.get(snapshotScope)).revision, 1);
+      const conflict = yield* store.replaceSnapshot!(snapshotScope, 0, snapshot).pipe(Effect.flip);
+      assert.instanceOf(conflict, AxisProjectProfileConflictError);
+      assert.equal(conflict.actualRevision, 1);
     }),
   );
 

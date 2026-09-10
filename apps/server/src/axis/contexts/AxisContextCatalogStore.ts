@@ -245,6 +245,11 @@ export const make = Effect.gen(function* () {
                 DELETE FROM axis_project_profiles
                 WHERE context_id IN ${sql.in(removedContextIds)}
               `;
+              // Run-owned command/application receipts are removed by their FKs.
+              yield* sql`
+                DELETE FROM axis_onboarding_runs
+                WHERE context_id IN ${sql.in(removedContextIds)}
+              `;
               yield* sql`
                 DELETE FROM axis_task_extensions
                 WHERE context_id IN ${sql.in(removedContextIds)}
