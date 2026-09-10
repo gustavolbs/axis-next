@@ -86,6 +86,30 @@ export function canStartProjectWorkflow(input: {
   );
 }
 
+export function canRecordTaskFeedback(input: {
+  readonly connectionState: string;
+  readonly threadId: AxisTaskExtension["threadId"] | null;
+  readonly task: AxisTaskExtension | null;
+  readonly step: AxisTaskStep | null;
+  readonly state: AxisWorkflowState | null;
+}): boolean {
+  const { task, step, state } = input;
+  return (
+    input.connectionState === "connected" &&
+    input.threadId !== null &&
+    task !== null &&
+    step !== null &&
+    state !== null &&
+    task.threadId === input.threadId &&
+    task.id === state.taskId &&
+    step.id === state.stepId &&
+    step.commandId === state.execution.commandId &&
+    state.execution.turnId !== null &&
+    step.turnId === state.execution.turnId &&
+    (state.status === "completed" || state.status === "failed")
+  );
+}
+
 export function workflowStatusLabel(state: AxisWorkflowState | null): string {
   if (state === null) return "Not executed";
   return state.status

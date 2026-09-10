@@ -35,6 +35,7 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   buildNewProjectTask,
+  canRecordTaskFeedback,
   canStartProjectWorkflow,
   filterProjectThreadTasks,
   isSupportedAxisWorkflowSkill,
@@ -44,7 +45,7 @@ import {
 } from "./projectWorkflowModel";
 
 type WorkflowConnectionState = EnvironmentConnectionState | "unauthorized";
-type Action = "start" | "retry" | "cancel" | "create" | null;
+type Action = "start" | "retry" | "cancel" | "create" | "feedback" | null;
 
 const skillLabel = (skillId: string) => skillId.charAt(0).toUpperCase() + skillId.slice(1);
 const checkWorkflowAdmission = (snapshot: AxisWorkflowSnapshot) => {
@@ -83,6 +84,10 @@ export function ProjectWorkflowPanel({
   const [title, setTitle] = useState("");
   const [action, setAction] = useState<Action>(null);
   const [error, setError] = useState<string | null>(null);
+  const [recordedFeedback, setRecordedFeedback] = useState<{
+    readonly commandId: string;
+    readonly evidenceId: string;
+  } | null>(null);
   const connected =
     connectionState === "connected" && scope.project.environmentId === environmentId;
   const tasksQuery = useEnvironmentQuery(
@@ -129,6 +134,9 @@ export function ProjectWorkflowPanel({
     reportFailure: false,
   });
   const cancelWorkflow = useAtomCommand(serverEnvironment.cancelAxisWorkflow, {
+    reportFailure: false,
+  });
+  const recordTaskFeedback = useAtomCommand(serverEnvironment.recordAxisTaskFeedback, {
     reportFailure: false,
   });
   const currentState = attemptQuery.data?.state ?? null;
@@ -274,6 +282,17 @@ export function ProjectWorkflowPanel({
     selectedTask !== null &&
     attemptCommandId !== null &&
     modelSelection !== null;
+  const feedbackRecordedForAttempt =
+    attemptCommandId !== null && recordedFeedback?.commandId === attemptCommandId;
+  const canRecordFeedback =
+    !feedbackRecordedForAttempt &&
+    canRecordTaskFeedback({
+      connectionState,
+      threadId,
+      task: selectedTask,
+      step: selectedStep,
+      state: currentState,
+    });
   return (
     <SettingsSection
       title="Workflow"
@@ -392,7 +411,8 @@ export function ProjectWorkflowPanel({
                           >
                             Start
                           </Button>
-                        ) : canRetry ? (
+                        ) : null}
+                        {canRetry ? (
                           <Button
                             size="xs"
                             variant="outline"
@@ -420,7 +440,8 @@ export function ProjectWorkflowPanel({
                           >
                             Retry
                           </Button>
-                        ) : canCancel ? (
+                        ) : null}
+                        {canCancel ? (
                           <Button
                             size="xs"
                             variant="outline"
@@ -443,6 +464,46 @@ export function ProjectWorkflowPanel({
                           >
                             Cancel
                           </Button>
+                        ) : null}
+                        {canRecordFeedback ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            disabled={action !== null}
+                            onClick={() =>
+                              void run(
+                                "feedback",
+                                async () =>
+                                  recordTaskFeedback({
+                                    environmentId,
+                                    input: {
+                                      scope,
+                                      threadId: threadId!,
+                                      taskId: task.id,
+                                      stepId: step.id,
+                                      commandId: attemptCommandId!,
+                                      expectedTurnId: currentState!.execution.turnId!,
+                                    },
+                                  }),
+                                (evidence) =>
+                                  setRecordedFeedback({
+                                    commandId: attemptCommandId!,
+                                    evidenceId: evidence.id,
+                                  }),
+                              )
+                            }
+                          >
+                            <CheckCircle2Icon />
+                            Record outcome
+                          </Button>
+                        ) : null}
+                        {feedbackRecordedForAttempt ? (
+                          <Badge
+                            variant="success"
+                            title={`Evidence ${recordedFeedback!.evidenceId}`}
+                          >
+                            Outcome recorded
+                          </Badge>
                         ) : null}
                       </div>
                     ) : null}

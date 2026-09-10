@@ -81,6 +81,7 @@ import {
   AxisWorkflowSnapshot,
   AxisTaskWorkflowServiceError,
 } from "./axisTaskWorkflow.ts";
+import { AxisTaskFeedbackError, AxisTaskFeedbackRequest } from "./axisTaskFeedback.ts";
 import {
   AxisContextProjectScope,
   AxisProjectProfile,
@@ -475,6 +476,7 @@ export const WS_METHODS = {
   axisProjectContextPreview: "axis.projectContext.preview",
   axisWorkflowCancel: "axis.workflow.cancel",
   axisWorkflowRetry: "axis.workflow.retry",
+  axisTaskFeedbackRecord: "axis.taskFeedback.record",
   axisProjectProfileGet: "axis.projectProfile.get",
   axisProjectProfileReplace: "axis.projectProfile.replace",
   axisProjectProfileResetOverride: "axis.projectProfile.resetOverride",
@@ -959,6 +961,11 @@ export const WsAxisWorkflowRetryRpc = Rpc.make(WS_METHODS.axisWorkflowRetry, {
   payload: AxisWorkflowRetryAdmission,
   success: AxisWorkflowSnapshot,
   error: AxisWorkflowRpcError,
+});
+export const WsAxisTaskFeedbackRecordRpc = Rpc.make(WS_METHODS.axisTaskFeedbackRecord, {
+  payload: AxisTaskFeedbackRequest,
+  success: AxisLearningEvidence,
+  error: Schema.Union([AxisTaskFeedbackError, EnvironmentAuthorizationError]),
 });
 export const WsAxisTasksListRpc = Rpc.make(WS_METHODS.axisTasksList, {
   payload: Schema.Struct({ scope: AxisContextProjectScope }),
@@ -1799,6 +1806,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAxisWorkflowGetRpc,
   WsAxisWorkflowCancelRpc,
   WsAxisWorkflowRetryRpc,
+  WsAxisTaskFeedbackRecordRpc,
   WsAxisProjectProfileGetRpc,
   WsAxisProjectProfileReplaceRpc,
   WsAxisProjectProfileResetOverrideRpc,

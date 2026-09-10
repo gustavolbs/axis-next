@@ -2,14 +2,18 @@ import {
   AxisTaskConflictError,
   AxisTaskId,
   AxisTaskStepId,
+  AxisLearningEvidenceId,
   CommandId,
   EnvironmentId,
   ThreadId,
+  TurnId,
   WS_METHODS,
   type AxisContextProjectScope,
   type AxisTaskExtension,
   type AxisWorkflowLookup,
   type AxisWorkflowSnapshot,
+  type AxisLearningEvidence,
+  type AxisTaskFeedbackRequest,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -96,6 +100,7 @@ describe("Axis task client state", () => {
         const detailCalls = new Map<string, number>();
         let workflowCancelled = false;
         const workflowCalls = new Map<string, number>();
+        const feedbackInputs: AxisTaskFeedbackRequest[] = [];
         const workflowSnapshot = (input: AxisWorkflowLookup): AxisWorkflowSnapshot => ({
           task: tasks[input.scope.project.projectId]!,
           state: {
@@ -122,6 +127,23 @@ describe("Axis task client state", () => {
             workflowCancelled = true;
             return Effect.succeed(workflowSnapshot(input));
           },
+          [WS_METHODS.axisTaskFeedbackRecord]: (input: AxisTaskFeedbackRequest) =>
+            Effect.sync(() => feedbackInputs.push(input)).pipe(
+              Effect.as({
+                id: AxisLearningEvidenceId.make(`evidence-${input.commandId}`),
+                provenance: {
+                  contextId: input.scope.contextId,
+                  scope: input.scope,
+                  sourceKind: "thread-turn" as const,
+                  sourceId: `task:${input.taskId}`,
+                  observedAt: "2026-09-09T00:01:00.000Z",
+                  fingerprint: "task-feedback",
+                },
+                summary: "Canonical task feedback.",
+                createdAt: "2026-09-09T00:01:00.000Z",
+                expiresAt: "2026-10-09T00:01:00.000Z",
+              } satisfies AxisLearningEvidence),
+            ),
           [WS_METHODS.axisTasksList]: (input: { readonly scope: AxisContextProjectScope }) => {
             const projectId = input.scope.project.projectId;
             increment(listCalls, projectId);
@@ -316,6 +338,16 @@ describe("Axis task client state", () => {
         yield* Fiber.join(cancelled);
         expect(workflowCalls.get("project-a")).toBe(2);
         expect(workflowCalls.get("project-b")).toBe(1);
+        const feedback = yield* Effect.promise(() =>
+          atoms.recordAxisTaskFeedback.run(registry, {
+            environmentId,
+            input: { ...lookup("project-a"), expectedTurnId: TurnId.make("turn-feedback") },
+          }),
+        );
+        expect(AsyncResult.isSuccess(feedback)).toBe(true);
+        expect(feedbackInputs).toEqual([
+          { ...lookup("project-a"), expectedTurnId: TurnId.make("turn-feedback") },
+        ]);
       }),
     ),
   );

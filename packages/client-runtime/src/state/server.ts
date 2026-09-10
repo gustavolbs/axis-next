@@ -973,6 +973,12 @@ export function createServerEnvironmentAtoms<R, E>(
           );
         }),
     }),
+    recordAxisTaskFeedback: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:task-feedback-record",
+      tag: WS_METHODS.axisTaskFeedbackRecord,
+      onSuccess: ({ environmentId, input }, registry) =>
+        refreshLearning(registry, environmentId, input.scope),
+    }),
     startAxisOnboarding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:axis:onboarding-start",
       tag: WS_METHODS.axisOnboardingStart,

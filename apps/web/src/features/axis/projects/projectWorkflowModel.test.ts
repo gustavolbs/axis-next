@@ -2,14 +2,17 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   AxisContextId,
   AxisTaskId,
+  CommandId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import type { AxisContextProjectScope, AxisTaskExtension } from "@t3tools/contracts";
 import {
   buildNewProjectTask,
+  canRecordTaskFeedback,
   canStartProjectWorkflow,
   filterProjectThreadTasks,
   isSupportedAxisWorkflowSkill,
@@ -103,6 +106,76 @@ describe("project workflow model", () => {
         task: selected,
         step,
         modelSelection,
+      }),
+    ).toBe(false);
+  });
+
+  it("records feedback only for the selected canonical terminal attempt", () => {
+    const selected = task();
+    const step = {
+      ...selected.steps[0]!,
+      commandId: CommandId.make("attempt"),
+      turnId: TurnId.make("turn"),
+      status: "completed" as const,
+    };
+    const state = {
+      taskId: selected.id,
+      stepId: step.id,
+      status: "completed" as const,
+      execution: {
+        threadId: ThreadId.make("axis-execution"),
+        turnId: TurnId.make("turn"),
+        commandId: CommandId.make("attempt"),
+      },
+      artifact: null,
+      reason: null,
+    };
+    expect(
+      canRecordTaskFeedback({
+        connectionState: "connected",
+        threadId,
+        task: selected,
+        step,
+        state,
+      }),
+    ).toBe(true);
+    expect(
+      canRecordTaskFeedback({
+        connectionState: "connected",
+        threadId,
+        task: selected,
+        step,
+        state: { ...state, status: "running" },
+      }),
+    ).toBe(false);
+    expect(
+      canRecordTaskFeedback({
+        connectionState: "connected",
+        threadId,
+        task: selected,
+        step: { ...step, turnId: TurnId.make("other-turn") },
+        state,
+      }),
+    ).toBe(false);
+    expect(
+      canRecordTaskFeedback({
+        connectionState: "connected",
+        threadId,
+        task: selected,
+        step,
+        state: {
+          ...state,
+          execution: { ...state.execution, commandId: CommandId.make("other-attempt") },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      canRecordTaskFeedback({
+        connectionState: "disconnected",
+        threadId,
+        task: selected,
+        step,
+        state,
       }),
     ).toBe(false);
   });

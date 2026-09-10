@@ -89,4 +89,10 @@ describe("RPC authorization scopes", () => {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
     }
   });
+
+  it("requires permission to record canonical task feedback", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.axisTaskFeedbackRecord)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
 });

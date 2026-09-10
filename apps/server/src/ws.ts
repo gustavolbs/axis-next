@@ -23,12 +23,14 @@ import {
   AxisLearningProposalId,
   AxisTaskValidationError,
   AxisTaskWorkflowServiceError,
+  AxisTaskFeedbackError,
   AxisLearningVersionId,
   AxisOnboardingRpcError,
   type AxisContextId,
   type AxisContext,
   type AxisContextProjectScope,
   type AxisProjectContextPreviewInput,
+  type AxisTaskFeedbackRequest,
   type AxisLearningScope,
   axisContextProjectScopeKey,
   type AuthAccessStreamEvent,
@@ -180,6 +182,7 @@ import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
 import { AxisLearningService } from "./axis/learning/AxisLearningService.ts";
 import { AxisTaskStore } from "./axis/tasks/AxisTaskStore.ts";
 import { AxisTaskWorkflowService } from "./axis/tasks/AxisTaskWorkflowService.ts";
+import { AxisTaskFeedbackService } from "./axis/learning/AxisTaskFeedbackService.ts";
 import { AxisWorkHubSourceSync } from "./axis/workHub/AxisWorkHubSourceSync.ts";
 import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { AxisScratchChatRunner } from "./axis/scratch/AxisScratchChatRunner.ts";
@@ -600,6 +603,7 @@ const makeWsRpcLayer = (
       const axisLearningService = yield* Effect.serviceOption(AxisLearningService);
       const axisTasks = yield* AxisTaskStore;
       const axisWorkflow = yield* Effect.serviceOption(AxisTaskWorkflowService);
+      const axisTaskFeedback = yield* Effect.serviceOption(AxisTaskFeedbackService);
       const axisOnboarding = yield* Effect.serviceOption(AxisOnboardingService);
       const axisProjectProfile = yield* Effect.serviceOption(AxisProjectProfileStore);
       const axisProjectScope = yield* Effect.serviceOption(AxisProjectScope);
@@ -707,6 +711,44 @@ const makeWsRpcLayer = (
           });
         }
         return { caller: { environmentId, contextId }, service: axisWorkflow.value };
+      });
+      const taskFeedbackContext = Effect.fn("ws.taskFeedbackContext")(function* (
+        input: AxisTaskFeedbackRequest,
+      ) {
+        if (Option.isNone(axisTaskFeedback)) {
+          return yield* new AxisTaskFeedbackError({
+            reason: "observation_failed",
+            message: "Task feedback recording is unavailable.",
+          });
+        }
+        const environmentId = yield* serverEnvironmentId;
+        if (input.scope.project.environmentId !== environmentId) {
+          return yield* new AxisTaskFeedbackError({
+            reason: "scope_denied",
+            message: "The selected project does not belong to this environment.",
+          });
+        }
+        const catalog = yield* axisContextCatalog.get.pipe(
+          Effect.mapError(
+            () =>
+              new AxisTaskFeedbackError({
+                reason: "scope_denied",
+                message: "Cannot resolve the authenticated project context.",
+              }),
+          ),
+        );
+        const contextId = resolveAxisCallerContextId(
+          currentSession,
+          catalog.catalog.contexts,
+          input.scope.contextId,
+        );
+        if (contextId === undefined) {
+          return yield* new AxisTaskFeedbackError({
+            reason: "scope_denied",
+            message: "The authenticated caller has no Axis context.",
+          });
+        }
+        return { caller: { environmentId, contextId }, service: axisTaskFeedback.value };
       });
       const projectContextPreview = Effect.fn("ws.projectContextPreview")(function* (
         input: AxisProjectContextPreviewInput,
@@ -2948,6 +2990,14 @@ const makeWsRpcLayer = (
             WS_METHODS.axisWorkflowRetry,
             workflowContext(input.scope).pipe(
               Effect.flatMap(({ caller, service }) => service.retry(caller, input)),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisTaskFeedbackRecord]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisTaskFeedbackRecord,
+            taskFeedbackContext(input).pipe(
+              Effect.flatMap(({ caller, service }) => service.record(caller, input)),
             ),
             { "rpc.aggregate": "axis" },
           ),

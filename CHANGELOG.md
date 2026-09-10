@@ -1,6 +1,16 @@
 # Changelog
 
-## [0.10.0] - 2026-09-10
+## [0.11.1] - 2026-09-10
+
+### Added
+
+- Persist project-scoped learning evidence from a canonical completed or failed WorkHub task attempt via the new `axis.taskFeedback.record` RPC, exposed in `ProjectOverview` and `ProjectWorkflowPanel`.
+
+### Changed
+
+- Route authorization rejects task-feedback requests from environments that are not bound to the targeted project scope, with a dedicated `AxisTaskFeedbackError`.
+
+## [0.11.0] - 2026-09-10
 
 ### Added
 
