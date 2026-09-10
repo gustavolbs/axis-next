@@ -45,6 +45,7 @@ export * from "./axisOnboarding.ts";
 export * from "./axisProjectProfile.ts";
 export * from "./axisTask.ts";
 export * from "./axisTaskWorkflow.ts";
+export * from "./axisProjectContextPreview.ts";
 export * from "./axisScratchChat.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";

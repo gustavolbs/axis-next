@@ -19,6 +19,7 @@ import {
   type AxisLearningStoreError,
   AxisLearningValidationError,
   AxisProjectProfileValidationError,
+  AxisProjectContextPreviewError,
   AxisLearningProposalId,
   AxisTaskValidationError,
   AxisTaskWorkflowServiceError,
@@ -27,6 +28,7 @@ import {
   type AxisContextId,
   type AxisContext,
   type AxisContextProjectScope,
+  type AxisProjectContextPreviewInput,
   type AxisLearningScope,
   axisContextProjectScopeKey,
   type AuthAccessStreamEvent,
@@ -172,6 +174,7 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
 import { AxisProjectProfileStore } from "./axis/projects/AxisProjectProfileStore.ts";
 import { AxisProjectScope } from "./axis/projects/AxisProjectScope.ts";
+import { AxisProjectContextPreview } from "./axis/projects/AxisProjectContextPreview.ts";
 import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActivityRunner.ts";
 import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
 import { AxisLearningService } from "./axis/learning/AxisLearningService.ts";
@@ -600,6 +603,7 @@ const makeWsRpcLayer = (
       const axisOnboarding = yield* Effect.serviceOption(AxisOnboardingService);
       const axisProjectProfile = yield* Effect.serviceOption(AxisProjectProfileStore);
       const axisProjectScope = yield* Effect.serviceOption(AxisProjectScope);
+      const axisProjectContextPreview = yield* Effect.serviceOption(AxisProjectContextPreview);
       const requireProjectProfileStore = (): Effect.Effect<
         AxisProjectProfileStore["Service"],
         AxisProjectProfileValidationError
@@ -703,6 +707,68 @@ const makeWsRpcLayer = (
           });
         }
         return { caller: { environmentId, contextId }, service: axisWorkflow.value };
+      });
+      const projectContextPreview = Effect.fn("ws.projectContextPreview")(function* (
+        input: AxisProjectContextPreviewInput,
+      ) {
+        if (Option.isNone(axisProjectContextPreview)) {
+          return yield* new AxisProjectContextPreviewError({
+            message: "Project context preview is unavailable.",
+          });
+        }
+        const environmentId = yield* serverEnvironmentId;
+        if (
+          input.scope.project.environmentId !== environmentId ||
+          input.provider.environmentId !== environmentId
+        ) {
+          return yield* new AxisProjectContextPreviewError({
+            message: "The selected project and provider must belong to this environment.",
+          });
+        }
+        const catalog = yield* axisContextCatalog.get.pipe(
+          Effect.mapError(
+            () =>
+              new AxisProjectContextPreviewError({
+                message: "Cannot read the Axis context catalog.",
+              }),
+          ),
+        );
+        const contextId = resolveAxisCallerContextId(
+          currentSession,
+          catalog.catalog.contexts,
+          input.scope.contextId,
+        );
+        if (contextId === undefined) {
+          return yield* new AxisProjectContextPreviewError({
+            message: "The authenticated caller cannot access this Axis context.",
+          });
+        }
+        const instance = yield* providerService.getInstanceInfo(input.provider.instanceId).pipe(
+          Effect.mapError(
+            () =>
+              new AxisProjectContextPreviewError({
+                message: "The selected provider is unavailable.",
+              }),
+          ),
+        );
+        return yield* axisProjectContextPreview.value
+          .resolve({
+            scope: input.scope,
+            provider: input.provider,
+            ...(input.model === undefined ? {} : { model: input.model }),
+            step: input.step,
+            paths: input.paths,
+            caller: { environmentId, contextId },
+            driver: instance.driverKind,
+          })
+          .pipe(
+            Effect.mapError(
+              () =>
+                new AxisProjectContextPreviewError({
+                  message: "The selected project context is unavailable.",
+                }),
+            ),
+          );
       });
       const validateProjectScope = (scope: AxisContextProjectScope, operation: "read" | "write") =>
         requireProjectScope().pipe(
@@ -2865,6 +2931,10 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "axis" },
           ),
+        [WS_METHODS.axisProjectContextPreview]: (input) =>
+          observeRpcEffect(WS_METHODS.axisProjectContextPreview, projectContextPreview(input), {
+            "rpc.aggregate": "axis",
+          }),
         [WS_METHODS.axisWorkflowCancel]: (input) =>
           observeRpcEffect(
             WS_METHODS.axisWorkflowCancel,
