@@ -56,13 +56,11 @@ type AxisProjectValueFact = {
 
 const isRun = Schema.is(AxisOnboardingRun);
 const isProfile = Schema.is(AxisProjectProfile);
-const isValueFact = (fact: AxisProjectFact): fact is Extract<AxisProjectFact, { readonly kind: "value" }> =>
-  fact.kind === "value";
+const isValueFact = (
+  fact: AxisProjectFact,
+): fact is Extract<AxisProjectFact, { readonly kind: "value" }> => fact.kind === "value";
 
-const sameScope = (
-  left: AxisProjectProfileType["scope"],
-  right: AxisOnboardingRunType["scope"],
-) =>
+const sameScope = (left: AxisProjectProfileType["scope"], right: AxisOnboardingRunType["scope"]) =>
   left.contextId === right.contextId &&
   left.project.environmentId === right.project.environmentId &&
   left.project.projectId === right.project.projectId;
@@ -133,22 +131,48 @@ export function applyAxisOnboarding(input: AxisOnboardingApplyInput): AxisOnboar
     throw new AxisOnboardingApplyError("invalid_run", "The onboarding run or profile is invalid.");
   }
   if (!sameScope(input.profile.scope, input.run.scope)) {
-    throw new AxisOnboardingApplyError("scope_mismatch", "The onboarding run targets another project.");
+    throw new AxisOnboardingApplyError(
+      "scope_mismatch",
+      "The onboarding run targets another project.",
+    );
   }
   if (input.profile.revision !== input.expectedProfileRevision) {
-    throw new AxisOnboardingApplyError("profile_conflict", "The project profile changed while onboarding was reviewed.");
+    throw new AxisOnboardingApplyError(
+      "profile_conflict",
+      "The project profile changed while onboarding was reviewed.",
+    );
   }
   if (input.run.status !== "completed") {
-    throw new AxisOnboardingApplyError("run_not_complete", "Only a completed onboarding run can be applied.");
+    throw new AxisOnboardingApplyError(
+      "run_not_complete",
+      "Only a completed onboarding run can be applied.",
+    );
   }
 
-  const candidates = new Map(input.run.candidateRules.map((candidate) => [candidate.id, candidate]));
+  const candidates = new Map(
+    input.run.candidateRules.map((candidate) => [candidate.id, candidate]),
+  );
   const decisions = new Map<string, AxisOnboardingDecision>();
+  const decisionIds = new Set<AxisOnboardingDecision["id"]>();
   for (const decision of input.decisions) {
-    if (decisions.has(decision.candidateRuleId) || !candidates.has(decision.candidateRuleId)) {
-      throw new AxisOnboardingApplyError("invalid_decision", "Every decision must refer to one candidate exactly once.");
+    if (
+      decisions.has(decision.candidateRuleId) ||
+      decisionIds.has(decision.id) ||
+      !candidates.has(decision.candidateRuleId)
+    ) {
+      throw new AxisOnboardingApplyError(
+        "invalid_decision",
+        "Every candidate requires one decision with a unique decision ID.",
+      );
     }
     decisions.set(decision.candidateRuleId, decision);
+    decisionIds.add(decision.id);
+  }
+  if (decisions.size !== candidates.size) {
+    throw new AxisOnboardingApplyError(
+      "invalid_decision",
+      "Decide every candidate explicitly; use defer for undecided candidates.",
+    );
   }
 
   const nextSources = input.run.sources
@@ -169,41 +193,53 @@ export function applyAxisOnboarding(input: AxisOnboardingApplyInput): AxisOnboar
       .map((source) => source.id),
   );
 
-  const invalidatedRuleIds = input.profile.rules
-    .filter((rule) => rule.origin === "learning" && changedSourceRefs.has(rule.sourceRef))
-    .map((rule) => rule.id);
-  const remainingRules = input.profile.rules.filter((rule) => !invalidatedRuleIds.includes(rule.id));
+  const revokedRuleIds = new Set(
+    input.decisions
+      .filter((decision) => decision.decision !== "accept")
+      .map((decision) => ruleId(decision.candidateRuleId)),
+  );
+  const invalidatesRule = (rule: AxisProjectRule) =>
+    rule.origin === "learning" &&
+    (changedSourceRefs.has(rule.sourceRef) || revokedRuleIds.has(rule.id));
+  const invalidatedRuleIds = input.profile.rules.filter(invalidatesRule).map((rule) => rule.id);
+  const remainingRules = input.profile.rules.filter((rule) => !invalidatesRule(rule));
+  const preservedRuleIds = new Set(
+    remainingRules.filter((rule) => rule.origin !== "learning").map((rule) => rule.id),
+  );
   const nextFacts: AxisProjectValueFact[] = input.run.facts.map((fact) => {
     const factSourceRef = sourceByOriginalId.get(fact.sourceId);
     if (factSourceRef === undefined || fact.value.length > 2_000) {
-      throw new AxisOnboardingApplyError("invalid_run", `Onboarding fact ${fact.id} is not representable in a profile.`);
+      throw new AxisOnboardingApplyError(
+        "invalid_run",
+        `Onboarding fact ${fact.id} is not representable in a profile.`,
+      );
     }
     return { kind: "value", key: fact.key, value: fact.value, sourceRef: factSourceRef };
   });
   const remainingFacts = input.profile.facts.filter(
     (fact) => !isValueFact(fact) || !changedSourceRefs.has(fact.sourceRef),
   );
-  const factsToAppend = nextFacts.filter(
-    (fact) => {
-      for (const existing of remainingFacts) {
-        const existingRecord = existing as Record<string, unknown>;
-        if (
-          existingRecord.key === fact.key &&
-          existingRecord.value === fact.value &&
-          existingRecord.sourceRef === fact.sourceRef
-        ) {
-          return false;
-        }
+  const factsToAppend = nextFacts.filter((fact) => {
+    for (const existing of remainingFacts) {
+      const existingRecord = existing as Record<string, unknown>;
+      if (
+        existingRecord.key === fact.key &&
+        existingRecord.value === fact.value &&
+        existingRecord.sourceRef === fact.sourceRef
+      ) {
+        return false;
       }
-      return true;
-    },
-  );
+    }
+    return true;
+  });
   const acceptedCandidateIds: AxisOnboardingCandidateRule["id"][] = [];
   const newRules: AxisProjectRule[] = [];
   for (const candidate of input.run.candidateRules) {
     const decision = decisions.get(candidate.id);
     if (decision?.decision !== "accept") continue;
     acceptedCandidateIds.push(candidate.id);
+    // Reapplying onboarding must not replace a manual override of its generated rule.
+    if (preservedRuleIds.has(ruleId(candidate.id))) continue;
     const candidateWithRefs = {
       ...candidate,
       sourceIds: candidate.sourceIds.filter((id) => sourceByOriginalId.has(id)),
@@ -215,26 +251,41 @@ export function applyAxisOnboarding(input: AxisOnboardingApplyInput): AxisOnboar
     const decision = decisions.get(candidate.id);
     return decision === undefined
       ? []
-      : [{
-          id: `onboarding-${decision.id}`,
-          question: candidate.text,
-          decision: decision.decision,
-          note: decision.note,
-          decidedAt: input.decidedAt,
-        }];
+      : [
+          {
+            id: `onboarding-${decision.id}`,
+            question: candidate.text,
+            decision: decision.decision,
+            note: decision.note,
+            decidedAt: input.decidedAt,
+          },
+        ];
   });
   const nextProfile = {
     ...input.profile,
-    sources: [...input.profile.sources.filter((source) => !nextSources.some((next) => next.id === source.id)), ...nextSources],
+    sources: [
+      ...input.profile.sources.filter(
+        (source) => !nextSources.some((next) => next.id === source.id),
+      ),
+      ...nextSources,
+    ],
     facts: [...remainingFacts, ...factsToAppend],
-    rules: [...remainingRules.filter((rule) => !newRules.some((next) => next.id === rule.id)), ...newRules],
+    rules: [
+      ...remainingRules.filter((rule) => !newRules.some((next) => next.id === rule.id)),
+      ...newRules,
+    ],
     manualDecisions: [
-      ...input.profile.manualDecisions.filter((decision) => !manualDecisions.some((next) => next.id === decision.id)),
+      ...input.profile.manualDecisions.filter(
+        (decision) => !manualDecisions.some((next) => next.id === decision.id),
+      ),
       ...manualDecisions,
     ],
   };
   if (!isProfile(nextProfile)) {
-    throw new AxisOnboardingApplyError("invalid_run", "The applied onboarding profile failed validation.");
+    throw new AxisOnboardingApplyError(
+      "invalid_run",
+      "The applied onboarding profile failed validation.",
+    );
   }
   return {
     profile: nextProfile,

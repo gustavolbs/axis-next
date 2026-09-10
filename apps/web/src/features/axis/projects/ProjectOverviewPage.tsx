@@ -20,7 +20,7 @@ import {
   ExternalLinkIcon,
   SettingsIcon,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import { SidebarInset } from "~/components/ui/sidebar";
 import { Button } from "~/components/ui/button";
@@ -33,6 +33,7 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { randomUUID } from "~/lib/utils";
 import { environmentCatalog } from "~/connection/catalog";
+import { resolveDefaultProviderModelSelection } from "~/providerInstances";
 import { useSettingsProjectGroups } from "~/components/settings/ProjectSettingsPanel";
 import { ProjectOnboardingPanel } from "./ProjectOnboardingPanel";
 import { ProjectPatternsPanel } from "./ProjectPatternsPanel";
@@ -98,6 +99,7 @@ const onboardingRunForUi = (snapshot: AxisOnboardingRunSnapshot): ProjectOnboard
     path: source.path,
     status: source.status,
     error: source.error,
+    ...(source.warning ? { warning: source.warning } : {}),
   })),
   candidateRules: snapshot.run.candidateRules.map((candidate) => ({
     id: candidate.id,
@@ -244,6 +246,13 @@ export function ProjectOverviewPage({
   const cancelOnboarding = useAtomCommand(serverEnvironment.cancelAxisOnboarding, {
     reportFailure: false,
   });
+  const startOnboarding = useAtomCommand(serverEnvironment.startAxisOnboarding, {
+    reportFailure: false,
+  });
+  const onboardingModelSelection = resolveDefaultProviderModelSelection(
+    selectedEnvironment?.serverConfig?.providers ?? [],
+    selectedProject?.defaultModelSelection ?? null,
+  );
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const retryOnboarding = useAtomCommand(serverEnvironment.retryAxisOnboarding, {
     reportFailure: false,
@@ -252,6 +261,21 @@ export function ProjectOverviewPage({
     reportFailure: false,
   });
   const latestOnboarding = onboardingListQuery.data?.[0] ?? null;
+  useEffect(() => {
+    if (
+      latestOnboarding?.run.status !== "running" ||
+      selectedEnvironment?.connection.phase !== "connected" ||
+      onboardingListQuery.error !== null
+    )
+      return;
+    const timer = window.setInterval(onboardingListQuery.refresh, 2_000);
+    return () => window.clearInterval(timer);
+  }, [
+    latestOnboarding?.run.status,
+    selectedEnvironment?.connection.phase,
+    onboardingListQuery.error,
+    onboardingListQuery.refresh,
+  ]);
   const onboardingQuery: ProjectOnboardingQuery = useMemo(
     () => ({
       data: latestOnboarding === null ? null : onboardingRunForUi(latestOnboarding),
@@ -273,15 +297,14 @@ export function ProjectOverviewPage({
   const onboardingCommands = useMemo(
     () => ({
       analyze: async () => {
-        if (selectedScope === null || selectedProject === null || latestOnboarding === null) return;
-        const result = await retryOnboarding({
+        if (selectedScope === null || selectedProject === null || onboardingModelSelection === null)
+          return;
+        const result = await startOnboarding({
           environmentId: selectedProject.environmentId,
           input: {
             scope: selectedScope,
-            input: {
-              runId: latestOnboarding.run.id,
-              commandId: CommandId.make(`axis-onboarding-${randomUUID()}`),
-            },
+            commandId: CommandId.make(`axis-onboarding-${randomUUID()}`),
+            modelSelection: onboardingModelSelection,
           },
         });
         if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -366,6 +389,8 @@ export function ProjectOverviewPage({
       profileQuery.refresh,
       retryEnvironment,
       retryOnboarding,
+      startOnboarding,
+      onboardingModelSelection,
       selectedProject,
       selectedScope,
     ],
@@ -564,7 +589,7 @@ export function ProjectOverviewPage({
                   : null
               }
               connectionState={onboardingConnectionState}
-              analysisAvailable={false}
+              analysisAvailable={onboardingModelSelection !== null}
               commands={onboardingCommands}
               projectLabel={overviewGroup.label}
               progress={onboardingProgressForUi(latestOnboarding)}

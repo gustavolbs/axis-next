@@ -8,6 +8,7 @@ import {
   AxisOnboardingRetryInput,
   AxisOnboardingRun,
   AxisOnboardingSource,
+  AxisOnboardingStartRequest,
 } from "./axisOnboarding.ts";
 
 const decodeRun = Schema.decodeUnknownSync(AxisOnboardingRun);
@@ -23,6 +24,19 @@ const scope = {
 };
 
 describe("Axis onboarding contracts", () => {
+  it("starts with model selection and a command before a canonical turn exists", () => {
+    const decode = Schema.decodeUnknownSync(AxisOnboardingStartRequest);
+    expect(
+      decode({
+        scope,
+        commandId: "start",
+        modelSelection: { instanceId: "codex", model: "gpt-5" },
+      }),
+    ).toMatchObject({ commandId: "start" });
+    expect(() =>
+      decode({ scope, execution: { threadId: "thread", turnId: "invented", commandId: "start" } }),
+    ).toThrow();
+  });
   it("links a run to canonical T3 execution and keeps candidates separate", () => {
     const run = decodeRun({
       id: "onboarding-1",
@@ -40,7 +54,11 @@ describe("Axis onboarding contracts", () => {
       finishedAt: "2026-09-09T10:01:00.000Z",
     });
 
-    expect(run.execution).toEqual({ threadId: "thread-1", turnId: "turn-1", commandId: "command-1" });
+    expect(run.execution).toEqual({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      commandId: "command-1",
+    });
     expect(run).toHaveProperty("candidateRules");
     expect(run).not.toHaveProperty("profile");
   });
@@ -59,14 +77,43 @@ describe("Axis onboarding contracts", () => {
       startedAt: "2026-09-09T10:00:00.000Z",
     };
 
-    expect(decodeRun({ ...base, status: "running", error: null, finishedAt: null }).status).toBe("running");
-    expect(decodeRun({ ...base, status: "cancelled", error: null, finishedAt: "2026-09-09T10:01:00.000Z" }).status).toBe("cancelled");
-    expect(decodeRun({ ...base, status: "failed", error: "Provider stopped.", finishedAt: "2026-09-09T10:01:00.000Z" }).status).toBe("failed");
-    expect(decodeRun({ ...base, status: "completed", error: null, finishedAt: "2026-09-09T10:01:00.000Z" }).status).toBe("completed");
+    expect(decodeRun({ ...base, status: "running", error: null, finishedAt: null }).status).toBe(
+      "running",
+    );
+    expect(
+      decodeRun({
+        ...base,
+        status: "cancelled",
+        error: null,
+        finishedAt: "2026-09-09T10:01:00.000Z",
+      }).status,
+    ).toBe("cancelled");
+    expect(
+      decodeRun({
+        ...base,
+        status: "failed",
+        error: "Provider stopped.",
+        finishedAt: "2026-09-09T10:01:00.000Z",
+      }).status,
+    ).toBe("failed");
+    expect(
+      decodeRun({
+        ...base,
+        status: "completed",
+        error: null,
+        finishedAt: "2026-09-09T10:01:00.000Z",
+      }).status,
+    ).toBe("completed");
 
-    expect(() => decodeRun({ ...base, status: "failed", error: null, finishedAt: "2026-09-09T10:01:00.000Z" })).toThrow();
-    expect(() => decodeRun({ ...base, status: "completed", error: null, finishedAt: null })).toThrow();
-    expect(() => decodeRun({ ...base, status: "cancelled", error: null, finishedAt: null })).toThrow();
+    expect(() =>
+      decodeRun({ ...base, status: "failed", error: null, finishedAt: "2026-09-09T10:01:00.000Z" }),
+    ).toThrow();
+    expect(() =>
+      decodeRun({ ...base, status: "completed", error: null, finishedAt: null }),
+    ).toThrow();
+    expect(() =>
+      decodeRun({ ...base, status: "cancelled", error: null, finishedAt: null }),
+    ).toThrow();
   });
 
   it("does not collapse a read failure into an absent source", () => {
@@ -82,18 +129,42 @@ describe("Axis onboarding contracts", () => {
     expect(source).not.toEqual(expect.objectContaining({ status: "absent" }));
 
     expect(
-      decodeSource({ id: "missing", path: "CLAUDE.md", kind: "instruction", status: "absent", error: null }).status,
+      decodeSource({
+        id: "missing",
+        path: "CLAUDE.md",
+        kind: "instruction",
+        status: "absent",
+        error: null,
+      }).status,
     ).toBe("absent");
     expect(() =>
-      decodeSource({ id: "bad", path: "CLAUDE.md", kind: "instruction", status: "failed", error: null }),
+      decodeSource({
+        id: "bad",
+        path: "CLAUDE.md",
+        kind: "instruction",
+        status: "failed",
+        error: null,
+      }),
     ).toThrow();
     expect(() =>
-      decodeSource({ id: "bad", path: "CLAUDE.md", kind: "instruction", status: "absent", error: "Permission denied" }),
+      decodeSource({
+        id: "bad",
+        path: "CLAUDE.md",
+        kind: "instruction",
+        status: "absent",
+        error: "Permission denied",
+      }),
     ).toThrow();
   });
 
   it("keeps cancellation and retry as explicit commands tied to T3 command ids", () => {
-    expect(decodeCancel({ runId: "onboarding-1", commandId: "command-cancel", reason: "User stopped the scan." })).toMatchObject({
+    expect(
+      decodeCancel({
+        runId: "onboarding-1",
+        commandId: "command-cancel",
+        reason: "User stopped the scan.",
+      }),
+    ).toMatchObject({
       runId: "onboarding-1",
       commandId: "command-cancel",
     });

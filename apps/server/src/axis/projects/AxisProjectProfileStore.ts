@@ -146,6 +146,11 @@ export class AxisProjectProfileStore extends Context.Service<
       expectedRevision: number,
       changes: ReadonlyArray<AxisTypedChangeType>,
     ) => Effect.Effect<AxisProjectProfileType, AxisProjectProfileStoreError>;
+    readonly replaceSnapshot?: (
+      scope: AxisContextProjectScope,
+      expectedRevision: number,
+      snapshot: AxisProjectProfileType,
+    ) => Effect.Effect<AxisProjectProfileType, AxisProjectProfileStoreError>;
     readonly resetOverride: (
       scope: AxisContextProjectScope,
       ruleId: AxisProjectRuleId,
@@ -278,6 +283,32 @@ export const make = Effect.gen(function* () {
     changes,
   ) => save(scope, expectedRevision, (profile) => applyChanges(profile, changes));
 
+  const replaceSnapshot: AxisProjectProfileStore["Service"]["replaceSnapshot"] = (
+    scope,
+    expectedRevision,
+    snapshot,
+  ) =>
+    save(scope, expectedRevision, () =>
+      Schema.decodeUnknownEffect(AxisProjectProfile)(snapshot).pipe(
+        Effect.mapError(
+          () =>
+            new AxisProjectProfileValidationError({
+              message: "The project profile snapshot is invalid.",
+            }),
+        ),
+        Effect.flatMap((decoded) =>
+          decoded.scope.contextId === scope.contextId &&
+          axisContextProjectScopeKey(decoded.scope) === axisContextProjectScopeKey(scope)
+            ? Effect.succeed({ ...decoded, scope })
+            : Effect.fail(
+                new AxisProjectProfileValidationError({
+                  message: "The project profile snapshot targets another project.",
+                }),
+              ),
+        ),
+      ),
+    );
+
   const resetOverride: AxisProjectProfileStore["Service"]["resetOverride"] = (
     scope,
     ruleId,
@@ -290,7 +321,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  return { get, replace, resetOverride } satisfies AxisProjectProfileStore["Service"];
+  return { get, replace, replaceSnapshot, resetOverride } satisfies AxisProjectProfileStore["Service"];
 });
 
 export const layer = Layer.effect(AxisProjectProfileStore, make);

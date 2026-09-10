@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { CommandId, ThreadId } from "@t3tools/contracts";
 
 import {
   AxisOnboardingCancelInput,
@@ -124,7 +125,7 @@ export const make = Effect.gen(function* () {
         typeof row.environmentId === "string" &&
         typeof row.projectId === "string" &&
         typeof row.threadId === "string" &&
-        typeof row.turnId === "string" &&
+        (typeof row.turnId === "string" || row.turnId === null) &&
         typeof row.status === "string" &&
         run.id === row.runId &&
         run.scope.contextId === row.contextId &&
@@ -341,7 +342,25 @@ export const make = Effect.gen(function* () {
                   error: null,
                   finishedAt: DateTime.formatIso(DateTime.nowUnsafe()),
                 }
-              : { ...current.value, status: "running", error: null, finishedAt: null };
+              : {
+                  ...current.value,
+                  execution: {
+                    threadId: ThreadId.make(
+                      `onboarding-${digest({ scope, commandId }).slice(7, 55)}-thread`,
+                    ),
+                    commandId: CommandId.make(commandId),
+                    turnId: null,
+                  },
+                  sources: [],
+                  digests: [],
+                  facts: [],
+                  candidateRules: [],
+                  conflicts: [],
+                  decisions: [],
+                  status: "running",
+                  error: null,
+                  finishedAt: null,
+                };
           const runJson = yield* encode(next);
           const now = DateTime.formatIso(DateTime.nowUnsafe());
           yield* saveEncoded(next, runJson, now);

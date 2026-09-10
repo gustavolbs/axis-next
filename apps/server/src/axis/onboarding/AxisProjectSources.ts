@@ -13,18 +13,44 @@ import * as ProjectionSnapshotQuery from "../../orchestration/Services/Projectio
 
 export const AXIS_PROJECT_SOURCES_MAX_FILES = 200;
 export const AXIS_PROJECT_SOURCE_MAX_BYTES = 8_000;
+// Structured manifests must remain parseable to derive facts from larger projects.
+export const AXIS_PROJECT_MANIFEST_MAX_BYTES = 32_000;
 export const AXIS_PROJECT_SOURCES_MAX_BYTES = 256_000;
 export const AXIS_PROJECT_SOURCES_MAX_DIRECTORIES = 256;
 export const AXIS_PROJECT_SOURCES_MAX_ENTRIES = 4_000;
 
-const excludedDirectories = new Set([".git", "node_modules", "dist", "build", ".next", ".turbo", ".cache", "coverage"]);
+const excludedDirectories = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  ".next",
+  ".turbo",
+  ".cache",
+  "coverage",
+]);
 const instructionNames = new Set(["AGENTS.md", "CLAUDE.md"]);
 const manifestNames = new Set([
-  "package.json", "pnpm-workspace.yaml", "pnpm-workspace.yml", "turbo.json", "lerna.json",
-  "Cargo.toml", "pyproject.toml", "go.mod", "pom.xml", "build.gradle", "Makefile",
+  "package.json",
+  "pnpm-workspace.yaml",
+  "pnpm-workspace.yml",
+  "turbo.json",
+  "lerna.json",
+  "Cargo.toml",
+  "pyproject.toml",
+  "go.mod",
+  "pom.xml",
+  "build.gradle",
+  "Makefile",
 ]);
-const conventionNames = new Set(["CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "README.md", ".editorconfig"]);
-const credentialPattern = /(^|[._-])(env|secret|secrets|token|tokens|password|passwords|credential|credentials|key|keys|api[-_]?keys?)([._-]|$)/i;
+const conventionNames = new Set([
+  "CONTRIBUTING.md",
+  "CODE_OF_CONDUCT.md",
+  "README.md",
+  ".editorconfig",
+]);
+const credentialPattern =
+  /(^|[._-])(env|secret|secrets|token|tokens|password|passwords|credential|credentials|key|keys|api[-_]?keys?)([._-]|$)/i;
 const templatePattern = /(^|\/)(templates?|issue_template|pull_request_template)(\/|\.|$)/i;
 const ciPattern = /(^|\/)\.github\/workflows\/[^/]+\.(ya?ml)$/i;
 
@@ -65,7 +91,9 @@ const requiredRootSources: ReadonlyArray<Candidate> = [
 
 function isInside(root: string, target: string): boolean {
   const relative = NodePath.relative(root, target);
-  return relative !== ".." && !relative.startsWith(`..${NodePath.sep}`) && !NodePath.isAbsolute(relative);
+  return (
+    relative !== ".." && !relative.startsWith(`..${NodePath.sep}`) && !NodePath.isAbsolute(relative)
+  );
 }
 
 function classify(relativePath: string): AxisProjectSourceKind | null {
@@ -115,8 +143,11 @@ async function discover(root: string): Promise<{
         break;
       }
       if (candidates.length >= AXIS_PROJECT_SOURCES_MAX_FILES) break;
-      if (entry.name.startsWith(".") && entry.name !== ".github" && entry.name !== ".editorconfig") continue;
-      const relativePath = NodePath.relative(root, NodePath.join(current.path, entry.name)).split(NodePath.sep).join("/");
+      if (entry.name.startsWith(".") && entry.name !== ".github" && entry.name !== ".editorconfig")
+        continue;
+      const relativePath = NodePath.relative(root, NodePath.join(current.path, entry.name))
+        .split(NodePath.sep)
+        .join("/");
       if (isCredentialPath(relativePath)) continue;
       if (entry.isDirectory()) {
         if (current.depth < 4 && !excludedDirectories.has(entry.name)) {
@@ -149,20 +180,59 @@ async function discover(root: string): Promise<{
   };
 }
 
-async function readCandidate(root: string, candidate: Candidate, remaining: { bytes: number }): Promise<AxisProjectSource> {
+async function readCandidate(
+  root: string,
+  candidate: Candidate,
+  remaining: { bytes: number },
+): Promise<AxisProjectSource> {
   const absolutePath = NodePath.resolve(root, candidate.path);
   const base = { path: candidate.path, kind: candidate.kind };
   if (!isInside(root, absolutePath)) {
-    return { ...base, status: "failed", content: null, byteLength: 0, truncated: false, error: "Path traversal is not allowed." };
+    return {
+      ...base,
+      status: "failed",
+      content: null,
+      byteLength: 0,
+      truncated: false,
+      error: "Path traversal is not allowed.",
+    };
   }
   try {
     const realPath = await NodeFSP.realpath(absolutePath);
-    if (!isInside(root, realPath)) return { ...base, status: "failed", content: null, byteLength: 0, truncated: false, error: "Symlink escapes the project root." };
+    if (!isInside(root, realPath))
+      return {
+        ...base,
+        status: "failed",
+        content: null,
+        byteLength: 0,
+        truncated: false,
+        error: "Symlink escapes the project root.",
+      };
     const realRelativePath = NodePath.relative(root, realPath).split(NodePath.sep).join("/");
-    if (isCredentialPath(realRelativePath)) return { ...base, status: "failed", content: null, byteLength: 0, truncated: false, error: "Credential-like source was excluded." };
+    if (isCredentialPath(realRelativePath))
+      return {
+        ...base,
+        status: "failed",
+        content: null,
+        byteLength: 0,
+        truncated: false,
+        error: "Credential-like source was excluded.",
+      };
     const stat = await NodeFSP.stat(realPath);
-    if (!stat.isFile()) return { ...base, status: "failed", content: null, byteLength: 0, truncated: false, error: "Source is not a regular file." };
-    const bytes = Math.min(stat.size, AXIS_PROJECT_SOURCE_MAX_BYTES, remaining.bytes);
+    if (!stat.isFile())
+      return {
+        ...base,
+        status: "failed",
+        content: null,
+        byteLength: 0,
+        truncated: false,
+        error: "Source is not a regular file.",
+      };
+    const sourceLimit =
+      candidate.kind === "manifest"
+        ? AXIS_PROJECT_MANIFEST_MAX_BYTES
+        : AXIS_PROJECT_SOURCE_MAX_BYTES;
+    const bytes = Math.min(stat.size, sourceLimit, remaining.bytes);
     const handle = await NodeFSP.open(realPath, "r");
     let content: Uint8Array;
     try {
@@ -174,16 +244,39 @@ async function readCandidate(root: string, candidate: Candidate, remaining: { by
     }
     const truncated = stat.size > bytes;
     remaining.bytes -= content.byteLength;
-    return { ...base, status: "read", content: new TextDecoder().decode(content), byteLength: stat.size, truncated, error: null };
+    return {
+      ...base,
+      status: "read",
+      content: new TextDecoder().decode(content),
+      byteLength: stat.size,
+      truncated,
+      error: null,
+    };
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      return { ...base, status: "absent", content: null, byteLength: 0, truncated: false, error: null };
+      return {
+        ...base,
+        status: "absent",
+        content: null,
+        byteLength: 0,
+        truncated: false,
+        error: null,
+      };
     }
-    return { ...base, status: "failed", content: null, byteLength: 0, truncated: false, error: diagnostic(error) };
+    return {
+      ...base,
+      status: "failed",
+      content: null,
+      byteLength: 0,
+      truncated: false,
+      error: diagnostic(error),
+    };
   }
 }
 
-export async function collectProjectSources(workspaceRoot: string): Promise<AxisProjectSourcesResult> {
+export async function collectProjectSources(
+  workspaceRoot: string,
+): Promise<AxisProjectSourcesResult> {
   const root = await NodeFSP.realpath(workspaceRoot);
   const rootStat = await NodeFSP.stat(root);
   if (!rootStat.isDirectory()) throw new Error("Project workspace root is not a directory.");
@@ -192,7 +285,11 @@ export async function collectProjectSources(workspaceRoot: string): Promise<Axis
   const remaining = { bytes: AXIS_PROJECT_SOURCES_MAX_BYTES };
   const sources: AxisProjectSource[] = [];
   for (const candidate of candidates) sources.push(await readCandidate(root, candidate, remaining));
-  const readBytes = sources.reduce((total, source) => total + (source.content === null ? 0 : new TextEncoder().encode(source.content).byteLength), 0);
+  const readBytes = sources.reduce(
+    (total, source) =>
+      total + (source.content === null ? 0 : new TextEncoder().encode(source.content).byteLength),
+    0,
+  );
   return {
     workspaceRoot: root,
     sources,
@@ -202,19 +299,40 @@ export async function collectProjectSources(workspaceRoot: string): Promise<Axis
   };
 }
 
-export class AxisProjectSources extends Context.Service<AxisProjectSources, {
-  readonly collect: (scope: AxisProjectScope.AxisResolvedProjectScope) => Effect.Effect<AxisProjectSourcesResult, AxisProjectSourcesError>;
-}>()("t3/axis/onboarding/AxisProjectSources") {}
+export class AxisProjectSources extends Context.Service<
+  AxisProjectSources,
+  {
+    readonly collect: (
+      scope: AxisProjectScope.AxisResolvedProjectScope,
+    ) => Effect.Effect<AxisProjectSourcesResult, AxisProjectSourcesError>;
+  }
+>()("t3/axis/onboarding/AxisProjectSources") {}
 
 export const make = Effect.gen(function* () {
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const collect = (scope: AxisProjectScope.AxisResolvedProjectScope) =>
     Effect.gen(function* () {
-      const project = yield* projections.getProjectShellById(scope.scope.project.projectId).pipe(
-        Effect.mapError(() => new AxisProjectSourcesError({ reason: "project_not_found", message: "The Project could not be read." })),
-      );
-      if (project._tag === "None") return yield* new AxisProjectSourcesError({ reason: "project_not_found", message: "The Project does not exist." });
-      return yield* Effect.tryPromise({ try: () => collectProjectSources(project.value.workspaceRoot), catch: (error) => new AxisProjectSourcesError({ reason: "root_inaccessible", message: diagnostic(error) }) });
+      const project = yield* projections
+        .getProjectShellById(scope.scope.project.projectId)
+        .pipe(
+          Effect.mapError(
+            () =>
+              new AxisProjectSourcesError({
+                reason: "project_not_found",
+                message: "The Project could not be read.",
+              }),
+          ),
+        );
+      if (project._tag === "None")
+        return yield* new AxisProjectSourcesError({
+          reason: "project_not_found",
+          message: "The Project does not exist.",
+        });
+      return yield* Effect.tryPromise({
+        try: () => collectProjectSources(project.value.workspaceRoot),
+        catch: (error) =>
+          new AxisProjectSourcesError({ reason: "root_inaccessible", message: diagnostic(error) }),
+      });
     });
   return { collect } satisfies AxisProjectSources["Service"];
 });
