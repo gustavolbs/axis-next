@@ -87,3 +87,25 @@ it.effect("withLease keeps the conditional transaction around its critical secti
     }
   }).pipe(Effect.provide(layer)),
 );
+
+it.effect("NULL instance CAS is exact and cannot match a materialized external replacement", () =>
+  Effect.gen(function* () {
+    const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const legacy = { ...makeRuntime("running", { version: "legacy" }), providerInstanceId: null };
+    const promoted = { ...legacy, providerInstanceId: ProviderInstanceId.make("codex") };
+    yield* repository.upsert(legacy);
+    assert.equal(yield* repository.compareAndSet({ expected: legacy, next: promoted }), true);
+    assert.equal(yield* repository.compareAndSet({ expected: legacy, next: legacy }), false);
+    assert.deepEqual(
+      yield* repository.withLease({
+        expected: legacy,
+        effect: Effect.die("stale NULL lease must not run"),
+      }),
+      Option.none(),
+    );
+    assert.deepEqual(
+      Option.getOrThrow(yield* repository.getByThreadId({ threadId: legacy.threadId })),
+      promoted,
+    );
+  }).pipe(Effect.provide(layer)),
+);
