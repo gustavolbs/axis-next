@@ -1,4 +1,5 @@
 import {
+  AXIS_LEARNING_ENGINE_MAX_EVIDENCE_REFS,
   AxisLearningEvidenceId,
   AxisLearningProposalId,
   AxisProjectRuleId,
@@ -11,6 +12,16 @@ import {
   type AxisLearningVersion,
   type AxisLearningScope,
 } from "@t3tools/contracts";
+
+export function learningAnalysisEvidenceIds(evidence: ReadonlyArray<AxisLearningEvidence>) {
+  return evidence
+    .toSorted(
+      (left, right) =>
+        right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id),
+    )
+    .slice(0, AXIS_LEARNING_ENGINE_MAX_EVIDENCE_REFS)
+    .map((item) => item.id);
+}
 
 export interface ManualLearningEvidenceInput {
   readonly contextId: AxisContextId;

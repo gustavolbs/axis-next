@@ -14,12 +14,14 @@ import {
   AxisContextId,
   CommandId,
   AxisLearningEvidenceId,
+  type AxisLearningEngineStatus,
   type AxisContext,
   type AxisContextProjectBinding,
   type AxisLearningProposal,
   type AxisLearningProposalKind,
   type AxisLearningVersion,
   type EnvironmentId,
+  type AxisContextProjectScope,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -49,6 +51,7 @@ import {
   buildManualLearningEvidence,
   buildManualLearningProposal,
   learningVersionAction,
+  learningAnalysisEvidenceIds,
 } from "./AxisLearningSettings.logic";
 
 const PROPOSAL_KINDS: ReadonlyArray<{
@@ -63,6 +66,7 @@ const PROPOSAL_KINDS: ReadonlyArray<{
 ];
 
 type LearningView = "review" | "evidence" | "versions" | "history";
+export type AxisLearningConnectionState = "connected" | "connecting" | "disconnected" | "error";
 
 function entityId(prefix: string): string {
   return `${prefix}_${randomUUID().replaceAll("-", "")}`;
@@ -82,19 +86,82 @@ function errorDescription<E>(
   return error instanceof Error && error.message ? error.message : "Refresh and try again.";
 }
 
-export function AxisLearningSettings({
-  environmentId,
-  contexts,
-  projectBindings,
-}: {
+interface AxisLearningSettingsProps {
   readonly environmentId: EnvironmentId;
   readonly contexts: ReadonlyArray<AxisContext>;
   readonly projectBindings: ReadonlyArray<AxisContextProjectBinding>;
-}) {
+  readonly fixedScope?: AxisContextProjectScope;
+  readonly projectLabel?: string;
+  readonly connectionState?: AxisLearningConnectionState;
+}
+
+export function AxisLearningSettings(props: AxisLearningSettingsProps) {
+  const { environmentId, contexts, projectBindings, fixedScope } = props;
   const [selectedContextId, setSelectedContextId] = useState<AxisContextId | null>(
     contexts[0]?.id ?? null,
   );
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  const contextId =
+    fixedScope?.contextId ??
+    (selectedContextId !== null && contexts.some((context) => context.id === selectedContextId)
+      ? selectedContextId
+      : (contexts[0]?.id ?? null));
+  const contextProjects = projectBindings.filter((binding) => binding.contextId === contextId);
+  const selectedProject =
+    selectedProjectKey === null
+      ? undefined
+      : contextProjects.find(
+          (binding) =>
+            `${binding.project.environmentId}:${binding.project.projectId}` === selectedProjectKey,
+        )?.project;
+  const learningScope =
+    fixedScope ??
+    (contextId === null || selectedProject === undefined
+      ? undefined
+      : { contextId, project: selectedProject });
+  return (
+    <AxisLearningScopeSettings
+      {...props}
+      key={JSON.stringify([
+        environmentId,
+        contextId,
+        learningScope?.project.environmentId,
+        learningScope?.project.projectId,
+      ])}
+      contextId={contextId}
+      contextProjects={contextProjects}
+      learningScope={learningScope}
+      selectedProjectKey={selectedProjectKey}
+      selectContext={(id) => {
+        setSelectedContextId(id);
+        setSelectedProjectKey(null);
+      }}
+      selectProject={setSelectedProjectKey}
+    />
+  );
+}
+
+/** Remount all drafts and in-flight UI state when the effective scope changes. */
+function AxisLearningScopeSettings({
+  environmentId,
+  contexts,
+  fixedScope,
+  projectLabel,
+  connectionState = "connected",
+  contextId,
+  contextProjects,
+  learningScope,
+  selectedProjectKey,
+  selectContext,
+  selectProject,
+}: AxisLearningSettingsProps & {
+  readonly contextId: AxisContextId | null;
+  readonly contextProjects: ReadonlyArray<AxisContextProjectBinding>;
+  readonly learningScope: AxisContextProjectScope | undefined;
+  readonly selectedProjectKey: string | null;
+  readonly selectContext: (id: AxisContextId) => void;
+  readonly selectProject: (key: string | null) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [learningView, setLearningView] = useState<LearningView>("review");
@@ -106,26 +173,11 @@ export function AxisLearningSettings({
   const [proposalRationale, setProposalRationale] = useState("");
   const [proposalChange, setProposalChange] = useState("");
   const [proposalEvidenceId, setProposalEvidenceId] = useState("");
-
-  const contextId =
-    selectedContextId !== null && contexts.some((context) => context.id === selectedContextId)
-      ? selectedContextId
-      : (contexts[0]?.id ?? null);
-  const contextProjects = projectBindings.filter((binding) => binding.contextId === contextId);
-  const selectedProject =
-    selectedProjectKey === null
-      ? undefined
-      : contextProjects.find(
-          (binding) =>
-            `${binding.project.environmentId}:${binding.project.projectId}` === selectedProjectKey,
-        )?.project;
-  const learningScope =
-    contextId === null || selectedProject === undefined
-      ? undefined
-      : { contextId, project: selectedProject };
+  const [engineStatus, setEngineStatus] = useState<AxisLearningEngineStatus | null>(null);
+  const writesAvailable = connectionState === "connected";
 
   const query = useEnvironmentQuery(
-    contextId === null
+    contextId === null || !writesAvailable
       ? null
       : serverEnvironment.axisLearningSnapshot({
           environmentId,
@@ -156,8 +208,15 @@ export function AxisLearningSettings({
   const deactivateVersion = useAtomCommand(serverEnvironment.deactivateAxisLearningVersion, {
     reportFailure: false,
   });
+  const requestImprovements = useAtomCommand(serverEnvironment.requestAxisLearningImprovements, {
+    reportFailure: false,
+  });
 
   const snapshot = query.data;
+  const analysisEvidenceIds = useMemo(
+    () => learningAnalysisEvidenceIds(snapshot?.evidence ?? []),
+    [snapshot],
+  );
   const evidenceById = useMemo(
     () => new Map(snapshot?.evidence.map((evidence) => [evidence.id, evidence]) ?? []),
     [snapshot],
@@ -181,7 +240,7 @@ export function AxisLearningSettings({
   }
 
   async function addEvidence() {
-    if (contextId === null || busy || !evidenceSummary.trim()) return;
+    if (contextId === null || !writesAvailable || busy || !evidenceSummary.trim()) return;
     const now = new Date();
     const expiresAt = new Date(now);
     expiresAt.setDate(expiresAt.getDate() + 30);
@@ -209,6 +268,7 @@ export function AxisLearningSettings({
   async function addProposal() {
     if (
       contextId === null ||
+      !writesAvailable ||
       busy ||
       !proposalEvidenceId ||
       !proposalTarget.trim() ||
@@ -247,7 +307,7 @@ export function AxisLearningSettings({
   }
 
   async function submit(proposal: AxisLearningProposal) {
-    if (busy) return;
+    if (busy || !writesAvailable) return;
     setBusy(true);
     await finish(
       await submitProposal({
@@ -259,7 +319,7 @@ export function AxisLearningSettings({
   }
 
   async function approve(proposal: AxisLearningProposal, note: string) {
-    if (busy) return;
+    if (busy || !writesAvailable) return;
     const confirmed = await ensureLocalApi().dialogs.confirm(
       `Approve “${proposal.title}”? Approval creates an immutable version, but does not activate it.`,
     );
@@ -300,7 +360,7 @@ export function AxisLearningSettings({
   }
 
   async function applyVersion(version: AxisLearningVersion) {
-    if (!snapshot || busy) return;
+    if (!snapshot || busy || !writesAvailable) return;
     const action = learningVersionAction(version, snapshot.activeVersions, snapshot.versions);
     if (action === "active") return;
     const confirmed = await ensureLocalApi().dialogs.confirm(
@@ -336,7 +396,7 @@ export function AxisLearningSettings({
   }
 
   async function deactivate(version: AxisLearningVersion) {
-    if (!snapshot || busy) return;
+    if (!snapshot || busy || !writesAvailable) return;
     const scope = version.scope ?? { contextId: version.contextId };
     const activeState = snapshot.activeStates.find(
       (item) =>
@@ -367,55 +427,103 @@ export function AxisLearningSettings({
     );
   }
 
+  async function requestLearningImprovements() {
+    if (!learningScope || !writesAvailable || busy || !snapshot || snapshot.evidence.length === 0)
+      return;
+    setBusy(true);
+    const result = await requestImprovements({
+      environmentId,
+      input: {
+        scope: learningScope,
+        evidenceIds: analysisEvidenceIds,
+        commandId: CommandId.make(`axis-learning-${randomUUID().replaceAll("-", "")}`),
+        deadlineMs: 45_000,
+      },
+    });
+    setBusy(false);
+    if (result._tag === "Success") {
+      setEngineStatus(result.value.engine);
+      query.refresh();
+      toastManager.add({
+        ...(result.value.status === "unavailable" ? {} : { type: "success" }),
+        title:
+          result.value.status === "unavailable"
+            ? "Learning engine unavailable"
+            : result.value.status === "proposals"
+              ? "Learning proposals generated"
+              : "Learning review complete",
+        ...(result.value.reason ? { description: result.value.reason } : {}),
+      });
+    } else if (!isAtomCommandInterrupted(result)) {
+      toastManager.add({
+        type: "error",
+        title: "Could not run Axis Learning",
+        description: errorDescription(result),
+      });
+    }
+  }
+
   return (
     <SettingsSection
       id="axis-learning"
       title="Axis Learning"
-      description="Review evidence and proposed improvements per context. Nothing activates automatically."
+      description={
+        fixedScope
+          ? `Review evidence and proposed improvements for ${projectLabel ?? fixedScope.project.projectId}. Nothing activates automatically.`
+          : "Review evidence and proposed improvements per context. Nothing activates automatically."
+      }
       variant="plain"
       className="space-y-5"
       headerAction={
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Select
-            value={contextId ?? undefined}
-            onValueChange={(value) => {
-              if (!value) return;
-              setSelectedContextId(AxisContextId.make(value));
-              setSelectedProjectKey(null);
-            }}
-          >
-            <SelectTrigger size="xs" className="w-40" aria-label="Learning context">
-              <SelectValue placeholder="Context" />
-            </SelectTrigger>
-            <SelectPopup>
-              {contexts.map((context) => (
-                <SelectItem key={context.id} value={context.id}>
-                  {context.name}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-          <Select
-            value={selectedProjectKey ?? "context-only"}
-            onValueChange={(value) =>
-              setSelectedProjectKey(value === "context-only" ? null : (value ?? null))
-            }
-          >
-            <SelectTrigger size="xs" className="w-48" aria-label="Learning project">
-              <SelectValue placeholder="Context only" />
-            </SelectTrigger>
-            <SelectPopup>
-              <SelectItem value="context-only">Context only</SelectItem>
-              {contextProjects.map((binding) => {
-                const key = `${binding.project.environmentId}:${binding.project.projectId}`;
-                return (
-                  <SelectItem key={key} value={key}>
-                    {binding.project.projectId} · {binding.project.environmentId}
-                  </SelectItem>
-                );
-              })}
-            </SelectPopup>
-          </Select>
+          {fixedScope ? (
+            <Badge variant="secondary">
+              {fixedScope.project.projectId} · {fixedScope.project.environmentId}
+            </Badge>
+          ) : null}
+          {!fixedScope ? (
+            <>
+              <Select
+                value={contextId ?? undefined}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  selectContext(AxisContextId.make(value));
+                }}
+              >
+                <SelectTrigger size="xs" className="w-40" aria-label="Learning context">
+                  <SelectValue placeholder="Context" />
+                </SelectTrigger>
+                <SelectPopup>
+                  {contexts.map((context) => (
+                    <SelectItem key={context.id} value={context.id}>
+                      {context.name}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+              <Select
+                value={selectedProjectKey ?? "context-only"}
+                onValueChange={(value) =>
+                  selectProject(value === "context-only" ? null : (value ?? null))
+                }
+              >
+                <SelectTrigger size="xs" className="w-48" aria-label="Learning project">
+                  <SelectValue placeholder="Context only" />
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="context-only">Context only</SelectItem>
+                  {contextProjects.map((binding) => {
+                    const key = `${binding.project.environmentId}:${binding.project.projectId}`;
+                    return (
+                      <SelectItem key={key} value={key}>
+                        {binding.project.projectId} · {binding.project.environmentId}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectPopup>
+              </Select>
+            </>
+          ) : null}
         </div>
       }
     >
@@ -466,6 +574,23 @@ export function AxisLearningSettings({
           </Button>
         </div>
       ) : null}
+      {connectionState === "disconnected" ? (
+        <div className="border border-border/60 px-3 py-4 text-sm text-muted-foreground">
+          This project is disconnected. Connect the environment to view and update Learning.
+        </div>
+      ) : null}
+      {connectionState === "connecting" ? (
+        <div className="border border-border/60 px-3 py-4 text-sm text-muted-foreground">
+          Connecting to the project environment. Learning will be available when the connection is
+          ready.
+        </div>
+      ) : null}
+      {connectionState === "error" ? (
+        <div className="border border-destructive/30 bg-destructive/5 px-3 py-4 text-sm text-destructive-foreground">
+          The project connection is unavailable. Retry the environment connection before using
+          Learning.
+        </div>
+      ) : null}
       {query.isPending && !snapshot ? (
         <div className="border border-border/60 px-3 py-8 text-center text-sm text-muted-foreground">
           Loading learning data...
@@ -486,7 +611,7 @@ export function AxisLearningSettings({
             />
             <Button
               size="sm"
-              disabled={busy || !evidenceSummary.trim()}
+              disabled={busy || !writesAvailable || !evidenceSummary.trim()}
               onClick={() => void addEvidence()}
             >
               <PlusIcon /> Record
@@ -579,6 +704,7 @@ export function AxisLearningSettings({
                   size="sm"
                   disabled={
                     busy ||
+                    !writesAvailable ||
                     !proposalEvidenceId ||
                     !proposalTarget.trim() ||
                     !proposalTitle.trim() ||
@@ -590,6 +716,39 @@ export function AxisLearningSettings({
                   <PlusIcon /> Create draft
                 </Button>
               </div>
+            </div>
+          </SettingsRow>
+
+          <SettingsRow
+            title="Engine analysis"
+            description="Analyze retained project evidence and place safe candidates in the review queue."
+            status={
+              engineStatus?.availability === "available"
+                ? (engineStatus.engineId ?? "Available")
+                : (engineStatus?.message ?? "Not run")
+            }
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <span className="text-sm text-muted-foreground">
+                {!learningScope
+                  ? "Select a project to analyze its evidence."
+                  : analysisEvidenceIds.length
+                    ? `Analyzes the ${analysisEvidenceIds.length} most recent evidence records.`
+                    : "No evidence is available for analysis."}
+              </span>
+              <Button
+                size="sm"
+                disabled={
+                  busy ||
+                  !learningScope ||
+                  !writesAvailable ||
+                  !snapshot ||
+                  snapshot.evidence.length === 0
+                }
+                onClick={() => void requestLearningImprovements()}
+              >
+                <SendIcon /> Request analysis
+              </Button>
             </div>
           </SettingsRow>
 
@@ -644,7 +803,11 @@ export function AxisLearningSettings({
                     </div>
                     <div className="flex shrink-0 gap-2">
                       {proposal.status === "draft" ? (
-                        <Button size="xs" disabled={busy} onClick={() => void submit(proposal)}>
+                        <Button
+                          size="xs"
+                          disabled={busy || !writesAvailable}
+                          onClick={() => void submit(proposal)}
+                        >
                           <SendIcon /> Submit
                         </Button>
                       ) : null}
@@ -652,7 +815,7 @@ export function AxisLearningSettings({
                         <>
                           <Button
                             size="xs"
-                            disabled={busy}
+                            disabled={busy || !writesAvailable}
                             onClick={() => void approve(proposal, reviewNotes[proposal.id] ?? "")}
                           >
                             <CheckIcon /> Approve
@@ -660,7 +823,7 @@ export function AxisLearningSettings({
                           <Button
                             size="xs"
                             variant="outline"
-                            disabled={busy}
+                            disabled={busy || !writesAvailable}
                             onClick={() => void reject(proposal, reviewNotes[proposal.id] ?? "")}
                           >
                             <XIcon /> Reject
@@ -711,7 +874,7 @@ export function AxisLearningSettings({
                     <Button
                       size="xs"
                       variant={action === "rollback" ? "outline" : "default"}
-                      disabled={busy}
+                      disabled={busy || !writesAvailable}
                       onClick={() => void applyVersion(version)}
                     >
                       {action === "rollback" ? <RotateCcwIcon /> : <CheckIcon />}
@@ -721,7 +884,7 @@ export function AxisLearningSettings({
                     <Button
                       size="xs"
                       variant="outline"
-                      disabled={busy}
+                      disabled={busy || !writesAvailable}
                       onClick={() => void deactivate(version)}
                     >
                       <XIcon /> Deactivate
