@@ -116,9 +116,12 @@ describe("TokenEfficiencyHermesBridge", () => {
     expect(decision.proposal).toMatchObject({
       contextId: "company_a",
       id: AxisLearningProposalId.make("proposal-token-efficiency-1"),
+      targetKey: "provider:codex:step:execute",
       evidenceIds: ["efficiency-evidence-1"],
       change: {
-        kind: "token-efficiency-policy",
+        op: "set-token-efficiency-policy",
+        providerInstanceId: "codex",
+        model: "gpt-5",
         mode: "compress",
         engine: "deterministic",
       },

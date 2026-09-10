@@ -301,20 +301,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
             );
-      const discoverMcpServers = () =>
-        makeClaudeEnvironment(effectiveConfig, processEnv).pipe(
-          Effect.flatMap((claudeEnvironment) =>
-            discoverProviderMcpServers({
-              binaryPath: effectiveConfig.binaryPath,
-              args: ["mcp", "list"],
-              cwd: process.cwd(),
-              environment: claudeEnvironment,
-              parse: parseClaudeMcpList,
-            }),
-          ),
+      const discoverMcpServersAt = (
+        discoveryCwd: string,
+        claudeEnvironment: NodeJS.ProcessEnv,
+      ) =>
+        discoverProviderMcpServers({
+          binaryPath: effectiveConfig.binaryPath,
+          args: ["mcp", "list"],
+          cwd: discoveryCwd,
+          environment: claudeEnvironment,
+          parse: parseClaudeMcpList,
+        }).pipe(
           Effect.timeout("30 seconds"),
-          Effect.provideService(Path.Path, path),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.mapError(
             (cause) =>
               new ProviderDriverError({
@@ -325,30 +323,39 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
               }),
           ),
         );
+      const discoverMcpServers = () =>
+        makeClaudeEnvironment(effectiveConfig, processEnv).pipe(
+          Effect.flatMap((claudeEnvironment) => discoverMcpServersAt(cwd, claudeEnvironment)),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
       const collectWorkHubSource: NonNullable<ProviderInstance["collectWorkHubSource"]> = (
         request,
       ) =>
-        // No MCP discovery here: `claude mcp list` health-checks every connector and
-        // adds ~10s per sync. The sync just runs against the requested MCP name and
-        // fails naturally if it does not exist.
         makeClaudeEnvironment(effectiveConfig, processEnv).pipe(
           Effect.flatMap((claudeEnvironment) =>
-            collectClaudeWorkHubSource({
-              request,
-              config: effectiveConfig,
-              environment: claudeEnvironment,
-              options: {
-                driver: DRIVER_KIND,
-                instanceId,
-                availableMcps: [],
-              },
-            }).pipe(
-              Effect.scoped,
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            discoverMcpServersAt(cwd, claudeEnvironment).pipe(
+              Effect.flatMap((servers) =>
+                collectClaudeWorkHubSource({
+                  request,
+                  config: effectiveConfig,
+                  environment: claudeEnvironment,
+                  cwd,
+                  options: {
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    availableMcps: servers,
+                  },
+                }).pipe(
+                  Effect.scoped,
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                ),
+              ),
             ),
           ),
           Effect.provideService(Path.Path, path),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
 
       return {

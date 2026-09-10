@@ -22,6 +22,7 @@ import {
   RuntimeMode,
 } from "./orchestration.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { TokenEfficiencyEngineId, TokenEfficiencyMode } from "./tokenEfficiency.ts";
 
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
@@ -80,6 +81,19 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  /** Server-resolved Axis instructions; never supplied by the client RPC. */
+  axisContextInstructions: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(32_000)),
+  ),
+  /** Digest of the server-resolved Axis context consumed by this turn. */
+  axisContextDigest: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  /** Token-efficiency policy resolved by Axis for this provider/model. */
+  axisTokenEfficiencyPolicy: Schema.optional(
+    Schema.Struct({
+      engine: TokenEfficiencyEngineId,
+      mode: TokenEfficiencyMode,
+    }),
+  ),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

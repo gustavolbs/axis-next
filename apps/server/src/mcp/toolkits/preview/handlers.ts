@@ -95,20 +95,25 @@ export const compactPreviewText = (
 ) =>
   Effect.gen(function* () {
     const invocation = yield* McpInvocationContext.requireMcpCapability("preview");
-    const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
-    const resolved = yield* Option.match(settings, {
-      onNone: () =>
-        Effect.succeed(resolveTokenEfficiency(undefined, invocation.providerInstanceId)),
-      onSome: (service) =>
-        service.getSettings.pipe(
-          Effect.map(({ tokenEfficiency }) =>
-            resolveTokenEfficiency(tokenEfficiency, invocation.providerInstanceId),
-          ),
-          Effect.orElseSucceed(() =>
-            resolveTokenEfficiency(undefined, invocation.providerInstanceId),
-          ),
+    const resolved =
+      invocation.tokenEfficiencyPolicy ??
+      (yield* Effect.serviceOption(ServerSettings.ServerSettingsService).pipe(
+        Effect.flatMap((settings) =>
+          Option.match(settings, {
+            onNone: () =>
+              Effect.succeed(resolveTokenEfficiency(undefined, invocation.providerInstanceId)),
+            onSome: (service) =>
+              service.getSettings.pipe(
+                Effect.map(({ tokenEfficiency }) =>
+                  resolveTokenEfficiency(tokenEfficiency, invocation.providerInstanceId),
+                ),
+                Effect.orElseSucceed(() =>
+                  resolveTokenEfficiency(undefined, invocation.providerInstanceId),
+                ),
+              ),
+          }),
         ),
-    });
+      ));
     const outcome = yield* tokenEfficiencyEngine.compact({
       text,
       kind,

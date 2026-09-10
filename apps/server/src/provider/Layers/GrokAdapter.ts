@@ -1483,6 +1483,13 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const sendTurn: GrokAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
+        if (input.axisContextInstructions) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "sendTurn",
+            issue: "Grok ACP does not support a protected channel for Axis project rules. Choose a provider that supports Axis project instructions.",
+          });
+        }
         const prepared = yield* withThreadLock(
           input.threadId,
           Effect.gen(function* () {

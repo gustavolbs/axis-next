@@ -16,9 +16,19 @@ import * as AxisWorkHubSourceSync from "./axis/workHub/AxisWorkHubSourceSync.ts"
 import * as AxisScheduledActivityStore from "./axis/scheduled/AxisScheduledActivityStore.ts";
 import * as AxisScheduledActivityRunner from "./axis/scheduled/AxisScheduledActivityRunner.ts";
 import * as AxisLearningStore from "./axis/learning/AxisLearningStore.ts";
+import * as AxisLearningEngine from "./axis/learning/AxisLearningEngine.ts";
+import * as HermesLearningEngine from "./axis/learning/engines/HermesLearningEngine.ts";
+import * as AxisLearningService from "./axis/learning/AxisLearningService.ts";
+import * as AxisProjectProfileStore from "./axis/projects/AxisProjectProfileStore.ts";
+import * as AxisProjectScope from "./axis/projects/AxisProjectScope.ts";
+import * as AxisEffectiveContext from "./axis/projects/AxisEffectiveContext.ts";
+import * as AxisTaskStore from "./axis/tasks/AxisTaskStore.ts";
 import * as AxisScratchChatRunner from "./axis/scratch/AxisScratchChatRunner.ts";
 import * as AxisScratchChatMessageLog from "./axis/scratch/AxisScratchChatMessageLog.ts";
 import * as AxisScratchChatStore from "./axis/scratch/AxisScratchChatStore.ts";
+import * as AxisProjectSources from "./axis/onboarding/AxisProjectSources.ts";
+import * as AxisOnboardingStore from "./axis/onboarding/AxisOnboardingStore.ts";
+import * as AxisOnboardingService from "./axis/onboarding/AxisOnboardingService.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import {
@@ -326,6 +336,47 @@ const AxisScheduledActivityStoreLayerLive = AxisScheduledActivityStore.layer.pip
 const AxisLearningStoreLayerLive = AxisLearningStore.layer.pipe(
   Layer.provide(SqlitePersistenceLayerLive),
 );
+const AxisLearningEngineLayerLive = Layer.unwrap(
+  Effect.sync(() => {
+    const isHermesSelected = process.env.AXIS_LEARNING_ENGINE === "hermes";
+    const pythonExecutable = process.env.AXIS_HERMES_PYTHON;
+    const hermesHome = process.env.AXIS_HERMES_HOME;
+    const model = process.env.AXIS_HERMES_MODEL;
+    const baseUrl = process.env.AXIS_HERMES_BASE_URL;
+    return isHermesSelected
+      ? HermesLearningEngine.layer({
+          pythonExecutable: pythonExecutable ?? "",
+          hermesHome: hermesHome ?? "",
+          model: model ?? "",
+          baseUrl: baseUrl ?? "",
+          apiKeyEnv: process.env.AXIS_HERMES_API_KEY_ENV,
+        })
+      : AxisLearningEngine.layer();
+  }),
+);
+const AxisProjectProfileStoreLayerLive = AxisProjectProfileStore.layer.pipe(
+  Layer.provide(SqlitePersistenceLayerLive),
+);
+const AxisLearningServiceLayerLive = AxisLearningService.layer.pipe(
+  Layer.provide(AxisLearningEngineLayerLive),
+  Layer.provide(AxisLearningStoreLayerLive),
+  Layer.provide(AxisProjectProfileStoreLayerLive),
+);
+const AxisTaskStoreLayerLive = AxisTaskStore.layer.pipe(
+  Layer.provide(SqlitePersistenceLayerLive),
+  Layer.provide(OrchestrationLayerLive),
+);
+const AxisProjectSourcesLayerLive = AxisProjectSources.layer.pipe(
+  Layer.provide(OrchestrationLayerLive),
+);
+const AxisOnboardingStoreLayerLive = AxisOnboardingStore.layer.pipe(
+  Layer.provide(SqlitePersistenceLayerLive),
+);
+const AxisOnboardingServiceLayerLive = AxisOnboardingService.layer.pipe(
+  Layer.provide(AxisOnboardingStoreLayerLive),
+  Layer.provide(AxisProjectSourcesLayerLive),
+  Layer.provide(AxisProjectProfileStoreLayerLive),
+);
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
@@ -425,6 +476,18 @@ const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
 const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
+const AxisProjectScopeLayerLive = AxisProjectScope.layer.pipe(
+  Layer.provide(AxisContextCatalogLayerLive),
+  Layer.provide(OrchestrationLayerLive),
+  Layer.provide(ServerEnvironmentLayerLive),
+);
+const AxisEffectiveContextLayerLive = AxisEffectiveContext.layer.pipe(
+  Layer.provide(AxisProjectProfileStoreLayerLive),
+  Layer.provide(AxisLearningStoreLayerLive),
+  Layer.provide(AxisContextCatalogLayerLive),
+  Layer.provide(AxisProjectScopeLayerLive),
+);
+
 
 const AxisWorkHubSourceSyncLayerLive = AxisWorkHubSourceSync.layer.pipe(
   Layer.provide(AxisContextCatalogLayerLive),
@@ -524,7 +587,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
   Layer.provideMerge(PersistenceLayerLive),
-  Layer.provideMerge(AxisContextCatalogLayerLive),
+  Layer.provideMerge(Layer.mergeAll(AxisContextCatalogLayerLive, AxisProjectScopeLayerLive)),
   Layer.provideMerge(AxisWorkHubCacheLayerLive),
   Layer.provideMerge(AxisWorkHubSourceSyncLayerLive),
   Layer.provideMerge(AxisScheduledActivityStoreLayerLive),
@@ -533,6 +596,14 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       AxisLearningStoreLayerLive,
+      AxisLearningEngineLayerLive,
+      AxisLearningServiceLayerLive,
+      AxisProjectProfileStoreLayerLive,
+      AxisEffectiveContextLayerLive,
+      AxisProjectSourcesLayerLive,
+      AxisOnboardingStoreLayerLive,
+      AxisOnboardingServiceLayerLive,
+      AxisTaskStoreLayerLive,
       AxisScratchChatStoreLayerLive,
       AxisScratchChatMessageLogLayerLive,
       AxisScratchChatRunnerLayerLive,

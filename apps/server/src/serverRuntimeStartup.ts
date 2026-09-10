@@ -27,6 +27,8 @@ import * as Scope from "effect/Scope";
 
 import { ensureAxisChatsProject } from "./axis/chats/AxisChatsStartup.ts";
 import { isAxisChatsProject } from "./axis/chats/AxisChats.ts";
+import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
+import { AxisEffectiveContext } from "./axis/projects/AxisEffectiveContext.ts";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -307,7 +309,12 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
 const ORPHANED_PROVIDER_SESSION_ERROR =
   "Provider session did not survive a server restart. Send a new message to continue.";
 const SERVER_UPDATE_CONTINUATION_KEY = "continueAfterServerUpdate";
+const CONTINUATION_EFFECT_PAYLOAD_KEY = "axisContinuationEffect";
 const SERVER_UPDATE_CONTINUATION_PROMPT = "Continue where you left off.";
+const AXIS_CONTEXT_CONTINUATION_ERROR =
+  "Could not continue this thread because its Axis project context changed or was revoked. Send a new message to continue.";
+const UNKNOWN_PROVIDER_CONTINUATION_ERROR =
+  "Could not continue this thread because the provider effect is unknown after the server restart. Send a new message to continue.";
 
 class ProviderSessionContinuationError extends Schema.TaggedErrorClass<ProviderSessionContinuationError>()(
   "ProviderSessionContinuationError",
@@ -317,6 +324,17 @@ class ProviderSessionContinuationError extends Schema.TaggedErrorClass<ProviderS
 ) {
   override get message(): string {
     return `Could not continue thread '${this.threadId}': the provider instance is missing.`;
+  }
+}
+
+class AxisContinuationContextError extends Schema.TaggedErrorClass<AxisContinuationContextError>()(
+  "AxisContinuationContextError",
+  {
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return AXIS_CONTEXT_CONTINUATION_ERROR;
   }
 }
 
@@ -350,7 +368,186 @@ function readRuntimePayload(runtimePayload: unknown): Record<string, unknown> {
     : {};
 }
 
+const compareAndSetBinding = (
+  directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"],
+  expected: ProviderSessionDirectory.ProviderRuntimeBinding,
+  next: ProviderSessionDirectory.ProviderRuntimeBinding,
+) => {
+  const compareAndSet = directory.compareAndSet;
+  if (compareAndSet === undefined) {
+    // Custom legacy directories predate optimistic concurrency. Keep their
+    // non-continuation behavior working; the production SQLite directory has
+    // compareAndSet and never takes this branch for restart recovery.
+    return directory.upsert(next).pipe(Effect.as(true));
+  }
+  const versionedExpected = expected as ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata;
+  if (typeof versionedExpected.lastSeenAt !== "string") return Effect.succeed(false);
+  return compareAndSet({ expected: versionedExpected, next });
+};
+
+interface PersistedContinuationEffect {
+  readonly key: string;
+  readonly status: "prepared" | "pending" | "unknown" | "accepted";
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly driverKind: string;
+  readonly axisContextDigest?: string | undefined;
+  readonly turnId?: TurnId;
+}
+
+function readPersistedContinuationEffect(
+  runtimePayload: unknown,
+): PersistedContinuationEffect | undefined {
+  const raw = readRuntimePayload(runtimePayload)[CONTINUATION_EFFECT_PAYLOAD_KEY];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const effect = raw as Record<string, unknown>;
+  if (
+    typeof effect.key !== "string" ||
+    (effect.status !== "prepared" &&
+      effect.status !== "pending" &&
+      effect.status !== "unknown" &&
+      effect.status !== "accepted") ||
+    typeof effect.providerInstanceId !== "string" ||
+    typeof effect.driverKind !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    key: effect.key,
+    status: effect.status,
+    providerInstanceId: ProviderInstanceId.make(effect.providerInstanceId),
+    driverKind: effect.driverKind,
+    ...(typeof effect.axisContextDigest === "string"
+      ? { axisContextDigest: effect.axisContextDigest }
+      : {}),
+    ...(typeof effect.turnId === "string" ? { turnId: TurnId.make(effect.turnId) } : {}),
+  };
+}
+
+const continuationEffectKey = (threadId: ThreadId, turnId: TurnId): string =>
+  `server-update:${String(threadId)}:${String(turnId)}`;
+
 const isServerUpdateThreadContinuationError = Schema.is(ServerUpdateThreadContinuationError);
+const isAxisContinuationContextError = Schema.is(AxisContinuationContextError);
+
+const readPersistedAxisContextDigest = (runtimePayload: unknown): string | undefined => {
+  const value = readRuntimePayload(runtimePayload).axisContextDigest;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+};
+
+const readPersistedProviderSessionModel = (runtimePayload: unknown): string | undefined => {
+  const value = readRuntimePayload(runtimePayload).model;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+};
+
+/**
+ * A restart may happen after a project binding, provider grant, or learned
+ * version changed. Re-resolve the context before replaying the continuation;
+ * the digest persisted with the interrupted turn is the evidence that the
+ * provider session saw the same authoritative context.
+ */
+export const revalidateAxisContinuationContext = Effect.fn(
+  "revalidateAxisContinuationContext",
+)(function* (input: {
+  readonly projectId: ProjectId | null;
+  readonly session: {
+    readonly providerInstanceId: ProviderInstanceId | undefined;
+    readonly model: string | undefined;
+  };
+  readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
+}) {
+  if (input.projectId === null || isAxisChatsProject(input.projectId)) {
+    return true;
+  }
+  const catalogStore = yield* Effect.serviceOption(AxisContextCatalogStore);
+  const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
+  if (Option.isNone(catalogStore) || Option.isNone(environment)) {
+    // Older runtimes do not have Axis services and must retain their legacy
+    // project continuation behavior.
+    return readPersistedAxisContextDigest(input.binding.runtimePayload) === undefined;
+  }
+
+  const environmentExit = yield* Effect.exit(environment.value.getEnvironmentId);
+  if (Exit.isFailure(environmentExit)) return false;
+  const catalogExit = yield* Effect.exit(catalogStore.value.get);
+  if (Exit.isFailure(catalogExit)) return false;
+  const projectBindings = catalogExit.value.catalog.projectBindings.filter(
+    (candidate) =>
+      candidate.project.environmentId === environmentExit.value &&
+      candidate.project.projectId === input.projectId,
+  );
+  const expectedDigest = readPersistedAxisContextDigest(input.binding.runtimePayload);
+  if (expectedDigest === undefined) {
+    // A currently bound project identifies an Axis session even when an
+    // interrupted turn failed before its digest was persisted. An unbound
+    // project remains a pre-Axis T3 session and follows the legacy path.
+    return projectBindings.length === 0;
+  }
+  const effectiveContext = yield* Effect.serviceOption(AxisEffectiveContext);
+  if (Option.isNone(effectiveContext)) return false;
+
+  const providerInstanceId = input.binding.providerInstanceId;
+  if (
+    providerInstanceId === undefined ||
+    input.session.providerInstanceId === undefined ||
+    input.session.providerInstanceId !== providerInstanceId
+  ) {
+    return false;
+  }
+
+  if (projectBindings.length !== 1) {
+    return false;
+  }
+  const projectBinding = projectBindings[0];
+  if (projectBinding === undefined) {
+    return false;
+  }
+  const providerService = yield* ProviderService.ProviderService;
+  const providerInfoExit = yield* Effect.exit(providerService.getInstanceInfo(providerInstanceId));
+  if (Exit.isFailure(providerInfoExit)) {
+    return false;
+  }
+  const providerInfo = providerInfoExit.value;
+  if (providerInfo.driverKind !== input.binding.provider) {
+    return false;
+  }
+  const resultExit = yield* Effect.exit(
+    effectiveContext.value.resolve({
+      caller: { environmentId: environmentExit.value, contextId: projectBinding.contextId },
+      scope: {
+        contextId: projectBinding.contextId,
+        project: { environmentId: environmentExit.value, projectId: input.projectId },
+      },
+      provider: { environmentId: environmentExit.value, instanceId: providerInstanceId },
+      driver: providerInfo.driverKind,
+      ...(input.session.model === undefined ? {} : { model: input.session.model }),
+      step: "execute",
+      paths: [],
+    }),
+  );
+  return Exit.isSuccess(resultExit) && resultExit.value.digest === expectedDigest;
+});
+
+const isPreparedContinuationBinding = (input: {
+  readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
+  readonly expected: ProviderSessionDirectory.ProviderRuntimeBinding;
+  readonly continuationTurnId: TurnId | null;
+}): boolean => {
+  if (
+    input.binding.provider !== input.expected.provider ||
+    input.binding.providerInstanceId !== input.expected.providerInstanceId ||
+    readPersistedAxisContextDigest(input.binding.runtimePayload) !==
+      readPersistedAxisContextDigest(input.expected.runtimePayload)
+  ) {
+    return false;
+  }
+  const payload = readRuntimePayload(input.binding.runtimePayload);
+  return (
+    input.continuationTurnId !== null &&
+    readServerUpdateContinuationTurnId(input.binding.runtimePayload) === input.continuationTurnId &&
+    payload.activeTurnId === null &&
+    payload.continueAfterServerUpdatePrepared === true
+  );
+};
 
 function readServerUpdateContinuationTurnId(runtimePayload: unknown): TurnId | null {
   if (!hasServerUpdateContinuationMarker(runtimePayload)) {
@@ -547,20 +744,52 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* Effect.gen(function* () {
           if (Option.isSome(binding)) {
-            yield* directory.upsert({
-              ...binding.value,
-              status: "stopped",
-              runtimePayload: {
-                ...readRuntimePayload(binding.value.runtimePayload),
-                activeTurnId: null,
-                ...(continuationMarkerPresent || interruptedByRestart
-                  ? {
-                      [SERVER_UPDATE_CONTINUATION_KEY]: null,
-                      continueAfterServerUpdatePrepared: null,
-                    }
-                  : {}),
-              },
-            });
+            const effect = readPersistedContinuationEffect(binding.value.runtimePayload);
+            if (effect !== undefined && providerService.settleContinuation !== undefined) {
+              // The service owns the continuation lease. It re-reads the
+              // current binding and updates that value, so a newer binding is
+              // never restored from this stale reconciliation snapshot.
+              yield* providerService.settleContinuation({
+                threadId: thread.id,
+                providerInstanceId: binding.value.providerInstanceId ?? effect.providerInstanceId,
+                driverKind: binding.value.provider,
+                ...(effect.axisContextDigest === undefined
+                  ? {}
+                  : { axisContextDigest: effect.axisContextDigest }),
+                idempotencyKey: effect.key,
+                outcome: "unknown",
+              });
+            } else {
+              const latest =
+                effect !== undefined || interruptedByRestart
+                  ? yield* directory.getBinding(thread.id)
+                  : Option.some(binding.value);
+              if (Option.isSome(latest)) {
+                const latestEffect = readPersistedContinuationEffect(latest.value.runtimePayload);
+                yield* directory.upsert({
+                  ...latest.value,
+                  status: "stopped",
+                  runtimePayload: {
+                    ...readRuntimePayload(latest.value.runtimePayload),
+                    activeTurnId: null,
+                    ...(latestEffect === undefined
+                      ? {}
+                      : {
+                          [CONTINUATION_EFFECT_PAYLOAD_KEY]: {
+                            ...latestEffect,
+                            status: "unknown",
+                          },
+                        }),
+                    ...(continuationMarkerPresent || interruptedByRestart
+                      ? {
+                          [SERVER_UPDATE_CONTINUATION_KEY]: null,
+                          continueAfterServerUpdatePrepared: null,
+                        }
+                      : {}),
+                  },
+                });
+              }
+            }
           }
         }).pipe(
           Effect.catchCause((cause) =>
@@ -609,8 +838,75 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       thread.archivedAt === null &&
       thread.deletedAt === null
     ) {
+      const persistedEffect = readPersistedContinuationEffect(binding.value.runtimePayload);
+      if (persistedEffect?.status === "pending" || persistedEffect?.status === "unknown") {
+        yield* Effect.logWarning("blocking automatic continuation with unknown provider effect", {
+          threadId: thread.id,
+          idempotencyKey: persistedEffect.key,
+          status: persistedEffect.status,
+        });
+        yield* settleAsError(UNKNOWN_PROVIDER_CONTINUATION_ERROR);
+        continue;
+      }
+      if (persistedEffect?.status === "accepted") {
+        if (persistedEffect.turnId === undefined || providerService.settleContinuation === undefined) {
+          yield* settleAsError(UNKNOWN_PROVIDER_CONTINUATION_ERROR);
+          continue;
+        }
+        const settled = yield* providerService.settleContinuation({
+          threadId: thread.id,
+          providerInstanceId: persistedEffect.providerInstanceId,
+          driverKind: binding.value.provider,
+          ...(persistedEffect.axisContextDigest === undefined
+            ? {}
+            : { axisContextDigest: persistedEffect.axisContextDigest }),
+          idempotencyKey: persistedEffect.key,
+          outcome: "accepted",
+          turnId: persistedEffect.turnId,
+        }).pipe(Effect.orElseSucceed(() => false));
+        if (!settled) {
+          yield* settleAsError(UNKNOWN_PROVIDER_CONTINUATION_ERROR);
+          continue;
+        }
+        const reconciledAt = DateTime.formatIso(yield* DateTime.now);
+        yield* orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(yield* crypto.randomUUIDv4),
+          threadId: thread.id,
+          session: {
+            ...session,
+            status: "running",
+            activeTurnId: persistedEffect.turnId,
+            lastError: null,
+            updatedAt: reconciledAt,
+          },
+          createdAt: reconciledAt,
+        });
+        continue;
+      }
+      const continuationTurnIdForPreparation = session.activeTurnId ?? continuationTurnId;
+      if (continuationTurnIdForPreparation === null) {
+        yield* settleAsError(UNKNOWN_PROVIDER_CONTINUATION_ERROR);
+        continue;
+      }
+      const continuationKey = continuationEffectKey(thread.id, continuationTurnIdForPreparation);
+      const axisContextCurrent = yield* revalidateAxisContinuationContext({
+        projectId: thread.projectId,
+        session: {
+          providerInstanceId: session.providerInstanceId,
+          model: readPersistedProviderSessionModel(binding.value.runtimePayload),
+        },
+        binding: binding.value,
+      }).pipe(Effect.orElseSucceed(() => false));
+      if (!axisContextCurrent) {
+        yield* Effect.logWarning("refusing provider session continuation with stale Axis context", {
+          threadId: thread.id,
+        });
+        yield* settleAsError(AXIS_CONTEXT_CONTINUATION_ERROR);
+        continue;
+      }
       const prepared = yield* Effect.gen(function* () {
-        yield* directory.upsert({
+        const preparedBinding = {
           ...binding.value,
           status: "starting",
           runtimePayload: {
@@ -619,8 +915,23 @@ export const reconcileProviderSessions = Effect.gen(function* () {
             [SERVER_UPDATE_CONTINUATION_KEY]: session.activeTurnId ?? continuationTurnId,
             continueAfterServerUpdatePrepared: true,
             activeTurnId: null,
+            [CONTINUATION_EFFECT_PAYLOAD_KEY]: {
+              key: continuationKey,
+              status: "prepared",
+              providerInstanceId: binding.value.providerInstanceId,
+              driverKind: binding.value.provider,
+              ...(readPersistedAxisContextDigest(binding.value.runtimePayload) === undefined
+                ? {}
+                : {
+                    axisContextDigest: readPersistedAxisContextDigest(
+                      binding.value.runtimePayload,
+                    ),
+              }),
+            },
           },
-        });
+        } satisfies ProviderSessionDirectory.ProviderRuntimeBinding;
+        const admitted = yield* compareAndSetBinding(directory, binding.value, preparedBinding);
+        if (!admitted) return false;
         const resumedAt = DateTime.formatIso(yield* DateTime.now);
         yield* orchestrationEngine.dispatch({
           type: "thread.session.set",
@@ -635,6 +946,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           },
           createdAt: resumedAt,
         });
+        return true;
       }).pipe(Effect.retry({ times: 1 }), Effect.exit);
       if (Exit.isFailure(prepared)) {
         if (Cause.hasInterrupts(prepared.cause)) {
@@ -647,7 +959,15 @@ export const reconcileProviderSessions = Effect.gen(function* () {
         yield* settleAsError(ORPHANED_PROVIDER_SESSION_ERROR);
         continue;
       }
+      if (!prepared.value) {
+        yield* Effect.logWarning("provider continuation preparation lost its binding CAS", {
+          threadId: thread.id,
+        });
+        yield* settleAsError(AXIS_CONTEXT_CONTINUATION_ERROR);
+        continue;
+      }
 
+      const continuationTurnIdForFence = session.activeTurnId ?? continuationTurnId;
       yield* forkParked(
         Effect.gen(function* () {
           const continuation = Effect.gen(function* () {
@@ -658,12 +978,55 @@ export const reconcileProviderSessions = Effect.gen(function* () {
               });
             }
             const capabilities = yield* providerService.getCapabilities(providerInstanceId);
+            // The preparation writes above intentionally do not authorize the
+            // provider call. Re-read the durable binding after capability
+            // resolution and make context validation the final effect before
+            // sendTurn. A changed marker, provider instance, or digest means
+            // another actor won the continuation race.
+            const latestBindingExit = yield* Effect.exit(directory.getBinding(thread.id));
+            if (Exit.isFailure(latestBindingExit)) {
+              return yield* new AxisContinuationContextError({ threadId: thread.id });
+            }
+            const latestBinding = latestBindingExit.value;
+            if (
+              Option.isNone(latestBinding) ||
+              !isPreparedContinuationBinding({
+                binding: latestBinding.value,
+                expected: binding.value,
+                continuationTurnId: continuationTurnIdForFence,
+              })
+            ) {
+              return yield* new AxisContinuationContextError({ threadId: thread.id });
+            }
+            const latestAxisContextCurrent = yield* revalidateAxisContinuationContext({
+              projectId: thread.projectId,
+              session: {
+                providerInstanceId: session.providerInstanceId,
+                model: readPersistedProviderSessionModel(latestBinding.value.runtimePayload),
+              },
+              binding: latestBinding.value,
+            }).pipe(Effect.orElseSucceed(() => false));
+            if (!latestAxisContextCurrent) {
+              return yield* new AxisContinuationContextError({ threadId: thread.id });
+            }
             yield* providerService.sendTurn({
               threadId: thread.id,
               ...(capabilities.promptlessTurnContinuation === true
                 ? { continuation: true }
                 : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),
               interactionMode: thread.interactionMode,
+              continuationFence: {
+                providerInstanceId,
+                driverKind: latestBinding.value.provider,
+                ...(readPersistedAxisContextDigest(latestBinding.value.runtimePayload) === undefined
+                  ? {}
+                  : {
+                      axisContextDigest: readPersistedAxisContextDigest(
+                        latestBinding.value.runtimePayload,
+                      ),
+                    }),
+                idempotencyKey: continuationKey,
+              },
             });
           });
           const continuationExit = yield* Effect.exit(continuation);
@@ -685,8 +1048,11 @@ export const reconcileProviderSessions = Effect.gen(function* () {
             threadId: thread.id,
             cause: continuationExit.cause,
           });
+          const failure = continuationExit.cause.reasons.find(Cause.isFailReason)?.error;
           yield* settleAsError(
-            "Could not continue this thread after the server restart. Send a new message to continue.",
+            failure !== undefined && isAxisContinuationContextError(failure)
+              ? AXIS_CONTEXT_CONTINUATION_ERROR
+              : "Could not continue this thread after the server restart. Send a new message to continue.",
           ).pipe(Effect.ignoreCause);
         }),
       );

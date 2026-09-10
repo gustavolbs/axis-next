@@ -66,37 +66,79 @@ const seedDependentLearning = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
     INSERT INTO axis_learning_evidence
-      (id, context_id, fingerprint, evidence_json, expires_at, created_at)
+      (id, context_id, scope_key, fingerprint, evidence_json, expires_at, created_at)
     VALUES
-      ('company_evidence', 'company_a', 'company-fingerprint', '{}',
+      ('company_evidence', 'company_a', 'context', 'company-fingerprint', '{}',
+       '2026-10-05T00:00:00.000Z', '2026-09-05T00:00:00.000Z'),
+      ('personal_evidence', 'personal', 'context', 'personal-fingerprint', '{}',
        '2026-10-05T00:00:00.000Z', '2026-09-05T00:00:00.000Z')
   `;
   yield* sql`
     INSERT INTO axis_learning_proposals
-      (id, context_id, target_key, status, proposal_json, created_at, updated_at)
+      (id, context_id, scope_key, target_key, status, proposal_json, created_at, updated_at)
     VALUES
-      ('company_proposal', 'company_a', 'skill:test', 'approved', '{}',
+      ('company_proposal', 'company_a', 'context', 'skill:test', 'approved', '{}',
+       '2026-09-05T00:00:00.000Z', '2026-09-05T00:00:00.000Z'),
+      ('personal_proposal', 'personal', 'context', 'skill:test', 'approved', '{}',
        '2026-09-05T00:00:00.000Z', '2026-09-05T00:00:00.000Z')
   `;
   yield* sql`
     INSERT INTO axis_learning_versions
-      (id, proposal_id, context_id, target_key, version_json, created_at)
+      (id, proposal_id, context_id, scope_key, target_key, version_json, created_at)
     VALUES
-      ('company_version', 'company_proposal', 'company_a', 'skill:test', '{}',
+      ('company_version', 'company_proposal', 'company_a', 'context', 'skill:test', '{}',
+       '2026-09-05T00:00:00.000Z'),
+      ('personal_version', 'personal_proposal', 'personal', 'context', 'skill:test', '{}',
        '2026-09-05T00:00:00.000Z')
   `;
   yield* sql`
     INSERT INTO axis_learning_active_versions
-      (context_id, target_key, version_id, activated_at)
+      (context_id, scope_key, target_key, version_id, activated_at, updated_at)
     VALUES
-      ('company_a', 'skill:test', 'company_version', '2026-09-05T00:00:00.000Z')
+      ('company_a', 'context', 'skill:test', 'company_version', '2026-09-05T00:00:00.000Z', '2026-09-05T00:00:00.000Z'),
+      ('personal', 'context', 'skill:test', 'personal_version', '2026-09-05T00:00:00.000Z', '2026-09-05T00:00:00.000Z')
   `;
   yield* sql`
     INSERT INTO axis_learning_lifecycle_events
-      (id, context_id, proposal_id, version_id, action, event_json, created_at)
+      (id, context_id, scope_key, proposal_id, version_id, action, event_json, created_at)
     VALUES
-      ('company_event', 'company_a', 'company_proposal', 'company_version', 'approved', '{}',
+      ('company_event', 'company_a', 'context', 'company_proposal', 'company_version', 'approved', '{}',
+       '2026-09-05T00:00:00.000Z'),
+      ('personal_event', 'personal', 'context', 'personal_proposal', 'personal_version', 'approved', '{}',
        '2026-09-05T00:00:00.000Z')
+  `;
+});
+
+const seedDependentProjectWork = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const now = "2026-09-05T00:00:00.000Z";
+  yield* sql`
+    INSERT INTO axis_project_profiles
+      (context_id, environment_id, project_id, scope_key, revision, profile_json, created_at, updated_at)
+    VALUES
+      ('company_a', 'env', 'company-project', 'company-scope', 1, '{}', ${now}, ${now}),
+      ('personal', 'env', 'personal-project', 'personal-scope', 1, '{}', ${now}, ${now})
+  `;
+  yield* sql`
+    INSERT INTO axis_task_extensions
+      (id, context_id, environment_id, project_id, scope_key, thread_id, task_json, created_at, updated_at)
+    VALUES
+      ('company-task', 'company_a', 'env', 'company-project', 'company-scope', 'company-thread', '{}', ${now}, ${now}),
+      ('personal-task', 'personal', 'env', 'personal-project', 'personal-scope', 'personal-thread', '{}', ${now}, ${now})
+  `;
+  yield* sql`
+    INSERT INTO axis_task_commands
+      (context_id, scope_key, thread_id, command_id, task_id, request_digest, created_at)
+    VALUES
+      ('company_a', 'company-scope', 'company-thread', 'company-command', 'company-task', 'company-digest', ${now}),
+      ('personal', 'personal-scope', 'personal-thread', 'personal-command', 'personal-task', 'personal-digest', ${now})
+  `;
+  yield* sql`
+    INSERT INTO axis_task_lifecycle_events
+      (context_id, scope_key, thread_id, task_id, action, event_json, created_at)
+    VALUES
+      ('company_a', 'company-scope', 'company-thread', 'company-task', 'created', '{}', ${now}),
+      ('personal', 'personal-scope', 'personal-thread', 'personal-task', 'created', '{}', ${now})
   `;
 });
 
@@ -339,12 +381,13 @@ layer("AxisContextCatalogStore", (it) => {
     }),
   );
 
-  it.effect("purges every learning record when its context is removed", () =>
+  it.effect("purges removed-context metadata while preserving surviving context data", () =>
     Effect.gen(function* () {
       const store = yield* AxisContextCatalogStore;
       const sql = yield* SqlClient.SqlClient;
       const seeded = yield* seedWorkHubCache;
       yield* seedDependentLearning;
+      yield* seedDependentProjectWork;
       const catalog = decodeCatalog({
         ...seeded.catalog,
         contexts: seeded.catalog.contexts.filter((context) => context.id !== "company_a"),
@@ -360,6 +403,10 @@ layer("AxisContextCatalogStore", (it) => {
         readonly versions: number;
         readonly activeVersions: number;
         readonly lifecycle: number;
+        readonly profiles: number;
+        readonly tasks: number;
+        readonly commands: number;
+        readonly taskLifecycle: number;
       }>`
         SELECT
           (SELECT COUNT(*) FROM axis_learning_evidence
@@ -371,7 +418,15 @@ layer("AxisContextCatalogStore", (it) => {
           (SELECT COUNT(*) FROM axis_learning_active_versions
            WHERE context_id = 'company_a') AS "activeVersions",
           (SELECT COUNT(*) FROM axis_learning_lifecycle_events
-           WHERE context_id = 'company_a') AS lifecycle
+           WHERE context_id = 'company_a') AS lifecycle,
+          (SELECT COUNT(*) FROM axis_project_profiles
+           WHERE context_id = 'company_a') AS profiles,
+          (SELECT COUNT(*) FROM axis_task_extensions
+           WHERE context_id = 'company_a') AS tasks,
+          (SELECT COUNT(*) FROM axis_task_commands
+           WHERE context_id = 'company_a') AS commands,
+          (SELECT COUNT(*) FROM axis_task_lifecycle_events
+           WHERE context_id = 'company_a') AS "taskLifecycle"
       `;
       assert.deepEqual(rows[0], {
         evidence: 0,
@@ -379,6 +434,44 @@ layer("AxisContextCatalogStore", (it) => {
         versions: 0,
         activeVersions: 0,
         lifecycle: 0,
+        profiles: 0,
+        tasks: 0,
+        commands: 0,
+        taskLifecycle: 0,
+      });
+
+      const survivingRows = yield* sql<{
+        readonly evidence: number;
+        readonly proposals: number;
+        readonly versions: number;
+        readonly activeVersions: number;
+        readonly lifecycle: number;
+        readonly profiles: number;
+        readonly tasks: number;
+        readonly commands: number;
+        readonly taskLifecycle: number;
+      }>`
+        SELECT
+          (SELECT COUNT(*) FROM axis_learning_evidence WHERE context_id = 'personal') AS evidence,
+          (SELECT COUNT(*) FROM axis_learning_proposals WHERE context_id = 'personal') AS proposals,
+          (SELECT COUNT(*) FROM axis_learning_versions WHERE context_id = 'personal') AS versions,
+          (SELECT COUNT(*) FROM axis_learning_active_versions WHERE context_id = 'personal') AS "activeVersions",
+          (SELECT COUNT(*) FROM axis_learning_lifecycle_events WHERE context_id = 'personal') AS lifecycle,
+          (SELECT COUNT(*) FROM axis_project_profiles WHERE context_id = 'personal') AS profiles,
+          (SELECT COUNT(*) FROM axis_task_extensions WHERE context_id = 'personal') AS tasks,
+          (SELECT COUNT(*) FROM axis_task_commands WHERE context_id = 'personal') AS commands,
+          (SELECT COUNT(*) FROM axis_task_lifecycle_events WHERE context_id = 'personal') AS "taskLifecycle"
+      `;
+      assert.deepEqual(survivingRows[0], {
+        evidence: 1,
+        proposals: 1,
+        versions: 1,
+        activeVersions: 1,
+        lifecycle: 1,
+        profiles: 1,
+        tasks: 1,
+        commands: 1,
+        taskLifecycle: 1,
       });
     }),
   );

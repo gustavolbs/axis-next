@@ -246,6 +246,24 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
+  it("passes server-resolved Axis instructions through the developer channel", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Implement it",
+        interactionMode: "default",
+        additionalInstructions: "## Axis effective context (digest: axis-digest)\nRun focused tests.",
+      }),
+    );
+
+    NodeAssert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /Axis effective context \(digest: axis-digest\)[\s\S]*Run focused tests\./,
+    );
+    NodeAssert.deepStrictEqual(params.input, [{ type: "text", text: "Implement it" }]);
+  });
+
   it("activates the default collaboration mode when concise output is enabled", () => {
     const params = Effect.runSync(
       buildTurnStartParams({

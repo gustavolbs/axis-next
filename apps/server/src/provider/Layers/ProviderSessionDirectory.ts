@@ -57,6 +57,34 @@ function mergeRuntimePayload(
   return next;
 }
 
+function bindingToRuntime(
+  binding: ProviderRuntimeBinding,
+  lastSeenAt: string,
+  existing?: ProviderSessionRuntime.ProviderSessionRuntime,
+): ProviderSessionRuntime.ProviderSessionRuntime {
+  const providerChanged = existing !== undefined && existing.providerName !== binding.provider;
+  return {
+    threadId: binding.threadId,
+    providerName: binding.provider,
+    providerInstanceId:
+      binding.providerInstanceId ?? (!providerChanged ? (existing?.providerInstanceId ?? null) : null),
+    adapterKey:
+      binding.adapterKey ??
+      (providerChanged ? binding.provider : (existing?.adapterKey ?? binding.provider)),
+    runtimeMode: binding.runtimeMode ?? existing?.runtimeMode ?? "full-access",
+    status: binding.status ?? existing?.status ?? "running",
+    lastSeenAt,
+    resumeCursor:
+      binding.resumeCursor !== undefined
+        ? binding.resumeCursor
+        : (existing?.resumeCursor ?? null),
+    runtimePayload: mergeRuntimePayload(
+      existing?.runtimePayload ?? null,
+      binding.runtimePayload,
+    ),
+  };
+}
+
 function toRuntimeBinding(
   runtime: ProviderSessionRuntime.ProviderSessionRuntime,
   operation: string,
@@ -115,38 +143,41 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     }
 
     const now = DateTime.formatIso(yield* DateTime.now);
-    const providerChanged =
-      existingRuntime !== undefined && existingRuntime.providerName !== binding.provider;
-    const providerInstanceId =
-      binding.providerInstanceId ?? (!providerChanged ? existingRuntime?.providerInstanceId : null);
-    if (providerInstanceId === null || providerInstanceId === undefined) {
+    const runtime = bindingToRuntime(binding, now, existingRuntime);
+    if (runtime.providerInstanceId === null || runtime.providerInstanceId === undefined) {
       return yield* new ProviderValidationError({
         operation: "ProviderSessionDirectory.upsert",
         issue: "providerInstanceId is required for provider session runtime bindings.",
       });
     }
     yield* repository
-      .upsert({
-        threadId: resolvedThreadId,
-        providerName: binding.provider,
-        providerInstanceId,
-        adapterKey:
-          binding.adapterKey ??
-          (providerChanged ? binding.provider : (existingRuntime?.adapterKey ?? binding.provider)),
-        runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
-        status: binding.status ?? existingRuntime?.status ?? "running",
-        lastSeenAt: now,
-        resumeCursor:
-          binding.resumeCursor !== undefined
-            ? binding.resumeCursor
-            : (existingRuntime?.resumeCursor ?? null),
-        runtimePayload: mergeRuntimePayload(
-          existingRuntime?.runtimePayload ?? null,
-          binding.runtimePayload,
-        ),
-      })
+      .upsert(runtime)
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
   });
+
+  const compareAndSet: ProviderSessionDirectoryShape["compareAndSet"] = (input) =>
+    Effect.gen(function* () {
+      const expected = input.expected;
+      if (expected.lastSeenAt.length === 0) return false;
+      const expectedRuntime = bindingToRuntime(expected, expected.lastSeenAt);
+      const nextRuntime = bindingToRuntime(
+        input.next,
+        DateTime.formatIso(yield* DateTime.now),
+        expectedRuntime,
+      );
+      return yield* repository
+        .compareAndSet({ expected: expectedRuntime, next: nextRuntime })
+        .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.compareAndSet")));
+    });
+
+  const withLease: ProviderSessionDirectoryShape["withLease"] = ({ expected, effect }) =>
+    Effect.gen(function* () {
+      if (expected.lastSeenAt.length === 0) return Option.none();
+      const expectedRuntime = bindingToRuntime(expected, expected.lastSeenAt);
+      return yield* repository
+        .withLease({ expected: expectedRuntime, effect })
+        .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.withLease")));
+    });
 
   const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>
     getBinding(threadId).pipe(
@@ -184,6 +215,8 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
 
   return {
     upsert,
+    compareAndSet,
+    withLease,
     getProvider,
     getBinding,
     listThreadIds,

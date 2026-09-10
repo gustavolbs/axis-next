@@ -224,6 +224,62 @@ it.effect("rejects a disabled MCP source before invoking its provider", () => {
   );
 });
 
+it.effect("rejects an MCP capability whose driver allowlist excludes the instance", () => {
+  const incompatibleCatalog = decodeCatalogSnapshot({
+    ...catalog,
+    catalog: {
+      ...catalog.catalog,
+      capabilities: catalog.catalog.capabilities.map((capability) => ({
+        ...capability,
+        compatibleDrivers: ["claudeAgent"],
+      })),
+    },
+  });
+  const collect = vi.fn<NonNullable<ProviderInstance["collectWorkHubSource"]>>(() =>
+    Effect.succeed(snapshot),
+  );
+  return Effect.gen(function* () {
+    const service = yield* AxisWorkHubSourceSync;
+    const failure = yield* service.sync(snapshot.sourceId, "manual").pipe(Effect.flip);
+    assert.equal(failure._tag, "AxisWorkHubSourceValidationError");
+    assert.match(failure.message, /not compatible with provider driver/u);
+    assert.equal(collect.mock.calls.length, 0);
+  }).pipe(
+    Effect.provide(
+      makeLayer(collect, { get: () => Effect.succeed(null), replace: () => Effect.void }, incompatibleCatalog),
+    ),
+  );
+});
+
+it.effect("keeps a cancelled waiter attached until the shared collection exits", () => {
+  const started = Deferred.makeUnsafe<void>();
+  const response = Deferred.makeUnsafe<AxisWorkHubCacheSnapshot>();
+  const collect = vi.fn<NonNullable<ProviderInstance["collectWorkHubSource"]>>(() =>
+    Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(response))),
+  );
+  const replace = vi.fn<AxisWorkHubCacheStore["Service"]["replace"]>(() => Effect.void);
+  return Effect.gen(function* () {
+    const service = yield* AxisWorkHubSourceSync;
+    const first = yield* service.sync(snapshot.sourceId, "manual").pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* Fiber.interrupt(first);
+    const second = yield* service.sync(snapshot.sourceId, "manual").pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    assert.equal(collect.mock.calls.length, 1);
+    yield* Deferred.succeed(response, snapshot);
+    const outcome = yield* Fiber.join(second);
+    assert.deepEqual(outcome, { status: "synced", snapshot });
+    assert.equal(replace.mock.calls.length, 1);
+  }).pipe(
+    Effect.provide(
+      makeLayer(collect, {
+        get: () => Effect.succeed(null),
+        replace,
+      }),
+    ),
+  );
+});
+
 it.effect("classifies only explicit authorization failures as authorization-required", () =>
   Effect.sync(() => {
     assert.equal(
@@ -258,6 +314,47 @@ it.effect("records an authorization failure without replacing the last good cach
         get: () => Effect.succeed(snapshot),
         replace: () => Effect.void,
         recordFailure,
+      }),
+    ),
+  );
+});
+
+it.effect("keeps the persisted snapshot through a failed read and replaces it on retry", () => {
+  const recovered = decodeCacheSnapshot({
+    ...snapshot,
+    cursor: "recovered-cursor",
+    refreshedAt: "2026-09-05T10:00:00.000Z",
+    expiresAt: "2026-09-05T18:00:00.000Z",
+  });
+  let attempts = 0;
+  const collect = vi.fn<NonNullable<ProviderInstance["collectWorkHubSource"]>>(() => {
+    attempts += 1;
+    return attempts === 1
+      ? Effect.fail(
+          new ProviderDriverError({
+            driver: "codex",
+            instanceId: "codex",
+            detail: "HTTP 401 Unauthorized",
+          }),
+        )
+      : Effect.succeed(recovered);
+  });
+  const replace = vi.fn<AxisWorkHubCacheStore["Service"]["replace"]>(() => Effect.void);
+  return Effect.gen(function* () {
+    const service = yield* AxisWorkHubSourceSync;
+    const firstFailure = yield* service.sync(snapshot.sourceId, "manual").pipe(Effect.flip);
+    assert.equal(firstFailure._tag, "AxisWorkHubSyncError");
+    assert.deepEqual(replace.mock.calls, []);
+    const retry = yield* service.sync(snapshot.sourceId, "manual");
+    assert.deepEqual(retry, { status: "synced", snapshot: recovered });
+    assert.equal(replace.mock.calls.length, 1);
+    assert.deepEqual(replace.mock.calls[0]?.[0], recovered);
+  }).pipe(
+    Effect.provide(
+      makeLayer(collect, {
+        get: () => Effect.succeed(snapshot),
+        replace,
+        recordFailure: () => Effect.void,
       }),
     ),
   );

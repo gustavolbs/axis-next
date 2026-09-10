@@ -14,7 +14,19 @@ import {
   AuthAccessStreamError,
   AxisLearningLifecycleEventId,
   AxisLearningPersistenceError,
+  AxisLearningRevisionRequiredError,
+  type AxisLearningStoreError,
+  AxisLearningValidationError,
+  AxisProjectProfileValidationError,
+  AxisLearningProposalId,
+  AxisTaskValidationError,
   AxisLearningVersionId,
+  AxisOnboardingRpcError,
+  type AxisContextId,
+  type AxisContext,
+  type AxisContextProjectScope,
+  type AxisLearningScope,
+  axisContextProjectScopeKey,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
@@ -156,17 +168,46 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore.ts";
+import { AxisProjectProfileStore } from "./axis/projects/AxisProjectProfileStore.ts";
+import { AxisProjectScope } from "./axis/projects/AxisProjectScope.ts";
 import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActivityRunner.ts";
 import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
+import { AxisLearningService } from "./axis/learning/AxisLearningService.ts";
+import { AxisTaskStore } from "./axis/tasks/AxisTaskStore.ts";
 import { AxisWorkHubSourceSync } from "./axis/workHub/AxisWorkHubSourceSync.ts";
 import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { AxisScratchChatRunner } from "./axis/scratch/AxisScratchChatRunner.ts";
+import { AxisOnboardingService } from "./axis/onboarding/AxisOnboardingService.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
+
+/** Resolve the authenticated Axis context without trusting an RPC scope. */
+export const resolveAxisCallerContextId = (
+  subject: string,
+  contexts: ReadonlyArray<Pick<AxisContext, "id" | "kind">>,
+): AxisContextId | undefined =>
+  contexts.find((context) => context.id === subject)?.id ??
+  contexts.find((context) => context.kind === "personal")?.id;
+
+type AxisTaskScopeIdentity = {
+  readonly contextId: string;
+  readonly project: {
+    readonly environmentId: string;
+    readonly projectId: string;
+  };
+};
+
+export const axisTaskScopeMatchesValidatedScope = (
+  requested: AxisTaskScopeIdentity,
+  validated: AxisTaskScopeIdentity,
+): boolean =>
+  requested.contextId === validated.contextId &&
+  requested.project.environmentId === validated.project.environmentId &&
+  requested.project.projectId === validated.project.projectId;
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -543,8 +584,291 @@ const makeWsRpcLayer = (
       const axisWorkHubSourceSync = yield* AxisWorkHubSourceSync;
       const axisScheduledActivities = yield* AxisScheduledActivityRunner;
       const axisLearning = yield* AxisLearningStore;
+      const axisLearningService = yield* Effect.serviceOption(AxisLearningService);
+      const axisTasks = yield* AxisTaskStore;
+      const axisOnboarding = yield* Effect.serviceOption(AxisOnboardingService);
+      const axisProjectProfile = yield* Effect.serviceOption(AxisProjectProfileStore);
+      const axisProjectScope = yield* Effect.serviceOption(AxisProjectScope);
+      const requireProjectProfileStore = (): Effect.Effect<
+        AxisProjectProfileStore["Service"],
+        AxisProjectProfileValidationError
+      > =>
+        Option.match(axisProjectProfile, {
+          onNone: () =>
+            Effect.fail(
+              new AxisProjectProfileValidationError({
+                message: "AxisProjectProfileStore is not configured.",
+              }),
+            ),
+          onSome: (store) => Effect.succeed(store),
+        });
+      const requireProjectScope = (): Effect.Effect<
+        AxisProjectScope["Service"],
+        AxisProjectProfileValidationError
+      > =>
+        Option.match(axisProjectScope, {
+          onNone: () =>
+            Effect.fail(
+              new AxisProjectProfileValidationError({
+                message: "AxisProjectScope is not configured.",
+              }),
+            ),
+          onSome: (resolver) => Effect.succeed(resolver),
+        });
       const axisScratchChats = yield* AxisScratchChatRunner;
+      const onboardingRpcError = (error: unknown) => {
+        const tag =
+          typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string"
+            ? error._tag
+            : "";
+        const code = tag.includes("Conflict")
+          ? "conflict"
+          : tag.includes("Source")
+            ? "source"
+            : tag.includes("Analysis")
+              ? "analysis"
+              : tag.includes("Apply")
+                ? "apply"
+                : tag.includes("Cancel")
+                  ? "cancelled"
+                  : tag.includes("Persistence")
+                    ? "persistence"
+                    : "validation";
+        return new AxisOnboardingRpcError({
+          code,
+          message:
+            typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
+              ? error.message
+              : String(error),
+        });
+      };
+      const requireAxisOnboarding = (): Effect.Effect<
+        AxisOnboardingService["Service"],
+        AxisOnboardingRpcError
+      > =>
+        Option.isNone(axisOnboarding)
+          ? Effect.fail(
+              new AxisOnboardingRpcError({
+                code: "validation",
+                message: "Axis onboarding is not configured.",
+              }),
+            )
+          : Effect.succeed(axisOnboarding.value);
       const serverEnvironmentId = serverEnv.getEnvironmentId;
+      const validateProjectScope = (scope: AxisContextProjectScope, operation: "read" | "write") =>
+        requireProjectScope().pipe(
+          Effect.flatMap((resolver) =>
+            serverEnvironmentId.pipe(
+              Effect.flatMap((environmentId) =>
+                axisContextCatalog.get.pipe(
+                  Effect.mapError(
+                    () =>
+                      new AxisProjectProfileValidationError({
+                        message: "The Axis context catalog could not be read.",
+                      }),
+                  ),
+                  Effect.flatMap((catalog) => {
+                    // The RPC scope is untrusted data. Resolve the caller from
+                    // the authenticated subject and server-owned context catalog
+                    // so a request cannot authorize itself by naming its target.
+                    const callerContextId = resolveAxisCallerContextId(
+                      currentSession.subject,
+                      catalog.catalog.contexts,
+                    );
+                    return callerContextId === undefined
+                      ? Effect.fail(
+                          new AxisProjectProfileValidationError({
+                            message: "The authenticated caller has no Axis context.",
+                          }),
+                        )
+                      : resolver.resolveProject({
+                          caller: { environmentId, contextId: callerContextId },
+                          operation,
+                          scope,
+                        }).pipe(
+                          Effect.mapError(
+                            (error) =>
+                              new AxisProjectProfileValidationError({ message: error.message }),
+                          ),
+                        );
+                  }),
+                ),
+              ),
+              Effect.map((resolved) => resolved.scope),
+            ),
+          ),
+        );
+      const validateTaskProjectScope = (
+        scope: AxisContextProjectScope,
+        operation: "read" | "write",
+      ) =>
+        validateProjectScope(scope, operation).pipe(
+          Effect.mapError((error) => new AxisTaskValidationError({ message: error.message })),
+        );
+      const validateLearningScope = (
+        scope: AxisLearningScope | undefined,
+        operation: "read" | "write",
+      ): Effect.Effect<AxisLearningScope | undefined, AxisLearningValidationError> =>
+        scope === undefined
+          ? Effect.map(Effect.void, () => undefined)
+          : axisContextCatalog.get.pipe(
+              Effect.mapError(
+                () =>
+                  new AxisLearningValidationError({
+                    message: "The Axis context catalog could not be read.",
+                  }),
+              ),
+              Effect.flatMap((snapshot) => {
+                const callerContextId = resolveAxisCallerContextId(
+                  currentSession.subject,
+                  snapshot.catalog.contexts,
+                );
+                if (callerContextId === undefined) {
+                  return Effect.fail(
+                    new AxisLearningValidationError({
+                      message: "The authenticated caller has no Axis context.",
+                    }),
+                  );
+                }
+                if (scope.contextId !== callerContextId) {
+                  return Effect.fail(
+                    new AxisLearningValidationError({
+                      message: "The requested Axis context is not owned by the authenticated caller.",
+                    }),
+                  );
+                }
+                return snapshot.catalog.contexts.some((context) => context.id === scope.contextId)
+                  ? scope.project === undefined
+                    ? Effect.succeed(scope)
+                    : validateProjectScope(
+                        { contextId: scope.contextId, project: scope.project },
+                        operation,
+                      ).pipe(
+                        Effect.as(scope),
+                        Effect.mapError(
+                          (error) => new AxisLearningValidationError({ message: error.message }),
+                        ),
+                      )
+                  : Effect.fail(
+                      new AxisLearningValidationError({
+                        message: "The requested Axis context does not exist.",
+                      }),
+                    );
+              }),
+            );
+      const validateLearningContext = (
+        contextId: AxisContextId,
+        scope: AxisLearningScope | undefined,
+      ): Effect.Effect<AxisLearningScope | undefined, AxisLearningValidationError> =>
+        axisContextCatalog.get.pipe(
+          Effect.mapError(
+            () =>
+              new AxisLearningValidationError({
+                message: "The Axis context catalog could not be read.",
+              }),
+          ),
+          Effect.flatMap((snapshot) => {
+            const callerContextId = resolveAxisCallerContextId(
+              currentSession.subject,
+              snapshot.catalog.contexts,
+            );
+            if (callerContextId === undefined) {
+              return Effect.fail(
+                new AxisLearningValidationError({
+                  message: "The authenticated caller has no Axis context.",
+                }),
+              );
+            }
+            if (contextId !== callerContextId) {
+              return Effect.fail(
+                new AxisLearningValidationError({
+                  message: "The requested Axis context is not owned by the authenticated caller.",
+                }),
+              );
+            }
+            return scope !== undefined && scope.contextId !== contextId
+              ? Effect.fail(
+                  new AxisLearningValidationError({
+                    message: "The Learning scope context does not match the payload context.",
+                  }),
+                )
+            : Effect.succeed(scope);
+          }),
+        );
+      const learningScopeKey = (scope: AxisLearningScope): string =>
+        `${scope.contextId}\u0000${
+          scope.project === undefined
+            ? "context"
+            : axisContextProjectScopeKey({ contextId: scope.contextId, project: scope.project })
+        }`;
+      const validateLearningPayloadScope = (
+        contextId: AxisContextId,
+        embeddedScope: AxisLearningScope | undefined,
+        requestedScope: AxisLearningScope | undefined,
+        operation: "read" | "write",
+      ): Effect.Effect<AxisLearningScope | undefined, AxisLearningValidationError> => {
+        if (
+          embeddedScope !== undefined &&
+          requestedScope !== undefined &&
+          learningScopeKey(embeddedScope) !== learningScopeKey(requestedScope)
+        ) {
+          return Effect.fail(
+            new AxisLearningValidationError({
+              message: "The Learning payload contains conflicting scopes.",
+            }),
+          );
+        }
+        const effectiveScope = requestedScope ?? embeddedScope;
+        return validateLearningContext(contextId, effectiveScope).pipe(
+          Effect.flatMap((validatedScope) => validateLearningScope(validatedScope, operation)),
+        );
+      };
+      const validateRequiredLearningScope = (
+        scope: AxisLearningScope,
+        operation: "read" | "write",
+      ): Effect.Effect<AxisLearningScope, AxisLearningValidationError> =>
+        Effect.gen(function* () {
+          const validatedScope = yield* validateLearningScope(scope, operation);
+          if (validatedScope === undefined) {
+            return yield* new AxisLearningValidationError({
+              message: "This Learning action requires an Axis scope.",
+            });
+          }
+          return validatedScope;
+        });
+      const validateLearningEntityScope = (
+        id: AxisLearningProposalId,
+        scope: AxisLearningScope | undefined,
+        operation: "read" | "write",
+      ): Effect.Effect<AxisLearningScope | AxisContextId, AxisLearningStoreError> =>
+        Effect.gen(function* () {
+          const lookup =
+            scope === undefined
+              ? yield* axisContextCatalog.get.pipe(
+                  Effect.mapError(
+                    () =>
+                      new AxisLearningValidationError({
+                        message: "The Axis context catalog could not be read.",
+                      }),
+                  ),
+                  Effect.flatMap((snapshot) => {
+                    const callerContextId = resolveAxisCallerContextId(
+                      currentSession.subject,
+                      snapshot.catalog.contexts,
+                    );
+                    return callerContextId === undefined
+                      ? Effect.fail(
+                          new AxisLearningValidationError({
+                            message: "The authenticated caller has no Axis context.",
+                          }),
+                        )
+                      : Effect.succeed(callerContextId);
+                  }),
+                )
+              : yield* validateRequiredLearningScope(scope, operation);
+          yield* axisLearning.getProposal(id, lookup);
+          return lookup;
+        });
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2153,67 +2477,355 @@ const makeWsRpcLayer = (
             axisScheduledActivities.listRuns(activityId, limit),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningGetSnapshot]: ({ contextId }) =>
+        [WS_METHODS.axisOnboardingList]: ({ scope }) =>
           observeRpcEffect(
-            WS_METHODS.axisLearningGetSnapshot,
-            axisLearning.getSnapshot(contextId),
+            WS_METHODS.axisOnboardingList,
+            validateProjectScope(scope, "read").pipe(
+              Effect.flatMap((resolvedScope) =>
+                requireAxisOnboarding().pipe(Effect.flatMap((service) => service.list(resolvedScope))),
+              ),
+              Effect.mapError(onboardingRpcError),
+            ),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningRecordEvidence]: ({ evidence }) =>
+        [WS_METHODS.axisOnboardingGet]: ({ scope, runId }) =>
           observeRpcEffect(
-            WS_METHODS.axisLearningRecordEvidence,
-            nowIso.pipe(
-              Effect.flatMap((createdAt) =>
-                axisLearning.recordEvidence({ ...evidence, createdAt }),
+            WS_METHODS.axisOnboardingGet,
+            validateProjectScope(scope, "read").pipe(
+              Effect.flatMap((resolvedScope) =>
+                requireAxisOnboarding().pipe(Effect.flatMap((service) => service.get(resolvedScope, runId))),
+              ),
+              Effect.mapError(onboardingRpcError),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisOnboardingStart]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisOnboardingStart,
+            validateProjectScope(input.scope, "write").pipe(
+              Effect.flatMap((resolvedScope) =>
+                axisContextProjectScopeKey(resolvedScope) === axisContextProjectScopeKey(input.scope)
+                  ? requireAxisOnboarding().pipe(
+                      Effect.flatMap((service) => service.start({ ...input, scope: resolvedScope })),
+                    )
+                  : Effect.fail(
+                      new AxisProjectProfileValidationError({
+                        message: "The onboarding project scope changed during validation.",
+                      }),
+                    ),
+              ),
+              Effect.mapError(onboardingRpcError),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisOnboardingCancel]: ({ scope, input }) =>
+          observeRpcEffect(
+            WS_METHODS.axisOnboardingCancel,
+            validateProjectScope(scope, "write").pipe(
+              Effect.flatMap((resolvedScope) =>
+                requireAxisOnboarding().pipe(Effect.flatMap((service) => service.cancel(resolvedScope, input))),
+              ),
+              Effect.mapError(onboardingRpcError),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisOnboardingRetry]: ({ scope, input }) =>
+          observeRpcEffect(
+            WS_METHODS.axisOnboardingRetry,
+            validateProjectScope(scope, "write").pipe(
+              Effect.flatMap((resolvedScope) =>
+                requireAxisOnboarding().pipe(Effect.flatMap((service) => service.retry(resolvedScope, input))),
+              ),
+              Effect.mapError(onboardingRpcError),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisOnboardingApply]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisOnboardingApply,
+            validateProjectScope(input.scope, "write").pipe(
+              Effect.flatMap((resolvedScope) =>
+                axisContextProjectScopeKey(resolvedScope) === axisContextProjectScopeKey(input.scope)
+                  ? requireAxisOnboarding().pipe(
+                      Effect.flatMap((service) => service.apply({ ...input, scope: resolvedScope })),
+                    )
+                  : Effect.fail(
+                      new AxisProjectProfileValidationError({
+                        message: "The onboarding project scope changed during validation.",
+                      }),
+                    ),
+              ),
+              Effect.mapError(onboardingRpcError),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningGetSnapshot]: ({ contextId, scope }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningGetSnapshot,
+            validateLearningContext(contextId, scope).pipe(
+              Effect.flatMap((validatedScope) => validateLearningScope(validatedScope, "read")),
+              Effect.flatMap((validatedScope) => axisLearning.getSnapshot(contextId, validatedScope)),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningRequestImprovements]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningRequestImprovements,
+            validateProjectScope(input.scope, "write").pipe(
+              Effect.flatMap((validatedScope) =>
+                axisContextProjectScopeKey(validatedScope) !== axisContextProjectScopeKey(input.scope)
+                  ? Effect.fail(
+                      new AxisProjectProfileValidationError({
+                        message: "The Learning project scope changed during validation.",
+                      }),
+                    )
+                      : Option.match(axisLearningService, {
+                      onNone: () =>
+                        Effect.succeed({
+                          id: `axis-learning-unavailable-${input.commandId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+                          status: "unavailable" as const,
+                          commandId: input.commandId,
+                          engine: {
+                            availability: "absent" as const,
+                            message: "No Axis learning engine is configured.",
+                          },
+                          proposals: [],
+                          reason: "No Axis learning engine is configured.",
+                        }),
+                      onSome: (service) => service.requestImprovements({ ...input, scope: validatedScope }),
+                    }),
               ),
             ),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningCreateProposal]: ({ proposal }) =>
+        [WS_METHODS.axisLearningRecordEvidence]: ({ evidence, scope }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningRecordEvidence,
+            validateLearningPayloadScope(
+              evidence.provenance.contextId,
+              evidence.provenance.scope,
+              scope,
+              "write",
+            ).pipe(
+              Effect.flatMap((validatedScope) =>
+                nowIso.pipe(
+                  Effect.flatMap((createdAt) =>
+                    axisLearning.recordEvidence({
+                      ...evidence,
+                      ...(validatedScope === undefined
+                        ? {}
+                        : { provenance: { ...evidence.provenance, scope: validatedScope } }),
+                      createdAt,
+                    }),
+                  ),
+                ),
+              ),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningCreateProposal]: ({ proposal, scope }) =>
           observeRpcEffect(
             WS_METHODS.axisLearningCreateProposal,
-            nowIso.pipe(
-              Effect.flatMap((createdAt) => axisLearning.createProposal(proposal, createdAt)),
+            validateLearningPayloadScope(proposal.contextId, proposal.scope, scope, "write").pipe(
+              Effect.flatMap((validatedScope) =>
+                nowIso.pipe(
+                  Effect.flatMap((createdAt) =>
+                    axisLearning.createProposal(
+                      validatedScope === undefined ? proposal : { ...proposal, scope: validatedScope },
+                      createdAt,
+                    ),
+                  ),
+                ),
+              ),
             ),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningSubmitProposal]: ({ id }) =>
+        [WS_METHODS.axisLearningSubmitProposal]: ({ id, scope }) =>
           observeRpcEffect(
             WS_METHODS.axisLearningSubmitProposal,
-            learningReviewInput().pipe(
-              Effect.flatMap((input) => axisLearning.submitForReview(id, input)),
+            validateLearningEntityScope(id, scope, "write").pipe(
+              Effect.flatMap((lookup) =>
+                learningReviewInput().pipe(
+                  Effect.flatMap((input) => axisLearning.submitForReview(id, lookup, input)),
+                ),
+              ),
             ),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningApproveProposal]: ({ id, note }) =>
+        [WS_METHODS.axisLearningApproveProposal]: ({ id, note, scope }) =>
           observeRpcEffect(
             WS_METHODS.axisLearningApproveProposal,
-            Effect.all({
-              input: learningReviewInput(note),
-              versionId: learningRandomUUID.pipe(Effect.map(AxisLearningVersionId.make)),
-            }).pipe(
-              Effect.flatMap(({ input, versionId }) => axisLearning.approve(id, versionId, input)),
+            validateLearningEntityScope(id, scope, "write").pipe(
+              Effect.flatMap((lookup) =>
+                Effect.all({
+                  input: learningReviewInput(note),
+                  versionId: learningRandomUUID.pipe(Effect.map(AxisLearningVersionId.make)),
+                }).pipe(
+                  Effect.flatMap(({ input, versionId }) => axisLearning.approve(id, lookup, versionId, input)),
+                ),
+              ),
             ),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningRejectProposal]: ({ id, note }) =>
+        [WS_METHODS.axisLearningRejectProposal]: ({ id, note, scope }) =>
           observeRpcEffect(
             WS_METHODS.axisLearningRejectProposal,
-            learningReviewInput(note).pipe(
-              Effect.flatMap((input) => axisLearning.reject(id, input)),
+            validateLearningEntityScope(id, scope, "write").pipe(
+              Effect.flatMap((lookup) =>
+                learningReviewInput(note).pipe(
+                  Effect.flatMap((input) => axisLearning.reject(id, lookup, input)),
+                ),
+              ),
             ),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningActivateVersion]: ({ id }) =>
+        [WS_METHODS.axisLearningActivateVersion]: ({ id, scope, targetKey, versionId, expectedRevision, commandId }) =>
           observeRpcEffect(
             WS_METHODS.axisLearningActivateVersion,
-            learningReviewInput().pipe(Effect.flatMap((input) => axisLearning.activate(id, input))),
+            Effect.gen(function* () {
+              if (scope === undefined || targetKey === undefined || expectedRevision === undefined || commandId === undefined) {
+                return yield* new AxisLearningRevisionRequiredError({
+                  message: "Activation requires scope, target, expectedRevision, and commandId.",
+                });
+              }
+              const validatedScope = yield* validateRequiredLearningScope(scope, "write");
+              return yield* axisLearning.activate(
+                validatedScope,
+                targetKey,
+                versionId ?? id,
+                expectedRevision,
+                commandId,
+              );
+            }),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningRollbackVersion]: ({ id }) =>
+        [WS_METHODS.axisLearningRollbackVersion]: ({ id, scope, targetKey, versionId, expectedRevision, commandId }) =>
           observeRpcEffect(
             WS_METHODS.axisLearningRollbackVersion,
-            learningReviewInput().pipe(Effect.flatMap((input) => axisLearning.rollback(id, input))),
+            Effect.gen(function* () {
+              if (scope === undefined || targetKey === undefined || expectedRevision === undefined || commandId === undefined) {
+                return yield* new AxisLearningRevisionRequiredError({
+                  message: "Rollback requires scope, target, expectedRevision, and commandId.",
+                });
+              }
+              const validatedScope = yield* validateRequiredLearningScope(scope, "write");
+              return yield* axisLearning.rollback(
+                validatedScope,
+                targetKey,
+                versionId ?? id,
+                expectedRevision,
+                commandId,
+              );
+            }),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisLearningDeactivateVersion]: ({ scope, targetKey, expectedRevision, commandId, note }) =>
+          observeRpcEffect(
+            WS_METHODS.axisLearningDeactivateVersion,
+            validateRequiredLearningScope(scope, "write").pipe(
+              Effect.flatMap((validatedScope) =>
+                axisLearning.deactivate(validatedScope, targetKey, expectedRevision, commandId, note),
+              ),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisTasksList]: ({ scope }) =>
+          observeRpcEffect(
+            WS_METHODS.axisTasksList,
+            validateTaskProjectScope(scope, "read").pipe(Effect.flatMap((resolved) => axisTasks.list(resolved))),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisTasksGet]: ({ scope, threadId }) =>
+          observeRpcEffect(
+            WS_METHODS.axisTasksGet,
+            validateTaskProjectScope(scope, "read").pipe(
+              Effect.flatMap((resolved) => axisTasks.get(resolved, threadId)),
+              Effect.map(Option.getOrNull),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisTasksCreate]: ({ task, commandId }) =>
+          observeRpcEffect(
+            WS_METHODS.axisTasksCreate,
+              validateTaskProjectScope(task.scope, "write").pipe(
+                Effect.flatMap((resolved) =>
+                axisTaskScopeMatchesValidatedScope(task.scope, resolved)
+                  ? axisTasks.create(task, commandId)
+                  : Effect.fail(new AxisTaskValidationError({ message: "The task scope changed during validation." })),
+              ),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisTasksUpdate]: (mutation) =>
+          observeRpcEffect(
+            WS_METHODS.axisTasksUpdate,
+            validateTaskProjectScope(mutation.task.scope, "write").pipe(
+              Effect.flatMap((resolved) =>
+                axisContextProjectScopeKey(resolved) === axisContextProjectScopeKey(mutation.task.scope)
+                  ? axisTasks.update(mutation)
+                  : Effect.fail(new AxisTaskValidationError({ message: "The task scope changed during validation." })),
+              ),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisTasksPause]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisTasksPause,
+            validateTaskProjectScope(input.scope, "write").pipe(
+              Effect.flatMap((resolved) =>
+                axisTasks.pause({ ...input, scope: resolved }),
+              ),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisTasksReopen]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisTasksReopen,
+            validateTaskProjectScope(input.scope, "write").pipe(
+              Effect.flatMap((resolved) => axisTasks.reopen({ ...input, scope: resolved })),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisTasksUnlinkSource]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.axisTasksUnlinkSource,
+            validateTaskProjectScope(input.scope, "write").pipe(
+              Effect.flatMap((resolved) => axisTasks.unlinkSource({ ...input, scope: resolved })),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisProjectProfileGet]: ({ scope }) =>
+          observeRpcEffect(
+            WS_METHODS.axisProjectProfileGet,
+            validateProjectScope(scope, "read").pipe(
+              Effect.flatMap((validatedScope) =>
+                requireProjectProfileStore().pipe(Effect.flatMap((store) => store.get(validatedScope))),
+              ),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisProjectProfileReplace]: ({ scope, expectedRevision, changes }) =>
+          observeRpcEffect(
+            WS_METHODS.axisProjectProfileReplace,
+            validateProjectScope(scope, "write").pipe(
+              Effect.flatMap((validatedScope) =>
+                requireProjectProfileStore().pipe(
+                  Effect.flatMap((store) => store.replace(validatedScope, expectedRevision, changes)),
+                ),
+              ),
+            ),
+            { "rpc.aggregate": "axis" },
+          ),
+        [WS_METHODS.axisProjectProfileResetOverride]: ({ scope, ruleId, expectedRevision }) =>
+          observeRpcEffect(
+            WS_METHODS.axisProjectProfileResetOverride,
+            validateProjectScope(scope, "write").pipe(
+              Effect.flatMap((validatedScope) =>
+                requireProjectProfileStore().pipe(
+                  Effect.flatMap((store) => store.resetOverride(validatedScope, ruleId, expectedRevision)),
+                ),
+              ),
+            ),
             { "rpc.aggregate": "axis" },
           ),
         [WS_METHODS.axisScratchChatsList]: ({ includeArchived }) =>

@@ -178,6 +178,7 @@ export interface CodexRuntimeInfo {
   readonly model: string;
   readonly reasoningEffort: string;
   readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile | undefined;
+  readonly additionalInstructions?: string | undefined;
 }
 
 export function buildCodexDeveloperInstructions(
@@ -194,7 +195,11 @@ export function buildCodexDeveloperInstructions(
     interactionMode === "plan"
       ? codexPlanModeDeveloperInstructions(browserToolsAvailable)
       : codexDefaultModeDeveloperInstructions(browserToolsAvailable);
-  return `${base}
-
-${buildRuntimeInstructions({ harness: "Codex", ...runtime })}`;
+  return [
+    base,
+    buildRuntimeInstructions({ harness: "Codex", ...runtime }),
+    runtime.additionalInstructions,
+  ]
+    .filter((value): value is string => value !== undefined && value.length > 0)
+    .join("\n\n");
 }

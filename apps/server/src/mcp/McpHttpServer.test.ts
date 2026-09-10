@@ -1,7 +1,13 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PreviewTabId,
+  ProviderInstanceId,
+  ThreadId,
+  TokenEfficiencyEngineId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -89,6 +95,35 @@ it.effect("compacts textual evaluate results only when the provider instance opt
         ServerSettings.layerTest({ tokenEfficiency: { mode: "compress" } }),
         TokenEfficiencyMetrics.layerTest(),
         Layer.succeed(McpInvocationContext.McpInvocationContext, invocation),
+      ),
+    ),
+  );
+});
+
+it.effect("uses the Axis-resolved policy over the global token-efficiency setting", () => {
+  const repeated = [
+    "start",
+    "Axis policy line that is repeated enough to compact safely",
+    "Axis policy line that is repeated enough to compact safely",
+    "Axis policy line that is repeated enough to compact safely",
+    "Axis policy line that is repeated enough to compact safely",
+    "done",
+  ].join("\n");
+  return Effect.gen(function* () {
+    const result = yield* PreviewHandlers.compactPreviewToolResult(repeated);
+    expect(result).toMatchObject({ value: expect.stringContaining("previous line repeated") });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({ tokenEfficiency: { mode: "off" } }),
+        TokenEfficiencyMetrics.layerTest(),
+        Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          ...invocation,
+          tokenEfficiencyPolicy: {
+            engine: TokenEfficiencyEngineId.make("deterministic"),
+            mode: "compress",
+          },
+        }),
       ),
     ),
   );

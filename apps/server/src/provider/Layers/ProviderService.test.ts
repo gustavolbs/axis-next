@@ -85,6 +85,10 @@ const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make
 const asEventId = (value: string): EventId => EventId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+const readRuntimePayloadForTest = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
@@ -978,6 +982,34 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
 
 const routing = makeProviderServiceLayer();
 
+function makeContinuationProviderLayer(
+  directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"],
+) {
+  const codex = makeFakeCodexAdapter(CODEX_DRIVER);
+  const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+  const registry = makeAdapterRegistryMock({
+    [CODEX_DRIVER]: codex.adapter,
+    [CLAUDE_AGENT_DRIVER]: claude.adapter,
+  });
+  const layer = makeProviderServiceLive().pipe(
+    Layer.provide(
+      Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry),
+    ),
+    Layer.provide(Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, directory)),
+    Layer.provide(defaultServerSettingsLayer),
+    Layer.provide(serverConfigTestLayer),
+    Layer.provide(NodeServices.layer),
+    Layer.provide(AnalyticsService.layerTest),
+    Layer.provide(
+      Layer.succeed(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
+    ),
+  );
+  return { codex, claude, layer };
+}
+
 const antigravityDriver = ProviderDriverKind.make("antigravity");
 const replacementAntigravity = makeFakeCodexAdapter(antigravityDriver);
 const originalAntigravityInstanceId = ProviderInstanceId.make("antigravity-personal");
@@ -985,6 +1017,375 @@ const replacementAntigravityInstanceId = ProviderInstanceId.make("antigravity");
 const antigravityRegistry = makeAdapterRegistryMock({
   [antigravityDriver]: replacementAntigravity.adapter,
 });
+
+it.effect("rejects a continuation when the binding changes at the final dispatch fence", () =>
+  Effect.gen(function* () {
+    const threadId = asThreadId("thread-final-fence-revoked");
+    const key = "server-update:thread-final-fence-revoked:turn-1";
+    const original: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      status: "running",
+      runtimePayload: {
+        axisContinuationEffect: {
+          key,
+          status: "prepared",
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+        },
+      },
+    };
+    const replacement: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      ...original,
+      provider: CLAUDE_AGENT_DRIVER,
+      providerInstanceId: claudeAgentInstanceId,
+      runtimePayload: {
+        axisContinuationEffect: {
+          key: "replacement",
+          status: "prepared",
+          providerInstanceId: claudeAgentInstanceId,
+          driverKind: CLAUDE_AGENT_DRIVER,
+        },
+      },
+    };
+    let reads = 0;
+    const upserts: ProviderSessionDirectory.ProviderRuntimeBinding[] = [];
+    const directory = {
+      getBinding: () => Effect.sync(() => Option.some(reads++ === 0 ? original : replacement)),
+      upsert: (binding: ProviderSessionDirectory.ProviderRuntimeBinding) =>
+        Effect.sync(() => upserts.push(binding)),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    } satisfies ProviderSessionDirectory.ProviderSessionDirectory["Service"];
+    const setup = makeContinuationProviderLayer(directory);
+    yield* Effect.gen(function* () {
+      yield* setup.codex.startSession({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      const provider = yield* ProviderService.ProviderService;
+      const result = yield* Effect.exit(
+        provider.sendTurn({
+          threadId,
+          continuation: true,
+          continuationFence: {
+            providerInstanceId: codexInstanceId,
+            driverKind: CODEX_DRIVER,
+            idempotencyKey: key,
+          },
+        }),
+      );
+      assert.equal(Exit.isFailure(result), true);
+    }).pipe(Effect.provide(setup.layer));
+    assert.equal(setup.codex.sendTurn.mock.calls.length, 0);
+    assert.deepEqual(upserts, []);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("does not overwrite a newer binding while settling a continuation", () =>
+  Effect.gen(function* () {
+    const threadId = asThreadId("thread-newer-binding-preserved");
+    const newer: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      lastSeenAt: "2026-09-10T12:00:01.000Z",
+      status: "running",
+      runtimePayload: {
+        axisContinuationEffect: {
+          key: "old-key",
+          status: "prepared",
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+        },
+      },
+    };
+    const upserts: ProviderSessionDirectory.ProviderRuntimeBinding[] = [];
+    let compareAndSetCalled = false;
+    const directory = {
+      getBinding: () => Effect.succeed(Option.some(newer)),
+      upsert: (binding: ProviderSessionDirectory.ProviderRuntimeBinding) =>
+        Effect.sync(() => upserts.push(binding)),
+      compareAndSet: () => Effect.sync(() => {
+        compareAndSetCalled = true;
+        return false;
+      }),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    } satisfies ProviderSessionDirectory.ProviderSessionDirectory["Service"];
+    const setup = makeContinuationProviderLayer(directory);
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      assert.equal(provider.settleContinuation !== undefined, true);
+      if (provider.settleContinuation === undefined) return;
+      const changed = yield* provider.settleContinuation({
+        threadId,
+        providerInstanceId: codexInstanceId,
+        driverKind: CODEX_DRIVER,
+        idempotencyKey: "old-key",
+        outcome: "unknown",
+      });
+      assert.equal(changed, false);
+    }).pipe(Effect.provide(setup.layer));
+    assert.deepEqual(upserts, []);
+    assert.equal(compareAndSetCalled, true);
+    assert.equal(
+      (newer.runtimePayload as { readonly axisContinuationEffect: { readonly key: string } })
+        .axisContinuationEffect.key,
+      "old-key",
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("blocks a second dispatch when acceptance persistence fails", () =>
+  Effect.gen(function* () {
+    const threadId = asThreadId("thread-post-acceptance-unknown");
+    const key = "server-update:thread-post-acceptance-unknown:turn-1";
+    let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      status: "running",
+      runtimePayload: {
+        axisContinuationEffect: {
+          key,
+          status: "prepared",
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+        },
+      },
+    };
+    const directory = {
+      getBinding: () => Effect.succeed(Option.some(binding)),
+      upsert: (next: ProviderSessionDirectory.ProviderRuntimeBinding) => {
+        const effect = readRuntimePayloadForTest(next.runtimePayload).axisContinuationEffect;
+        if (
+          effect !== null &&
+          typeof effect === "object" &&
+          !Array.isArray(effect) &&
+          (effect as { readonly status?: unknown }).status === "accepted"
+        ) {
+          return Effect.fail(
+            new ProviderValidationError({
+              operation: "test",
+              issue: "simulated crash after provider acceptance",
+            }),
+          );
+        }
+        return Effect.sync(() => {
+          binding = next;
+        });
+      },
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    } satisfies ProviderSessionDirectory.ProviderSessionDirectory["Service"];
+    const setup = makeContinuationProviderLayer(directory);
+    yield* Effect.gen(function* () {
+      yield* setup.codex.startSession({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      const provider = yield* ProviderService.ProviderService;
+      const request = {
+        threadId,
+        continuation: true,
+        continuationFence: {
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+          idempotencyKey: key,
+        },
+      } satisfies ProviderService.ProviderSendTurnRequest;
+      const first = yield* Effect.exit(provider.sendTurn(request));
+      const second = yield* Effect.exit(provider.sendTurn(request));
+      assert.equal(Exit.isFailure(first), true);
+      assert.equal(Exit.isFailure(second), true);
+    }).pipe(Effect.provide(setup.layer));
+    assert.equal(setup.codex.sendTurn.mock.calls.length, 1);
+    const effect = readRuntimePayloadForTest(binding.runtimePayload).axisContinuationEffect;
+    assert.equal(
+      effect !== null && typeof effect === "object" && !Array.isArray(effect)
+        ? (effect as { readonly status?: unknown }).status
+        : undefined,
+      "pending",
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects a continuation whose instance driver mismatches its binding", () =>
+  Effect.gen(function* () {
+    const threadId = asThreadId("thread-driver-mismatch");
+    const directory = {
+      getBinding: () =>
+        Effect.succeed(
+          Option.some<ProviderSessionDirectory.ProviderRuntimeBinding>({
+            threadId,
+            provider: CLAUDE_AGENT_DRIVER,
+            providerInstanceId: codexInstanceId,
+            status: "running",
+            runtimePayload: {},
+          }),
+        ),
+      upsert: () => Effect.die("unused"),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    } satisfies ProviderSessionDirectory.ProviderSessionDirectory["Service"];
+    const setup = makeContinuationProviderLayer(directory);
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const result = yield* Effect.exit(
+        provider.sendTurn({
+          threadId,
+          input: "continue",
+          continuationFence: {
+            providerInstanceId: codexInstanceId,
+            driverKind: CODEX_DRIVER,
+            idempotencyKey: "mismatch",
+          },
+        }),
+      );
+      assert.equal(Exit.isFailure(result), true);
+    }).pipe(Effect.provide(setup.layer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("does not dispatch when the durable continuation CAS loses", () =>
+  Effect.gen(function* () {
+    const threadId = asThreadId("thread-cas-lost-before-dispatch");
+    const binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      status: "running",
+      runtimePayload: {
+        axisContinuationEffect: {
+          key: "cas-lost",
+          status: "prepared",
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+        },
+      },
+    };
+    const directory = {
+      getBinding: () => Effect.succeed(Option.some(binding)),
+      upsert: () => Effect.void,
+      compareAndSet: () => Effect.succeed(false),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    } satisfies ProviderSessionDirectory.ProviderSessionDirectory["Service"];
+    const setup = makeContinuationProviderLayer(directory);
+
+    yield* Effect.gen(function* () {
+      yield* setup.codex.startSession({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      const provider = yield* ProviderService.ProviderService;
+      const result = yield* Effect.exit(
+        provider.sendTurn({
+          threadId,
+          input: "continue",
+          continuationFence: {
+            providerInstanceId: codexInstanceId,
+            driverKind: CODEX_DRIVER,
+            idempotencyKey: "cas-lost",
+          },
+        }),
+      );
+      assert.equal(Exit.isFailure(result), true);
+    }).pipe(Effect.provide(setup.layer));
+
+    assert.equal(setup.codex.sendTurn.mock.calls.length, 0);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("preserves an external binding when post-settlement persistence loses CAS", () =>
+  Effect.gen(function* () {
+    const threadId = asThreadId("thread-post-settlement-cas-lost");
+    const key = "post-settlement-cas-lost";
+    let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      lastSeenAt: "2026-09-10T12:00:00.000Z",
+      status: "running",
+      runtimePayload: {
+        axisContinuationEffect: {
+          key,
+          status: "prepared",
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+        },
+      },
+    };
+    const externalBinding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      ...binding,
+      runtimePayload: {
+        axisContinuationEffect: {
+          key: "external-winner",
+          status: "prepared",
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+        },
+        activeTurnId: "external-turn",
+      },
+    };
+    let compareAndSetCalls = 0;
+    const directory = {
+      getBinding: () => Effect.succeed(Option.some(binding)),
+      upsert: () => Effect.void,
+      compareAndSet: ({ next }: ProviderSessionDirectory.ProviderSessionDirectoryCompareAndSetInput) =>
+        Effect.sync(() => {
+          compareAndSetCalls += 1;
+          if (compareAndSetCalls === 3) {
+            binding = externalBinding;
+            return false;
+          }
+          binding = next;
+          return true;
+        }),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    } satisfies ProviderSessionDirectory.ProviderSessionDirectory["Service"];
+    const setup = makeContinuationProviderLayer(directory);
+
+    yield* Effect.gen(function* () {
+      yield* setup.codex.startSession({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      const provider = yield* ProviderService.ProviderService;
+      const result = yield* provider.sendTurn({
+        threadId,
+        continuation: true,
+        continuationFence: {
+          providerInstanceId: codexInstanceId,
+          driverKind: CODEX_DRIVER,
+          idempotencyKey: key,
+        },
+      });
+      assert.equal(result.threadId, threadId);
+    }).pipe(Effect.provide(setup.layer));
+
+    assert.equal(compareAndSetCalls, 3);
+    assert.equal(setup.codex.sendTurn.mock.calls.length, 1);
+    assert.deepEqual(binding.runtimePayload, externalBinding.runtimePayload);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 let originalAntigravityInstanceAvailable = true;
 const antigravityInstanceRouting = makeProviderServiceLayer({
   registry: {

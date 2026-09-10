@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { it, assert } from "@effect/vitest";
 import { assertSome } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
@@ -17,7 +17,10 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
-import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderRuntimeBindingWithMetadata,
+} from "../Services/ProviderSessionDirectory.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 
 function makeDirectoryLayer<E, R>(persistenceLayer: Layer.Layer<SqlClient.SqlClient, E, R>) {
@@ -119,6 +122,50 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
           model: "gpt-5-codex",
           activeTurnId: "turn-1",
         });
+      }
+    }));
+
+  it("compareAndSet preserves a binding replaced by an external writer", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = ThreadId.make("thread-directory-cas");
+
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        threadId,
+        status: "running",
+        runtimePayload: { version: "captured" },
+      });
+      const captured = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(captured), true);
+      if (Option.isNone(captured)) return;
+
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        threadId,
+        status: "stopped",
+        runtimePayload: { version: "external" },
+      });
+
+      assert.equal(directory.compareAndSet !== undefined, true);
+      if (directory.compareAndSet === undefined) return;
+      const changed = yield* directory.compareAndSet({
+        expected: captured.value as ProviderRuntimeBindingWithMetadata,
+        next: {
+          ...captured.value,
+          status: "running",
+          runtimePayload: { version: "stale-write" },
+        },
+      });
+      assert.equal(changed, false);
+
+      const current = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(current), true);
+      if (Option.isSome(current)) {
+        assert.equal(current.value.status, "stopped");
+        assert.deepEqual(current.value.runtimePayload, { version: "external" });
       }
     }));
 

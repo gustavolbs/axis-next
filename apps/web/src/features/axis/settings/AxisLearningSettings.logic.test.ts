@@ -5,7 +5,11 @@ import {
   AxisLearningEvidenceId,
   AxisLearningProposalId,
   AxisLearningVersionId,
+  EnvironmentId,
+  ProjectId,
   type AxisLearningVersion,
+  AxisProjectRuleId,
+  AxisProjectProfileSourceId,
 } from "@t3tools/contracts";
 
 import {
@@ -27,7 +31,23 @@ function version(id: string, targetKey = "skill:review", createdAt = now): AxisL
     title: "Review pull requests",
     rationale: "Repeated corrections show a stable preference.",
     evidenceIds: [AxisLearningEvidenceId.make("evidence-1")],
-    change: { content: "Prefer focused diffs." },
+    change: {
+      op: "set-rule",
+      rule: {
+        id: AxisProjectRuleId.make("rule-version"),
+        category: "instruction",
+        text: "Prefer focused diffs.",
+        origin: "manual",
+        sourceRef: AxisProjectProfileSourceId.make("source-version"),
+        sourceRevision: 0,
+        paths: [],
+        strength: "explicit",
+        effect: "preference",
+        restriction: null,
+        defaultValue: null,
+        condition: null,
+      },
+    },
     approvedBy: "session:test",
     createdAt,
   };
@@ -49,6 +69,36 @@ describe("Axis Learning settings logic", () => {
     expect(evidence.provenance.fingerprint).toBe("manual-evidence-1");
   });
 
+  it("preserves an explicitly selected project scope on manual evidence and proposals", () => {
+    const scope = {
+      contextId,
+      project: { environmentId: EnvironmentId.make("laptop"), projectId: ProjectId.make("project-a") },
+    };
+    const evidence = buildManualLearningEvidence({
+      contextId,
+      scope,
+      id: "evidence-project",
+      sourceId: "manual-settings",
+      summary: "Project-specific correction.",
+      observedAt: now,
+      expiresAt: "2026-10-06T12:00:00.000Z",
+    });
+    const proposal = buildManualLearningProposal({
+      contextId,
+      scope,
+      id: "proposal-project",
+      kind: "provider-skill",
+      targetKey: "skill:review",
+      title: "Project review",
+      rationale: "The preference is local to this project.",
+      evidenceId: evidence.id,
+      change: "Prefer focused diffs.",
+    });
+
+    expect(evidence.provenance.scope).toEqual(scope);
+    expect(proposal.scope).toEqual(scope);
+  });
+
   it("builds a reviewable proposal from evidence without activating it", () => {
     const proposal = buildManualLearningProposal({
       contextId,
@@ -64,7 +114,7 @@ describe("Axis Learning settings logic", () => {
     expect(proposal.contextId).toBe(contextId);
     expect(proposal.targetKey).toBe("skill:review");
     expect(proposal).not.toHaveProperty("status");
-    expect(proposal.change).toEqual({ format: "instructions", content: "Prefer focused diffs." });
+    expect(proposal.change).toMatchObject({ op: "set-rule", rule: { text: "Prefer focused diffs." } });
   });
 
   it("requires explicit activation and identifies switches as rollbacks", () => {

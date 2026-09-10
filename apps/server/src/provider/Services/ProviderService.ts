@@ -13,6 +13,7 @@
  */
 import type {
   ProviderInterruptTurnInput,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
@@ -26,6 +27,7 @@ import type {
   MessageId,
   ThreadId,
   ProviderTurnStartResult,
+  TurnId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -34,6 +36,31 @@ import type * as Stream from "effect/Stream";
 import type { ProviderServiceError } from "../Errors.ts";
 import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
+
+/**
+ * Server-only admission data for a restart continuation. It is intentionally
+ * outside the wire contract and is removed before an adapter sees the input.
+ */
+export interface ProviderContinuationFence {
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly driverKind: ProviderDriverKind;
+  readonly axisContextDigest?: string | undefined;
+  readonly idempotencyKey: string;
+}
+
+export type ProviderSendTurnRequest = ProviderSendTurnInput & {
+  readonly continuationFence?: ProviderContinuationFence;
+};
+
+export interface ProviderContinuationSettlement {
+  readonly threadId: ThreadId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly driverKind: ProviderDriverKind;
+  readonly axisContextDigest?: string | undefined;
+  readonly idempotencyKey: string;
+  readonly outcome: "accepted" | "unknown";
+  readonly turnId?: TurnId;
+}
 
 /**
  * ProviderServiceShape - Service API for provider session and turn orchestration.
@@ -51,8 +78,17 @@ export interface ProviderServiceShape {
    * Send a provider turn.
    */
   readonly sendTurn: (
-    input: ProviderSendTurnInput,
+    input: ProviderSendTurnRequest,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
+
+  /**
+   * Atomically settles a continuation admission against its current binding.
+   * A false result means another writer replaced the binding, so its state is
+   * deliberately left untouched.
+   */
+  readonly settleContinuation?: (
+    input: ProviderContinuationSettlement,
+  ) => Effect.Effect<boolean, ProviderServiceError>;
 
   readonly compactThread: (
     threadId: ThreadId,

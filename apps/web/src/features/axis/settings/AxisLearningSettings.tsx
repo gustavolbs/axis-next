@@ -12,8 +12,10 @@ import {
 
 import {
   AxisContextId,
+  CommandId,
   AxisLearningEvidenceId,
   type AxisContext,
+  type AxisContextProjectBinding,
   type AxisLearningProposal,
   type AxisLearningProposalKind,
   type AxisLearningVersion,
@@ -83,13 +85,16 @@ function errorDescription<E>(
 export function AxisLearningSettings({
   environmentId,
   contexts,
+  projectBindings,
 }: {
   readonly environmentId: EnvironmentId;
   readonly contexts: ReadonlyArray<AxisContext>;
+  readonly projectBindings: ReadonlyArray<AxisContextProjectBinding>;
 }) {
   const [selectedContextId, setSelectedContextId] = useState<AxisContextId | null>(
     contexts[0]?.id ?? null,
   );
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [learningView, setLearningView] = useState<LearningView>("review");
@@ -106,11 +111,25 @@ export function AxisLearningSettings({
     selectedContextId !== null && contexts.some((context) => context.id === selectedContextId)
       ? selectedContextId
       : (contexts[0]?.id ?? null);
+  const contextProjects = projectBindings.filter((binding) => binding.contextId === contextId);
+  const selectedProject =
+    selectedProjectKey === null
+      ? undefined
+      : contextProjects.find(
+          (binding) =>
+            `${binding.project.environmentId}:${binding.project.projectId}` === selectedProjectKey,
+        )?.project;
+  const learningScope = contextId === null || selectedProject === undefined
+    ? undefined
+    : { contextId, project: selectedProject };
 
   const query = useEnvironmentQuery(
     contextId === null
       ? null
-      : serverEnvironment.axisLearningSnapshot({ environmentId, input: { contextId } }),
+      : serverEnvironment.axisLearningSnapshot({
+          environmentId,
+          input: { contextId, ...(learningScope === undefined ? {} : { scope: learningScope }) },
+        }),
   );
   const recordEvidence = useAtomCommand(serverEnvironment.recordAxisLearningEvidence, {
     reportFailure: false,
@@ -131,6 +150,9 @@ export function AxisLearningSettings({
     reportFailure: false,
   });
   const rollbackVersion = useAtomCommand(serverEnvironment.rollbackAxisLearningVersion, {
+    reportFailure: false,
+  });
+  const deactivateVersion = useAtomCommand(serverEnvironment.deactivateAxisLearningVersion, {
     reportFailure: false,
   });
 
@@ -169,6 +191,7 @@ export function AxisLearningSettings({
         input: {
           evidence: buildManualLearningEvidence({
             contextId,
+            ...(learningScope === undefined ? {} : { scope: learningScope }),
             id: entityId("learning_evidence"),
             sourceId: "axis-learning-settings",
             summary: evidenceSummary,
@@ -201,6 +224,7 @@ export function AxisLearningSettings({
         input: {
           proposal: buildManualLearningProposal({
             contextId,
+            ...(learningScope === undefined ? {} : { scope: learningScope }),
             id: entityId("learning_proposal"),
             kind: proposalKind,
             targetKey: proposalTarget,
@@ -225,7 +249,10 @@ export function AxisLearningSettings({
     if (busy) return;
     setBusy(true);
     await finish(
-      await submitProposal({ environmentId, input: { id: proposal.id } }),
+      await submitProposal({
+        environmentId,
+        input: { id: proposal.id, scope: proposal.scope ?? { contextId: proposal.contextId } },
+      }),
       "Proposal submitted for review",
     );
   }
@@ -240,7 +267,11 @@ export function AxisLearningSettings({
     await finish(
       await approveProposal({
         environmentId,
-        input: { id: proposal.id, ...(note.trim() ? { note: note.trim() } : {}) },
+        input: {
+          id: proposal.id,
+          scope: proposal.scope ?? { contextId: proposal.contextId },
+          ...(note.trim() ? { note: note.trim() } : {}),
+        },
       }),
       "Proposal approved; activation is still required",
     );
@@ -257,7 +288,11 @@ export function AxisLearningSettings({
     await finish(
       await rejectProposal({
         environmentId,
-        input: { id: proposal.id, ...(note.trim() ? { note: note.trim() } : {}) },
+        input: {
+          id: proposal.id,
+          scope: proposal.scope ?? { contextId: proposal.contextId },
+          ...(note.trim() ? { note: note.trim() } : {}),
+        },
       }),
       "Proposal rejected",
     );
@@ -274,12 +309,60 @@ export function AxisLearningSettings({
       action === "rollback" ? { variant: "destructive" } : undefined,
     );
     if (!confirmed) return;
+    const scope = version.scope ?? { contextId: version.contextId };
+    const activeState = snapshot.activeStates.find(
+      (item) =>
+        item.targetKey === version.targetKey &&
+        item.scope.contextId === scope.contextId &&
+        item.scope.project?.environmentId === scope.project?.environmentId &&
+        item.scope.project?.projectId === scope.project?.projectId,
+    );
+    const actionInput = {
+      id: version.id,
+      scope,
+      targetKey: version.targetKey,
+      versionId: version.id,
+      expectedRevision: activeState?.revision ?? 0,
+      commandId: CommandId.make(`axis-learning-${randomUUID().replaceAll("-", "")}`),
+    };
     setBusy(true);
     await finish(
       action === "activate"
-        ? await activateVersion({ environmentId, input: { id: version.id } })
-        : await rollbackVersion({ environmentId, input: { id: version.id } }),
+        ? await activateVersion({ environmentId, input: actionInput })
+        : await rollbackVersion({ environmentId, input: actionInput }),
       action === "activate" ? "Version activated" : "Version rolled back",
+    );
+  }
+
+  async function deactivate(version: AxisLearningVersion) {
+    if (!snapshot || busy) return;
+    const scope = version.scope ?? { contextId: version.contextId };
+    const activeState = snapshot.activeStates.find(
+      (item) =>
+        item.targetKey === version.targetKey &&
+        item.scope.contextId === scope.contextId &&
+        item.scope.project?.environmentId === scope.project?.environmentId &&
+        item.scope.project?.projectId === scope.project?.projectId &&
+        item.versionId === version.id,
+    );
+    if (!activeState) return;
+    const confirmed = await ensureLocalApi().dialogs.confirm(
+      `Deactivate “${version.title}” for ${version.targetKey}? The approved version will remain in history.`,
+      { variant: "destructive" },
+    );
+    if (!confirmed) return;
+    setBusy(true);
+    await finish(
+      await deactivateVersion({
+        environmentId,
+        input: {
+          scope,
+          targetKey: version.targetKey,
+          expectedRevision: activeState.revision,
+          commandId: CommandId.make(`axis-learning-${randomUUID().replaceAll("-", "")}`),
+        },
+      }),
+      "Version deactivated",
     );
   }
 
@@ -291,9 +374,14 @@ export function AxisLearningSettings({
       variant="plain"
       className="space-y-5"
       headerAction={
-        <Select
-          value={contextId ?? undefined}
-          onValueChange={(value) => value && setSelectedContextId(AxisContextId.make(value))}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Select
+            value={contextId ?? undefined}
+            onValueChange={(value) => {
+              if (!value) return;
+              setSelectedContextId(AxisContextId.make(value));
+              setSelectedProjectKey(null);
+            }}
         >
           <SelectTrigger size="xs" className="w-40" aria-label="Learning context">
             <SelectValue placeholder="Context" />
@@ -305,7 +393,27 @@ export function AxisLearningSettings({
               </SelectItem>
             ))}
           </SelectPopup>
-        </Select>
+          </Select>
+          <Select
+            value={selectedProjectKey ?? "context-only"}
+            onValueChange={(value) => setSelectedProjectKey(value === "context-only" ? null : (value ?? null))}
+          >
+            <SelectTrigger size="xs" className="w-48" aria-label="Learning project">
+              <SelectValue placeholder="Context only" />
+            </SelectTrigger>
+            <SelectPopup>
+              <SelectItem value="context-only">Context only</SelectItem>
+              {contextProjects.map((binding) => {
+                const key = `${binding.project.environmentId}:${binding.project.projectId}`;
+                return (
+                  <SelectItem key={key} value={key}>
+                    {binding.project.projectId} · {binding.project.environmentId}
+                  </SelectItem>
+                );
+              })}
+            </SelectPopup>
+          </Select>
+        </div>
       }
     >
       <div className="border-y border-border/60">
@@ -606,7 +714,16 @@ export function AxisLearningSettings({
                       {action === "rollback" ? <RotateCcwIcon /> : <CheckIcon />}
                       {action === "rollback" ? "Roll back" : "Activate"}
                     </Button>
-                  ) : null}
+                  ) : (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void deactivate(version)}
+                    >
+                      <XIcon /> Deactivate
+                    </Button>
+                  )}
                 </div>
               );
             })}

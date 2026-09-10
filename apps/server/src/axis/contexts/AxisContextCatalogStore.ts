@@ -91,6 +91,27 @@ export const make = Effect.gen(function* () {
       const updatedAt = DateTime.formatIso(yield* DateTime.now);
       return yield* sql.withTransaction(
         Effect.gen(function* () {
+          const currentRows = yield* sql<CatalogRow>`
+            SELECT
+              revision AS "revision",
+              catalog_json AS "catalogJson",
+              updated_at AS "updatedAt"
+            FROM axis_context_catalog
+            WHERE singleton = 1
+              AND revision = ${input.expectedRevision}
+          `;
+          const current = currentRows[0];
+          let removedContextIds: ReadonlyArray<string> = [];
+          if (current !== undefined) {
+            const currentCatalog = yield* decodeCatalogJson(current.catalogJson).pipe(
+              Effect.mapError(persistenceError("decode current catalog")),
+            );
+            const nextContextIds = new Set(input.catalog.contexts.map((context) => context.id));
+            removedContextIds = currentCatalog.contexts
+              .map((context) => context.id)
+              .filter((contextId) => !nextContextIds.has(contextId));
+          }
+
           const rows = yield* sql<CatalogRow>`
             UPDATE axis_context_catalog
             SET
@@ -199,26 +220,44 @@ export const make = Effect.gen(function* () {
                  )
             `;
 
-            yield* sql`
-              DELETE FROM axis_learning_active_versions
-              WHERE context_id NOT IN ${sql.in(contextIds)}
-            `;
-            yield* sql`
-              DELETE FROM axis_learning_lifecycle_events
-              WHERE context_id NOT IN ${sql.in(contextIds)}
-            `;
-            yield* sql`
-              DELETE FROM axis_learning_versions
-              WHERE context_id NOT IN ${sql.in(contextIds)}
-            `;
-            yield* sql`
-              DELETE FROM axis_learning_proposals
-              WHERE context_id NOT IN ${sql.in(contextIds)}
-            `;
-            yield* sql`
-              DELETE FROM axis_learning_evidence
-              WHERE context_id NOT IN ${sql.in(contextIds)}
-            `;
+            if (removedContextIds.length > 0) {
+              yield* sql`
+                DELETE FROM axis_learning_active_versions
+                WHERE context_id IN ${sql.in(removedContextIds)}
+              `;
+              yield* sql`
+                DELETE FROM axis_learning_lifecycle_events
+                WHERE context_id IN ${sql.in(removedContextIds)}
+              `;
+              yield* sql`
+                DELETE FROM axis_learning_versions
+                WHERE context_id IN ${sql.in(removedContextIds)}
+              `;
+              yield* sql`
+                DELETE FROM axis_learning_proposals
+                WHERE context_id IN ${sql.in(removedContextIds)}
+              `;
+              yield* sql`
+                DELETE FROM axis_learning_evidence
+                WHERE context_id IN ${sql.in(removedContextIds)}
+              `;
+              yield* sql`
+                DELETE FROM axis_project_profiles
+                WHERE context_id IN ${sql.in(removedContextIds)}
+              `;
+              yield* sql`
+                DELETE FROM axis_task_extensions
+                WHERE context_id IN ${sql.in(removedContextIds)}
+              `;
+              yield* sql`
+                DELETE FROM axis_task_commands
+                WHERE context_id IN ${sql.in(removedContextIds)}
+              `;
+              yield* sql`
+                DELETE FROM axis_task_lifecycle_events
+                WHERE context_id IN ${sql.in(removedContextIds)}
+              `;
+            }
           }
           return rows;
         }),

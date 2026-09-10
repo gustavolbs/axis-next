@@ -168,6 +168,15 @@ export const make = Effect.gen(function* () {
         message: "The selected Work Hub source's provider is disabled.",
       });
     }
+    if (
+      capability.compatibleDrivers.length > 0 &&
+      !capability.compatibleDrivers.includes(instance.driverKind)
+    ) {
+      return yield* new AxisWorkHubSourceValidationError({
+        sourceId,
+        message: `The selected Work Hub source's MCP is not compatible with provider driver '${instance.driverKind}'.`,
+      });
+    }
     return { source, capability, instance, providerKey } as const;
   });
 
@@ -246,9 +255,9 @@ export const make = Effect.gen(function* () {
         inFlight.set(sourceId, created);
         yield* collect(sourceId).pipe(
           Effect.onExit((exit) =>
-            Deferred.done(created, exit).pipe(
-              Effect.andThen(Effect.sync(() => inFlight.delete(sourceId))),
-            ),
+            Effect.sync(() => {
+              if (inFlight.get(sourceId) === created) inFlight.delete(sourceId);
+            }).pipe(Effect.andThen(Deferred.done(created, exit))),
           ),
           Effect.forkDetach,
         );

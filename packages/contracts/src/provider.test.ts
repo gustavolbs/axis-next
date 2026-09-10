@@ -157,6 +157,21 @@ describe("ProviderSendTurnInput", () => {
     expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("ultrathink");
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
   });
+
+  it("accepts server-resolved Axis turn metadata", () => {
+    expect(
+      decodeProviderSendTurnInput({
+        threadId: "thread-1",
+        axisContextInstructions: "## Axis effective context\nRun focused tests.",
+        axisContextDigest: "axis-digest",
+        axisTokenEfficiencyPolicy: { engine: "deterministic", mode: "compress" },
+      }),
+    ).toMatchObject({
+      threadId: "thread-1",
+      axisContextDigest: "axis-digest",
+      axisTokenEfficiencyPolicy: { engine: "deterministic", mode: "compress" },
+    });
+  });
 });
 
 describe("provider feedback", () => {

@@ -58,6 +58,13 @@ export type GetProviderSessionRuntimeInput = typeof GetProviderSessionRuntimeInp
 export const DeleteProviderSessionRuntimeInput = Schema.Struct({ threadId: ThreadId });
 export type DeleteProviderSessionRuntimeInput = typeof DeleteProviderSessionRuntimeInput.Type;
 
+export const CompareAndSetProviderSessionRuntimeInput = Schema.Struct({
+  expected: ProviderSessionRuntime,
+  next: ProviderSessionRuntime,
+});
+export type CompareAndSetProviderSessionRuntimeInput =
+  typeof CompareAndSetProviderSessionRuntimeInput.Type;
+
 /**
  * ProviderSessionRuntimeRepository - Service tag for provider runtime persistence.
  */
@@ -72,6 +79,23 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
     readonly upsert: (
       runtime: ProviderSessionRuntime,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+
+    /**
+     * Atomically replaces a row only when the complete captured snapshot,
+     * including lastSeenAt as its optimistic version, still matches.
+     */
+    readonly compareAndSet: (
+      input: CompareAndSetProviderSessionRuntimeInput,
+    ) => Effect.Effect<boolean, ProviderSessionRuntimeRepositoryError>;
+
+    /**
+     * Acquires the SQLite write transaction with a conditional no-op update,
+     * then holds it while the supplied critical section runs.
+     */
+    readonly withLease: <A, E, R>(input: {
+      readonly expected: ProviderSessionRuntime;
+      readonly effect: Effect.Effect<A, E, R>;
+    }) => Effect.Effect<Option.Option<A>, E | ProviderSessionRuntimeRepositoryError, R>;
 
     /**
      * Read provider runtime state by canonical thread id.
@@ -108,6 +132,13 @@ const ProviderSessionRuntimeDbRowSchema = ProviderSessionRuntime.mapFields(
     runtimePayload: Schema.NullOr(Schema.fromJsonString(Schema.Unknown)),
   }),
 );
+
+const CompareAndSetProviderSessionRuntimeEncodedInput = Schema.Struct({
+  expected: ProviderSessionRuntimeDbRowSchema,
+  next: ProviderSessionRuntimeDbRowSchema,
+});
+
+const CompareAndSetResult = Schema.Struct({ threadId: Schema.String });
 
 const ProviderSessionRuntimeRawDbRowSchema = Schema.Struct({
   threadId: Schema.String,
@@ -186,6 +217,34 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const compareAndSetRuntimeRow = SqlSchema.findOneOption({
+    Request: CompareAndSetProviderSessionRuntimeEncodedInput,
+    Result: CompareAndSetResult,
+    execute: ({ expected, next }) =>
+      sql`
+        UPDATE provider_session_runtime
+        SET
+          provider_name = ${next.providerName},
+          provider_instance_id = ${next.providerInstanceId},
+          adapter_key = ${next.adapterKey},
+          runtime_mode = ${next.runtimeMode},
+          status = ${next.status},
+          last_seen_at = ${next.lastSeenAt},
+          resume_cursor_json = ${next.resumeCursor},
+          runtime_payload_json = ${next.runtimePayload}
+        WHERE thread_id = ${expected.threadId}
+          AND provider_name IS ${expected.providerName}
+          AND provider_instance_id IS ${expected.providerInstanceId}
+          AND adapter_key IS ${expected.adapterKey}
+          AND runtime_mode IS ${expected.runtimeMode}
+          AND status IS ${expected.status}
+          AND last_seen_at IS ${expected.lastSeenAt}
+          AND resume_cursor_json IS ${expected.resumeCursor}
+          AND runtime_payload_json IS ${expected.runtimePayload}
+        RETURNING thread_id AS "threadId"
+      `,
+  });
+
   const getRuntimeRowByThreadId = SqlSchema.findOneOption({
     Request: GetRuntimeRequestSchema,
     Result: ProviderSessionRuntimeRawDbRowSchema,
@@ -242,6 +301,50 @@ export const make = Effect.gen(function* () {
           "ProviderSessionRuntimeRepository.upsert:query",
           "ProviderSessionRuntimeRepository.upsert:encodeRequest",
           { threadId: runtime.threadId },
+        ),
+      ),
+    );
+
+  const compareAndSet: ProviderSessionRuntimeRepository["Service"]["compareAndSet"] = (
+    input,
+  ) =>
+    compareAndSetRuntimeRow(input).pipe(
+      Effect.map(Option.isSome),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProviderSessionRuntimeRepository.compareAndSet:query",
+          "ProviderSessionRuntimeRepository.compareAndSet:encodeRequest",
+          { threadId: input.expected.threadId },
+        ),
+      ),
+    );
+
+  const withLease: ProviderSessionRuntimeRepository["Service"]["withLease"] = ({
+    expected,
+    effect,
+  }) =>
+    sql.withTransaction(
+      compareAndSetRuntimeRow({ expected, next: expected }).pipe(
+        Effect.map(Option.isSome),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.withLease:query",
+            "ProviderSessionRuntimeRepository.withLease:encodeRequest",
+            { threadId: expected.threadId },
+          ),
+        ),
+        Effect.flatMap((acquired) =>
+          acquired ? Effect.map(effect, Option.some) : Effect.succeed(Option.none()),
+        ),
+      ),
+    ).pipe(
+      Effect.catchTag("SqlError", (cause) =>
+        Effect.fail(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.withLease:transaction",
+            "ProviderSessionRuntimeRepository.withLease:transaction",
+            { threadId: expected.threadId },
+          )(cause),
         ),
       ),
     );
@@ -324,6 +427,8 @@ export const make = Effect.gen(function* () {
 
   return {
     upsert,
+    compareAndSet,
+    withLease,
     getByThreadId,
     list,
     deleteByThreadId,

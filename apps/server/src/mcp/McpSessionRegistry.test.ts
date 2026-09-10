@@ -1,6 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+  TokenEfficiencyEngineId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
@@ -107,6 +112,30 @@ it.effect("keeps a credential alive across turns that never touch an MCP tool", 
     }
 
     expect((yield* registry.resolve(token))?.threadId).toBe(threadId);
+  }),
+);
+
+it.effect("updates the token-efficiency policy on the existing thread credential", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const threadId = ThreadId.make("thread-policy");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+
+    yield* registry.updateTokenEfficiencyPolicy({
+      threadId,
+      policy: { engine: TokenEfficiencyEngineId.make("deterministic"), mode: "compress" },
+    });
+    expect((yield* registry.resolve(token))?.tokenEfficiencyPolicy).toEqual({
+      engine: "deterministic",
+      mode: "compress",
+    });
+
+    yield* registry.updateTokenEfficiencyPolicy({ threadId });
+    expect((yield* registry.resolve(token))?.tokenEfficiencyPolicy).toBeUndefined();
   }),
 );
 
