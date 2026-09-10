@@ -27,6 +27,19 @@ describe("ExecutionEnvironmentDescriptor", () => {
     ).toBe(true);
   });
 
+  it("treats a missing Axis workflow capability as unsupported under version skew", () => {
+    expect(decodeDescriptor(descriptor).capabilities.axisWorkflow).toBeUndefined();
+  });
+
+  it("preserves an advertised Axis workflow capability", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, axisWorkflow: true },
+      }).capabilities.axisWorkflow,
+    ).toBe(true);
+  });
+
   it("treats a missing attachment upload capability as unsupported", () => {
     expect(decodeDescriptor(descriptor).capabilities.attachmentUploads).toBeUndefined();
   });

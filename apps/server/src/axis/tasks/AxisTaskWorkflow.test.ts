@@ -336,6 +336,24 @@ for (const requestKind of ["approval", "user-input"])
     ).pipe(Effect.provide(layer)),
   );
 
+it.effect("recognizes provider-confirmed interruption before a pending turn starts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const s = yield* setup(true);
+      const attempt = yield* s.workflow.dispatch(input).pipe(Effect.forkScoped);
+      yield* Queue.take(s.requested);
+      assert.equal((yield* s.workflow.getState(input)).status, "accepted");
+      const cancellation = yield* Fiber.interrupt(attempt).pipe(Effect.forkScoped);
+      assert.equal(yield* Deferred.await(s.interrupted), Workflow.attemptThreadId(input));
+      yield* Deferred.succeed(s.allowInterrupt, undefined);
+      yield* Fiber.join(cancellation);
+      const interrupted = yield* s.workflow.getState(input);
+      assert.equal(interrupted.status, "interrupted");
+      assert.equal(interrupted.execution.turnId, null);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect(
   "fiber interruption waits for the provider and retry has a fresh canonical identity",
   () =>

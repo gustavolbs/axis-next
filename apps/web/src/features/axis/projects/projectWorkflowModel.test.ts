@@ -13,6 +13,7 @@ import {
   canStartProjectWorkflow,
   filterProjectThreadTasks,
   isSupportedAxisWorkflowSkill,
+  preferObservedWorkflowTask,
   workflowStepStatusLabel,
 } from "./projectWorkflowModel";
 
@@ -54,6 +55,23 @@ describe("project workflow model", () => {
     expect(isSupportedAxisWorkflowSkill("impact")).toBe(true);
     expect(isSupportedAxisWorkflowSkill("plan")).toBe(true);
     expect(isSupportedAxisWorkflowSkill("execute")).toBe(false);
+  });
+
+  it("uses settlement returned by workflow get without adopting another task or stale revision", () => {
+    const listed = task();
+    const settled = {
+      ...listed,
+      revision: 1,
+      steps: [{ ...listed.steps[0]!, status: "completed" as const }, ...listed.steps.slice(1)],
+    };
+    expect(preferObservedWorkflowTask(listed, settled)).toEqual(settled);
+    expect(preferObservedWorkflowTask(settled, listed)).toEqual(settled);
+    expect(
+      preferObservedWorkflowTask(listed, {
+        ...settled,
+        threadId: ThreadId.make("another-thread"),
+      }),
+    ).toEqual(listed);
   });
 
   it("requires the authoritative thread, model and an unstarted supported step", () => {

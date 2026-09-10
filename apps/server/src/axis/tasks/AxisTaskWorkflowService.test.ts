@@ -749,6 +749,34 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("cancels and permits retry when interruption is confirmed before turn start", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const s = yield* setup();
+      const { input } = yield* s.create("cancel-before-turn");
+      const started = yield* s.service.start(typedCaller, input);
+      yield* Queue.take(s.requested);
+      const cancelled = yield* s.service.cancel(typedCaller, {
+        ...input,
+        expectedRevision: started.task.revision,
+      });
+      assert.equal(cancelled.state.status, "interrupted");
+      assert.equal(cancelled.state.execution.turnId, null);
+      const retry = {
+        ...input,
+        expectedRevision: cancelled.task.revision,
+        previousCommandId: input.commandId,
+        commandId: CommandId.make("retry-after-pre-turn-cancel"),
+      };
+      yield* s.service.retry(typedCaller, retry);
+      const next = yield* Queue.take(s.requested);
+      assert.equal(next.commandId, retry.commandId);
+      assert.notEqual(next.payload.threadId, Workflow.attemptThreadId(yield* s.admitted(input)));
+      yield* s.finish(retry);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect(
   "another service instance cancels through a durable orchestration interrupt receipt",
   () =>
