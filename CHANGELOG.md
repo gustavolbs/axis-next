@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.0] - 2026-09-10
+
+### Added
+
+- Inspect context Work Hub sources and synchronization status from the selected physical project, with explicit unavailable states for unsupported scoped navigation.
+
 ## [0.7.1] - 2026-09-10
 
 ### Fixed
