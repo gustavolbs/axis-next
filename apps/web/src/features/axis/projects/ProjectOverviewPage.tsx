@@ -37,6 +37,7 @@ import { resolveDefaultProviderModelSelection } from "~/providerInstances";
 import { useSettingsProjectGroups } from "~/components/settings/ProjectSettingsPanel";
 import { ProjectOnboardingPanel } from "./ProjectOnboardingPanel";
 import { ProjectPatternsPanel } from "./ProjectPatternsPanel";
+import { AxisLearningSettings } from "../settings/AxisLearningSettings";
 import type {
   ProjectOnboardingConnectionState,
   ProjectOnboardingProgress,
@@ -294,6 +295,14 @@ export function ProjectOverviewPage({
     selectedProject === null
       ? "unauthorized"
       : (connectionStates.get(selectedProject.environmentId) ?? "disconnected");
+  const learningConnectionState =
+    onboardingConnectionState === "connected"
+      ? "connected"
+      : onboardingConnectionState === "connecting"
+        ? "connecting"
+        : onboardingConnectionState === "error"
+          ? "error"
+          : "disconnected";
   const onboardingCommands = useMemo(
     () => ({
       analyze: async () => {
@@ -499,7 +508,27 @@ export function ProjectOverviewPage({
                 {viewTitle(target)}
               </Button>
             ))}
-            {["Workflow", "Integrations", "Learning"].map((label) => (
+            <Button
+              size="sm"
+              variant={view === "learning" ? "secondary" : "ghost"}
+              aria-current={view === "learning" ? "page" : undefined}
+              onClick={() =>
+                void navigate({
+                  search: {
+                    view: "learning",
+                    ...(selectedProject
+                      ? {
+                          environmentId: selectedProject.environmentId,
+                          projectId: selectedProject.id,
+                        }
+                      : {}),
+                  },
+                })
+              }
+            >
+              Learning
+            </Button>
+            {["Workflow", "Integrations"].map((label) => (
               <Button key={label} size="sm" variant="ghost" disabled>
                 {label} · Unavailable
               </Button>
@@ -606,7 +635,18 @@ export function ProjectOverviewPage({
                 : { physicalProjectKey: overviewGroup.selectedMember.physicalProjectKey })}
             />
           ) : null}
-          {view !== "overview" && view !== "patterns" ? (
+          {view === "learning" && selectedScope !== null && selectedProject !== null ? (
+            <AxisLearningSettings
+              key={`${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
+              environmentId={selectedProject.environmentId}
+              contexts={[]}
+              projectBindings={[]}
+              fixedScope={selectedScope}
+              projectLabel={overviewGroup.label}
+              connectionState={learningConnectionState}
+            />
+          ) : null}
+          {view !== "overview" && view !== "patterns" && view !== "learning" ? (
             <SettingsSection
               title={viewTitle(view)}
               description="This project feature is not available yet."

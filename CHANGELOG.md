@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.0] - 2026-09-10
+
+### Added
+
+- Open scoped Learning evidence, proposal review, and version actions from Project overview, with explicit analysis requests through the configured engine.
+
+### Fixed
+
+- Reset Learning drafts when switching context or project, disable disconnected writes, and bound analysis to the latest 32 evidence records.
+
 ## [0.6.2] - 2026-09-10
 
 ### Fixed
