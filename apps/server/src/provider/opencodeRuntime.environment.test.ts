@@ -21,7 +21,6 @@ import {
   OpenCodeRuntimeError,
   makeOpenCodeGatewayConfig,
   openCodeGatewayModels,
-  OPENCODE_GATEWAY_FALLBACK_MODELS,
   OpenCodeRuntimeLive,
   resolveOpenCodeConfigContent,
   resolveOpenCodeServerPassword,
@@ -67,9 +66,12 @@ describe("OpenCode RouteMux config", () => {
     ]);
   });
 
-  it("generates a credential-free provider config with coordinator and reviewer agents", () => {
+  it("generates a credential-free provider config from the supplied live catalog", () => {
     expect(gateway).toBeDefined();
-    const models = OPENCODE_GATEWAY_FALLBACK_MODELS;
+    const models = [
+      { slug: "minimax/minimax-m3", name: "A user-selected coordinator" },
+      { slug: "deepseek/deepseek-v4-pro-relay", name: "A user-selected reviewer" },
+    ];
     const config = JSON.parse(makeOpenCodeGatewayConfig({ gateway: gateway!, models })) as {
       provider: Record<
         string,
@@ -79,24 +81,35 @@ describe("OpenCode RouteMux config", () => {
           models: Record<string, { name: string }>;
         }
       >;
-      agent: Record<string, { mode: string; model: string }>;
+      agent: Record<string, { mode: string; model?: string }>;
     };
     const provider = config.provider.routemux!;
 
     expect(provider.npm).toBe("@ai-sdk/openai-compatible");
     expect(provider.options.baseURL).toBe("https://api.routemux.com/v1");
     expect(provider.options.apiKey).toBe("{env:ROUTEMUX_API_KEY}");
-    expect(provider.models["minimax/minimax-m3"]).toEqual({ name: "MiniMax M3" });
-    expect(config.agent.build).toEqual({
-      mode: "primary",
-      model: "routemux/minimax/minimax-m3",
+    expect(provider.models["minimax/minimax-m3"]).toEqual({
+      name: "A user-selected coordinator",
     });
     expect(config.agent.reviewer).toEqual({
       mode: "subagent",
-      model: "routemux/deepseek/deepseek-v4-pro-cheap",
     });
+    expect(JSON.stringify(config)).toContain("deepseek-v4-pro-relay");
+    expect(JSON.stringify(config)).not.toContain("deepseek-v4-pro-cheap");
+    expect(Object.values(config.agent).every((agent) => agent.model === undefined)).toBe(true);
     expect(JSON.stringify(config)).not.toContain("sk-");
     expect(JSON.stringify(config).toLowerCase()).not.toContain("claude");
+  });
+
+  it("does not invent models or role assignments when RouteMux has no catalog", () => {
+    const config = JSON.parse(makeOpenCodeGatewayConfig({ gateway: gateway!, models: [] })) as {
+      provider: Record<string, { models: Record<string, unknown> }>;
+      agent: Record<string, { mode: string; model?: string }>;
+    };
+
+    expect(config.provider.routemux?.models).toEqual({});
+    expect(config.agent.reviewer).toEqual({ mode: "subagent" });
+    expect(JSON.stringify(config)).not.toMatch(/minimax|deepseek|glm|gpt|"model"\s*:/iu);
   });
 });
 

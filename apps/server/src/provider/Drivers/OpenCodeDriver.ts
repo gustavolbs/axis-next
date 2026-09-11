@@ -36,10 +36,10 @@ import {
 } from "../Layers/OpenCodeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
   makeOpenCodeGatewayConfig,
   openCodeGatewayModels,
-  OPENCODE_GATEWAY_FALLBACK_MODELS,
   OpenCodeRuntime,
 } from "../opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
@@ -116,16 +116,28 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
       const inheritedProcessEnv = mergeProviderInstanceEnvironment(environment);
       const gatewayDefinition = getProviderGateway(gateway);
+      // A RouteMux instance has one authoritative catalog: the models returned
+      // by its key-scoped listing. Do not let OpenCode's generic custom-model
+      // settings reintroduce slugs that RouteMux never advertised.
+      const snapshotConfig =
+        gatewayDefinition?.opencode === undefined
+          ? effectiveConfig
+          : { ...effectiveConfig, customModels: [] };
+      const gatewayProviderId = gatewayDefinition?.opencode?.providerId;
+      const restrictToGatewayCatalog = (draft: ServerProviderDraft): ServerProviderDraft =>
+        gatewayProviderId === undefined
+          ? draft
+          : {
+              ...draft,
+              models: draft.models.filter((model) =>
+                model.slug.startsWith(`${gatewayProviderId}/`),
+              ),
+            };
       const gatewayModelSource = yield* makeGatewayModelSource({
         gateway: gatewayDefinition,
         environment: inheritedProcessEnv,
         httpClient,
       });
-      const configuredModels = effectiveConfig.customModels.map((entry) =>
-        typeof entry === "string"
-          ? { slug: entry, name: entry }
-          : { slug: entry.slug, name: entry.name ?? entry.slug },
-      );
       // OpenCode reads its provider and agent map before the local server
       // starts. Resolve the live catalog once here, with a short bound, then
       // inject only the generated config into this instance's child env.
@@ -139,10 +151,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const openCodeGatewayCatalog =
         gatewayDefinition?.opencode === undefined
           ? []
-          : openCodeGatewayModels(
-              liveGatewayModels ?? [...configuredModels, ...OPENCODE_GATEWAY_FALLBACK_MODELS],
-              gatewayDefinition.opencode.providerId,
-            );
+          : openCodeGatewayModels(liveGatewayModels ?? [], gatewayDefinition.opencode.providerId);
       const processEnv =
         gatewayDefinition?.opencode === undefined
           ? inheritedProcessEnv
@@ -195,10 +204,11 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       );
 
       const checkProvider = checkOpenCodeProviderStatus(
-        effectiveConfig,
+        snapshotConfig,
         serverConfig.cwd,
         processEnv,
       ).pipe(
+        Effect.map(restrictToGatewayCatalog),
         Effect.map(stampIdentity),
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         Effect.provideService(OpenCodeRuntime, openCodeRuntime),
@@ -256,7 +266,11 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           checkProviderOnSettingsChange: () => false,
           refreshOnInterval: false,
           initialSnapshot: (settings) =>
-            makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+            makePendingOpenCodeProvider(
+              gatewayDefinition?.opencode === undefined
+                ? settings.provider
+                : { ...settings.provider, customModels: [] },
+            ).pipe(Effect.map(stampIdentity)),
           checkProvider,
           enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
             enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {

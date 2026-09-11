@@ -1,10 +1,16 @@
 # Changelog
 
+## [0.12.1] - 2026-09-10
+
+### Changed
+
+- RouteMux OpenCode now builds its model catalog only from the live RouteMux listing, filters unrelated OpenCode providers, and does not assign a hardcoded model by agent role.
+
 ## [0.12.0] - 2026-09-10
 
 ### Added
 
-- Add a RouteMux OpenCode gateway preset that uses OpenAI-compatible Chat Completions, live tool-capable model discovery, and isolated MiniMax coordinator and DeepSeek reviewer agents without exposing Claude models.
+- Add a RouteMux OpenCode gateway preset that uses OpenAI-compatible Chat Completions, live tool-capable model discovery, and no Claude models.
 
 ## [0.11.2] - 2026-09-10
 

@@ -47,3 +47,15 @@ restart before T3 Code can see configuration changes.
 
 Existing threads keep their selected model and options even when it disappears
 from the catalog. If OpenCode rejects that model, select an available one and retry.
+
+## RouteMux
+
+Use **RouteMux (OpenCode)** when you want OpenCode to call the OpenAI-compatible
+RouteMux gateway. Enter a RouteMux API key for the instance and refresh its
+provider status. The model picker is populated from the live, tool-capable
+catalog returned for that key; Claude models are omitted.
+
+The model selected in the composer is sent with each turn. T3 Code does not
+assign a MiniMax, DeepSeek, GLM, GPT, or any other model to an agent role. An
+OpenCode subagent without its own explicit configuration inherits the parent
+turn's selected model.

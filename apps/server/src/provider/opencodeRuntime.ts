@@ -44,16 +44,6 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
-/** Models used when a RouteMux listing is unavailable during process startup. */
-export const OPENCODE_GATEWAY_FALLBACK_MODELS: ReadonlyArray<{
-  readonly slug: string;
-  readonly name: string;
-}> = [
-  { slug: "minimax/minimax-m3", name: "MiniMax M3" },
-  { slug: "deepseek/deepseek-v4-pro-cheap", name: "DeepSeek V4 Pro Cheap" },
-  { slug: "zhipu/glm-5.3-flash", name: "GLM 5.3 Flash" },
-];
-
 function isClaudeModel(model: Pick<ServerProviderModel, "slug" | "name">): boolean {
   const haystack = `${model.slug} ${model.name}`.toLowerCase();
   return haystack.includes("claude") || haystack.startsWith("anthropic/");
@@ -78,18 +68,6 @@ export function openCodeGatewayModels(
   return result.toSorted((left, right) => left.slug.localeCompare(right.slug));
 }
 
-function selectOpenCodeGatewayModel(
-  models: ReadonlyArray<{ readonly slug: string; readonly name: string }>,
-  preferred: ReadonlyArray<(model: { readonly slug: string; readonly name: string }) => boolean>,
-  fallbackIndex: number,
-) {
-  return (
-    preferred.map((predicate) => models.find(predicate)).find((model) => model !== undefined) ??
-    models[fallbackIndex] ??
-    models[0]
-  );
-}
-
 /**
  * Build an OpenCode config for an OpenAI-compatible gateway.
  *
@@ -107,35 +85,6 @@ export function makeOpenCodeGatewayConfig(input: {
   const modelDefinitions = Object.fromEntries(
     models.map((model) => [model.slug, { name: model.name }]),
   );
-  const buildModel = selectOpenCodeGatewayModel(
-    models,
-    [
-      (model) => model.slug.toLowerCase() === "minimax/minimax-m3",
-      (model) =>
-        model.slug.toLowerCase().includes("minimax") && model.slug.toLowerCase().includes("m3"),
-    ],
-    0,
-  );
-  const reviewerModel = selectOpenCodeGatewayModel(
-    models,
-    [
-      (model) => model.slug.toLowerCase() === "deepseek/deepseek-v4-pro-cheap",
-      (model) => model.slug.toLowerCase() === "deepseek/deepseek-v4-pro",
-      (model) => model.slug.toLowerCase().includes("deepseek"),
-      (model) =>
-        model.slug.toLowerCase().includes("glm") || model.slug.toLowerCase().includes("zhipu"),
-    ],
-    1,
-  );
-  const modelRef = (model: { readonly slug: string } | undefined) =>
-    model ? `${opencode.providerId}/${model.slug}` : undefined;
-  const buildRef = modelRef(buildModel);
-  const reviewerRef = modelRef(reviewerModel);
-  const agents = {
-    ...(buildRef ? { build: { mode: "primary", model: buildRef } } : {}),
-    ...(buildRef ? { plan: { mode: "primary", model: buildRef } } : {}),
-    ...(reviewerRef ? { reviewer: { mode: "subagent", model: reviewerRef } } : {}),
-  };
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     provider: {
@@ -149,7 +98,11 @@ export function makeOpenCodeGatewayConfig(input: {
         models: modelDefinitions,
       },
     },
-    ...(Object.keys(agents).length > 0 ? { agent: agents } : {}),
+    // Keep the reviewer available for the parent's Task/subagent mechanism,
+    // while leaving its model unset so OpenCode inherits the model selected
+    // for the current session. Axis remains the source of the user's model
+    // choice; this generated config never assigns one by role.
+    agent: { reviewer: { mode: "subagent" } },
   });
 }
 

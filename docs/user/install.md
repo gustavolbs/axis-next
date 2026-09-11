@@ -93,9 +93,9 @@ subscription account reaches its quota. T3 Code does not automatically switch to
 paid API usage.
 
 The dialog also lists **RouteMux**, a pay-per-request gateway to models from many
-vendors. It is set up the same way — paste a key, get an isolated home and an
-**API billed** instance — and is described under
-[Claude → RouteMux](./providers-claude.md#routemux).
+vendors. The legacy Claude-compatible preset is described under
+[Claude → RouteMux](./providers-claude.md#routemux); the OpenAI-compatible
+OpenCode preset is described under [OpenCode → RouteMux](./providers-opencode.md#routemux).
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md), and
