@@ -15,6 +15,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   AxisContextProjectScope,
+  AxisSkillId,
   AxisTaskAcceptanceCriterion,
   AxisTaskExtension,
   AxisTaskId,
@@ -140,7 +141,7 @@ const buildSteps = (
     input.steps.length > 0 ? input.steps : (["intake", "implement", "verify"] as const);
   return skillIds.map((skillId, index) => ({
     id: AxisTaskStepId.make(`step-${index + 1}`),
-    skillId: AxisTaskStepId.make(skillId),
+    skillId: AxisSkillId.make(skillId),
     status: "not-executed" as const,
     turnId: null,
     commandId: null,

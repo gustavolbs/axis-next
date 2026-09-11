@@ -121,7 +121,7 @@ const intentIdFor = (input: AxisTrelloActionInput): string => {
 export const applyAxisTrelloAction = (
   adapter: AxisTrelloRemoteAdapter,
   input: AxisTrelloActionInput,
-): Effect.Effect<AxisTrelloActionResult, AxisTrelloActionsError, SqlClient.SqlClient> =>
+) =>
   Effect.gen(function* () {
     if (input.kind === "comment" && input.body === null) {
       return yield* error("missing_field", "A comment action requires a body.");
@@ -238,7 +238,9 @@ export const applyAxisTrelloAction = (
       status: finalStatus,
       appliedAt: reconciled ? createdAt : null,
       remoteId: remote.remoteId,
-      currentList: input.kind === "move" && "currentList" in remote ? remote.currentList : null,
+      ...(input.kind === "move" && "currentList" in remote
+        ? { currentList: remote.currentList }
+        : {}),
     };
   });
 

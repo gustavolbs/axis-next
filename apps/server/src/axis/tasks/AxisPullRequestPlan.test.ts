@@ -12,11 +12,17 @@ import {
   AxisTaskStepId,
   type AxisTaskExtension,
   type AxisContextProjectScope,
+  AxisContextId,
+  EnvironmentId,
+  ProjectId,
 } from "@t3tools/contracts";
 
 const scope: AxisContextProjectScope = {
-  contextId: "ctx-1",
-  project: { environmentId: "env-1", projectId: "proj-1" },
+  contextId: AxisContextId.make("ctx-1"),
+  project: {
+    environmentId: EnvironmentId.make("env-1"),
+    projectId: ProjectId.make("proj-1"),
+  },
 };
 
 const baseTask: AxisTaskExtension = {
@@ -137,7 +143,7 @@ it.effect("scope mismatch is rejected", () =>
     const error = yield* Effect.flip(
       planAxisPullRequest({
         ...baseInput,
-        scope: { ...scope, contextId: "ctx-other" },
+        scope: { ...scope, contextId: AxisContextId.make("ctx-other") },
       }),
     );
     assert.instanceOf(error, AxisPullRequestPlanError);
@@ -172,7 +178,13 @@ it.effect("plansAreEqual is content-addressed and ignores unrelated timing field
     assert.equal(plansAreEqual(planA, planC), false);
     assert.equal(sameScope(scope, scope), true);
     assert.equal(
-      sameScope(scope, { ...scope, project: { environmentId: "env-2", projectId: "proj-1" } }),
+      sameScope(scope, {
+        ...scope,
+        project: {
+          environmentId: EnvironmentId.make("env-2"),
+          projectId: ProjectId.make("proj-1"),
+        },
+      }),
       false,
     );
   }),

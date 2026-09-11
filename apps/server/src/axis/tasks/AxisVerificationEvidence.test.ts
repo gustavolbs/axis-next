@@ -13,12 +13,22 @@ import {
   getAxisVerificationEvidence,
   invalidateStaleAxisVerificationEvidence,
   recordAxisVerificationEvidence,
-} from "../../axis/tasks/AxisVerificationEvidence.ts";
-import { AxisTaskId, AxisTaskStepId, CommandId } from "@t3tools/contracts";
+} from "./AxisVerificationEvidence.ts";
+import {
+  AxisContextId,
+  AxisTaskId,
+  AxisTaskStepId,
+  CommandId,
+  EnvironmentId,
+  ProjectId,
+} from "@t3tools/contracts";
 
 const scope = {
-  contextId: "ctx-1",
-  project: { environmentId: "env-1", projectId: "proj-1" },
+  contextId: AxisContextId.make("ctx-1"),
+  project: {
+    environmentId: EnvironmentId.make("env-1"),
+    projectId: ProjectId.make("proj-1"),
+  },
 } as const;
 
 const baseEvidence = {
@@ -107,16 +117,17 @@ layer("AxisVerificationEvidence", (it) => {
         coveredFilesChanged({
           evidence: baseEvidence,
           currentSnapshot: [
-            { path: baseEvidence.coveredFiles[0], digest: "sha256:abc" },
-            { path: baseEvidence.coveredFiles[1], digest: "sha256:def" },
+            { path: baseEvidence.coveredFiles[0] as string, digest: "sha256:abc" },
+            { path: baseEvidence.coveredFiles[1] as string, digest: "sha256:def" },
           ],
         }),
         false,
       );
+      assert.equal(baseEvidence.coveredFiles[0], baseEvidence.coveredFiles[0]);
       assert.equal(
         coveredFilesChanged({
           evidence: baseEvidence,
-          currentSnapshot: [{ path: baseEvidence.coveredFiles[0], digest: "sha256:abc" }],
+          currentSnapshot: [{ path: baseEvidence.coveredFiles[1] as string, digest: "sha256:abc" }],
         }),
         true,
       );
@@ -177,7 +188,13 @@ layer("AxisVerificationEvidence", (it) => {
       yield* runMigrations({ toMigrationInclusive: 66 });
 
       const scopeA = scope;
-      const scopeB = { ...scope, project: { environmentId: "env-2", projectId: "proj-1" } };
+      const scopeB = {
+        ...scope,
+        project: {
+          environmentId: EnvironmentId.make("env-2"),
+          projectId: ProjectId.make("proj-1"),
+        },
+      };
       yield* recordAxisVerificationEvidence({
         scope: scopeA,
         taskId,

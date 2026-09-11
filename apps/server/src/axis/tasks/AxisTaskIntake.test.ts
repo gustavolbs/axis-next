@@ -6,11 +6,14 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { AxisTaskIntakeError, createAxisTaskFromIntake } from "./AxisTaskIntake.ts";
-import { CommandId, ThreadId } from "@t3tools/contracts";
+import { AxisContextId, CommandId, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 
 const scope = {
-  contextId: "ctx-1",
-  project: { environmentId: "env-1", projectId: "proj-1" },
+  contextId: AxisContextId.make("ctx-1"),
+  project: {
+    environmentId: EnvironmentId.make("env-1"),
+    projectId: ProjectId.make("proj-1"),
+  },
 } as const;
 
 const baseInput = {
@@ -39,7 +42,7 @@ layer("AxisTaskIntake", (it) => {
 
       const first = yield* createAxisTaskFromIntake(baseInput);
       assert.equal(first.alreadyExists, false);
-      assert.equal(first.task.source.kind, "local");
+      assert.equal(first.task.source?.kind, "local");
       assert.equal(first.task.acceptanceCriteria.length, 2);
 
       const replay = yield* createAxisTaskFromIntake(baseInput);
@@ -97,8 +100,9 @@ layer("AxisTaskIntake", (it) => {
         },
       });
       assert.equal(trello.alreadyExists, false);
-      if (trello.task.source.kind === "trello") {
-        assert.equal(trello.task.source.cardId, "card-abc");
+      const trelloSource = trello.task.source;
+      if (trelloSource?.kind === "trello") {
+        assert.equal(trelloSource.cardId, "card-abc");
       } else {
         assert.fail("Expected trello source");
       }

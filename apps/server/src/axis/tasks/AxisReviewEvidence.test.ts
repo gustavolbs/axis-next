@@ -11,11 +11,23 @@ import {
   recordAxisReviewEvidence,
   revalidateAxisReviewEvidence,
 } from "./AxisReviewEvidence.ts";
-import { AxisTaskId, AxisTaskStepId, CommandId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  AxisContextId,
+  AxisTaskId,
+  AxisTaskStepId,
+  CommandId,
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 
 const scope = {
-  contextId: "ctx-1",
-  project: { environmentId: "env-1", projectId: "proj-1" },
+  contextId: AxisContextId.make("ctx-1"),
+  project: {
+    environmentId: EnvironmentId.make("env-1"),
+    projectId: ProjectId.make("proj-1"),
+  },
 } as const;
 
 const baseReview = {
@@ -137,7 +149,13 @@ layer("AxisReviewEvidence", (it) => {
       yield* runMigrations({ toMigrationInclusive: 67 });
 
       const scopeA = scope;
-      const scopeB = { ...scope, project: { environmentId: "env-2", projectId: "proj-1" } };
+      const scopeB = {
+        ...scope,
+        project: {
+          environmentId: EnvironmentId.make("env-2"),
+          projectId: ProjectId.make("proj-1"),
+        },
+      };
       yield* recordAxisReviewEvidence(baseReview);
       const other = yield* recordAxisReviewEvidence({
         ...baseReview,

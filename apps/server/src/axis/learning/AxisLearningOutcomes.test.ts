@@ -9,11 +9,14 @@ import {
   recordAxisLearningOutcome,
   summarizeAxisLearningOutcomes,
 } from "./AxisLearningOutcomes.ts";
-import { CommandId } from "@t3tools/contracts";
+import { AxisContextId, CommandId, EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 const scope = {
-  contextId: "ctx-1",
-  project: { environmentId: "env-1", projectId: "proj-1" },
+  contextId: AxisContextId.make("ctx-1"),
+  project: {
+    environmentId: EnvironmentId.make("env-1"),
+    projectId: ProjectId.make("proj-1"),
+  },
 } as const;
 
 const baseInput = {
@@ -95,7 +98,13 @@ layer("AxisLearningOutcomes", (it) => {
     Effect.gen(function* () {
       yield* runMigrations({ toMigrationInclusive: 70 });
       const scopeA = scope;
-      const scopeB = { ...scope, project: { environmentId: "env-2", projectId: "proj-1" } };
+      const scopeB = {
+        contextId: AxisContextId.make("ctx-1"),
+        project: {
+          environmentId: EnvironmentId.make("env-2"),
+          projectId: ProjectId.make("proj-1"),
+        },
+      };
       const a = yield* recordAxisLearningOutcome({
         ...baseInput,
         commandId: CommandId.make("cmd-A"),

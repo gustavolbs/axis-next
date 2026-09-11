@@ -7,11 +7,15 @@ import {
   deliveryPlanDigest,
   publishAxisPullRequestPlan,
 } from "./AxisPullRequestDelivery.ts";
+import { AxisContextId, EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 const baseInput = {
   scope: {
-    contextId: "ctx-1",
-    project: { environmentId: "env-1", projectId: "proj-1" },
+    contextId: AxisContextId.make("ctx-1"),
+    project: {
+      environmentId: EnvironmentId.make("env-1"),
+      projectId: ProjectId.make("proj-1"),
+    },
   },
   planDigest: "digest-1",
   source: {

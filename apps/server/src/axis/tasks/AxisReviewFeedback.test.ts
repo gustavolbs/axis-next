@@ -9,11 +9,15 @@ import {
   feedbackFingerprintFor,
   recordAxisReviewFeedback,
 } from "./AxisReviewFeedback.ts";
-import { CommandId } from "@t3tools/contracts";
+import { AxisContextId, CommandId, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { AxisReviewFeedbackResult } from "./AxisReviewFeedback.ts";
 
 const scope = {
-  contextId: "ctx-1",
-  project: { environmentId: "env-1", projectId: "proj-1" },
+  contextId: AxisContextId.make("ctx-1"),
+  project: {
+    environmentId: EnvironmentId.make("env-1"),
+    projectId: ProjectId.make("proj-1"),
+  },
 } as const;
 
 const baseFeedback = {
@@ -45,7 +49,11 @@ const baseFeedback = {
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-let first: { evidenceId: string } = { evidenceId: "" };
+let first: AxisReviewFeedbackResult = {
+  evidenceId: "" as never,
+  recordedAt: "",
+  alreadyRecorded: false,
+};
 
 layer("AxisReviewFeedback", (it) => {
   it.effect("records the feedback idempotently and updates an existing row", () =>
@@ -73,7 +81,13 @@ layer("AxisReviewFeedback", (it) => {
       yield* runMigrations({ toMigrationInclusive: 68 });
 
       yield* recordAxisReviewFeedback(baseFeedback);
-      const otherScope = { ...scope, project: { environmentId: "env-2", projectId: "proj-1" } };
+      const otherScope = {
+        contextId: AxisContextId.make("ctx-1"),
+        project: {
+          environmentId: EnvironmentId.make("env-2"),
+          projectId: ProjectId.make("proj-1"),
+        },
+      };
       const other = yield* recordAxisReviewFeedback({
         ...baseFeedback,
         scope: otherScope,
