@@ -114,10 +114,27 @@ layer("AxisProjectScope", (it) => {
           }),
         ],
         [
+          "project_environment_mismatch",
+          decodeRequest({
+            ...request(),
+            scope: {
+              ...request().scope,
+              project: { environmentId: "other", projectId: "project" },
+            },
+          }),
+        ],
+        [
           "project_not_bound",
           decodeRequest({
             ...request(),
             scope: { ...request().scope, project: { environmentId: "env", projectId: "other" } },
+          }),
+        ],
+        [
+          "provider_environment_mismatch",
+          decodeRequest({
+            ...request(),
+            provider: { environmentId: "other", instanceId: "codex" },
           }),
         ],
         ["provider_not_accessible", request("other")],
