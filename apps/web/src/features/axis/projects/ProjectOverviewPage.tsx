@@ -37,6 +37,7 @@ import { resolveDefaultProviderModelSelection } from "~/providerInstances";
 import { useSettingsProjectGroups } from "~/components/settings/ProjectSettingsPanel";
 import { ProjectOnboardingPanel } from "./ProjectOnboardingPanel";
 import { ProjectPatternsPanel } from "./ProjectPatternsPanel";
+import { ProjectIntegrationsPanel } from "./ProjectIntegrationsPanel";
 import { AxisLearningSettings } from "../settings/AxisLearningSettings";
 import type {
   ProjectOnboardingConnectionState,
@@ -529,11 +530,31 @@ export function ProjectOverviewPage({
             >
               Learning
             </Button>
-            {["Workflow", "Integrations"].map((label) => (
+            {["Workflow"].map((label) => (
               <Button key={label} size="sm" variant="ghost" disabled>
                 {label} · Unavailable
               </Button>
             ))}
+            <Button
+              size="sm"
+              variant={view === "integrations" ? "secondary" : "ghost"}
+              aria-current={view === "integrations" ? "page" : undefined}
+              onClick={() =>
+                void navigate({
+                  search: {
+                    view: "integrations",
+                    ...(selectedProject
+                      ? {
+                          environmentId: selectedProject.environmentId,
+                          projectId: selectedProject.id,
+                        }
+                      : {}),
+                  },
+                })
+              }
+            >
+              Integrations
+            </Button>
           </nav>
 
           <SettingsSection
@@ -647,7 +668,19 @@ export function ProjectOverviewPage({
               connectionState={learningConnectionState}
             />
           ) : null}
-          {view !== "overview" && view !== "patterns" && view !== "learning" ? (
+          {view === "integrations" && selectedScope !== null && selectedProject !== null ? (
+            <ProjectIntegrationsPanel
+              key={`${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
+              environmentId={selectedProject.environmentId}
+              scope={selectedScope}
+              projectLabel={overviewGroup.label}
+              connectionState={onboardingConnectionState}
+            />
+          ) : null}
+          {view !== "overview" &&
+          view !== "patterns" &&
+          view !== "learning" &&
+          view !== "integrations" ? (
             <SettingsSection
               title={viewTitle(view)}
               description="This project feature is not available yet."
