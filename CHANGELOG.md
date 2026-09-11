@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.12.7] - 2026-09-11
+
+### Fixed
+
+- Preserve a real provider execution id when `thread.started` arrives before
+  the domain turn-start event, and resolve the recorded provider from the
+  selected instance or session instead of hardcoding OpenCode.
+- Document the remaining boundary: internal OpenCode worker/reviewer
+  sessions are not yet registered as child runs by the Axis ingestion path,
+  and the current registry is process-local.
+
 ## [0.12.6] - 2026-09-11
 
 ### Added

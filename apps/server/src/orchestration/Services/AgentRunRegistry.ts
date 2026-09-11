@@ -1,15 +1,16 @@
 /**
  * AgentRunRegistry - Server-owned identity for dispatched agents.
  *
- * The router mints an `AgentRunId` for every dispatch at the moment the
- * turn-start command is processed. The record is updated as the provider
+ * The router mints an `AgentRunId` for every main T3 turn dispatch at the
+ * moment the turn-start command is processed. The record is updated as the provider
  * surfaces a real `providerExecutionId`, a parent linkage, and a terminal
  * status; the registry is the single source of truth for the correlation
  * between server-owned runs and provider-side session ids.
  *
- * Lifetime: records are kept until terminal status is set plus a short
- * retention window. The registry survives compaction and reconnect
- * events; it does not depend on `session.exited` sweeps.
+ * Lifetime: records are currently process-local and remain available for the
+ * lifetime of this registry. Durable retention and restart recovery are not
+ * implemented here. The registry survives compaction and reconnect events;
+ * it does not depend on `session.exited` sweeps.
  *
  * Identity rules enforced here:
  * - `agentRunId` is server-minted and unique across the lifetime of the
@@ -22,8 +23,10 @@
  * - `parentRunId` resolves through the registry so a child `session.created`
  *   that arrives after the parent dispatch still binds correctly.
  * - Cancellation, retry and reconnect reuse the existing `agentRunId`.
- * - Worker and reviewer runs are distinct because the router dispatches
- *   them separately; the registry never collapses two roles into one id.
+ * - Worker and reviewer roles are supported by the registry and remain
+ *   distinct when a server-owned dispatcher registers them. The current
+ *   provider ingestion path only discovers the main T3 turn; internal
+ *   OpenCode child sessions still need an explicit dispatch/lifecycle bridge.
  *
  * @module AgentRunRegistry
  */

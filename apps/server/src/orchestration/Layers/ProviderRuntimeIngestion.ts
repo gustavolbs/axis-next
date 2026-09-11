@@ -13,6 +13,7 @@ import {
   EventId,
   isToolLifecycleItemType,
   ProviderDriverKind,
+  ProviderExecutionId,
   ThreadId,
   type ThreadTokenUsageSnapshot,
   TurnId,
@@ -1000,6 +1001,15 @@ const make = Effect.gen(function* () {
   // server-owned record without forcing the runtime adapter to know about
   // the registry.
   const activeAgentRunIdByThreadId = new Map<ThreadId, AgentRunId>();
+  // Provider startup and domain events are delivered by separate streams.
+  // Keep the current real provider id when thread.started wins that race so
+  // the later turn-start-requested event can attach the same session. A
+  // provider session can span turns, but a restart may replace its id.
+  const providerExecutionIdByThreadId = yield* Cache.make<ThreadId, ProviderExecutionId>({
+    capacity: 10_000,
+    timeToLive: Duration.minutes(120),
+    lookup: () => Effect.die(new Error("provider execution id must be written by ingestion")),
+  });
 
   // Task names arrive on task.started/task.progress but not on task.completed,
   // so remember them per task to title the completion activity.
@@ -1019,6 +1029,32 @@ const make = Effect.gen(function* () {
 
   const lookupAgentRunForThread = (threadId: ThreadId) =>
     Effect.sync(() => activeAgentRunIdByThreadId.get(threadId) ?? null);
+
+  const rememberProviderExecutionIdForThread = (
+    threadId: ThreadId,
+    providerExecutionId: ProviderExecutionId,
+  ) => Cache.set(providerExecutionIdByThreadId, threadId, providerExecutionId);
+
+  const lookupProviderExecutionIdForThread = (threadId: ThreadId) =>
+    Cache.getOption(providerExecutionIdByThreadId, threadId).pipe(
+      Effect.map(Option.getOrUndefined),
+    );
+
+  const patchAgentRunProviderExecutionId = (
+    agentRunId: AgentRunId,
+    providerExecutionId: ProviderExecutionId,
+    threadId: ThreadId,
+  ) =>
+    agentRunRegistry.patch({ agentRunId, providerExecutionId }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("agent run provider execution id patch failed", {
+          threadId,
+          agentRunId,
+          providerExecutionId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
 
   // Apply a status change to the most recent agent run for a thread, if any
   // is tracked. Returns null when no run is tracked so callers can decide
@@ -1050,18 +1086,10 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const providerExecutionId = providerExecutionIdFrom(providerThreadId);
       if (providerExecutionId === null) return null;
+      yield* rememberProviderExecutionIdForThread(threadId, providerExecutionId);
       const agentRunId = yield* lookupAgentRunForThread(threadId);
       if (agentRunId === null) return null;
-      yield* agentRunRegistry.patch({ agentRunId, providerExecutionId }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("agent run provider execution id patch failed", {
-            threadId,
-            agentRunId,
-            providerExecutionId,
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
+      yield* patchAgentRunProviderExecutionId(agentRunId, providerExecutionId, threadId);
       return agentRunId;
     });
 
@@ -2269,14 +2297,37 @@ const make = Effect.gen(function* () {
   const processDomainEvent = (event: TurnStartRequestedDomainEvent) =>
     Effect.gen(function* () {
       const threadId = event.payload.threadId;
-      const provider = ProviderDriverKind.make("opencode");
+      const thread = yield* resolveThreadRuntimeContext(threadId);
+      const configuredProvider = event.payload.modelSelection?.instanceId
+        ? yield* providerService.getInstanceInfo(event.payload.modelSelection.instanceId).pipe(
+            Effect.map((info) => info.driverKind),
+            Effect.catchCause(() => Effect.succeed(undefined)),
+          )
+        : undefined;
+      const providerName = configuredProvider ?? thread?.session?.providerName ?? undefined;
+      if (!providerName) {
+        yield* Effect.logWarning("agent run registration skipped without a provider binding", {
+          threadId,
+          model: event.payload.modelSelection?.model,
+          providerInstanceId: event.payload.modelSelection?.instanceId,
+        });
+        return null;
+      }
+      const provider = ProviderDriverKind.make(providerName);
       const model = event.payload.modelSelection?.model;
+      const providerExecutionId = yield* lookupProviderExecutionIdForThread(threadId);
       const started = yield* agentRunRegistry.register({
         provider,
         ...(model !== undefined ? { model } : {}),
         role: "main",
       });
       yield* rememberAgentRunForThread(threadId, started.agentRunId);
+      if (providerExecutionId !== undefined) {
+        // A providerThreadId identifies the provider session, which can span
+        // multiple T3 turns. Mint the per-dispatch run first, then attach the
+        // session id so a later turn cannot reuse a terminal run.
+        yield* patchAgentRunProviderExecutionId(started.agentRunId, providerExecutionId, threadId);
+      }
       yield* Effect.annotateCurrentSpan({
         "axis.agent.runId": started.agentRunId,
         "axis.agent.role": started.role,
