@@ -395,7 +395,7 @@ export function ProjectOnboardingPanel({
         <SettingsSection title="Onboarding execution">
           <SettingsRow
             title="Starting a new analysis is unavailable"
-            description="Starting onboarding from this screen is not implemented yet. Existing analyses can be reviewed here."
+            description="Choose an available default model in Project settings before starting an analysis. Existing analyses remain available for review."
             status="Unavailable"
           />
         </SettingsSection>
@@ -437,7 +437,7 @@ export function ProjectOnboardingPanel({
             <SettingsRow
               key={source.path}
               title={source.path}
-              description={source.error ?? undefined}
+              description={source.error ?? source.warning}
               status={
                 source.status === "read"
                   ? "Read"

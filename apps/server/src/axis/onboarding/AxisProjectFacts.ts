@@ -26,11 +26,21 @@ export interface AxisProjectFactsResult {
   readonly diagnostics: ReadonlyArray<AxisProjectFactDiagnostic>;
 }
 
-const relevantScripts = new Set(["build", "dev", "lint", "start", "test", "test:coverage", "typecheck"]);
+const relevantScripts = new Set([
+  "build",
+  "dev",
+  "lint",
+  "start",
+  "test",
+  "test:coverage",
+  "typecheck",
+]);
 
-const digest = (value: string) => NodeCrypto.createHash("sha256").update(value, "utf8").digest("hex");
+const digest = (value: string) =>
+  NodeCrypto.createHash("sha256").update(value, "utf8").digest("hex");
 
-const sourceId = (path: string) => AxisOnboardingSourceId.make(`source-${digest(path).slice(0, 32)}`);
+const sourceId = (path: string) =>
+  AxisOnboardingSourceId.make(`source-${digest(path).slice(0, 32)}`);
 
 const factId = (source: AxisProjectSource, key: string, value: string) =>
   AxisOnboardingFactId.make(`fact-${digest(`${source.path}\0${key}\0${value}`).slice(0, 32)}`);
@@ -47,7 +57,9 @@ const makeFact = (source: AxisProjectSource, key: string, value: string): AxisOn
 });
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
-  typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 
 const stringList = (value: unknown): ReadonlyArray<string> | null => {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return null;
@@ -58,16 +70,20 @@ const workspacePatterns = (manifest: Record<string, unknown>): ReadonlyArray<str
   const workspaces = manifest.workspaces;
   if (Array.isArray(workspaces)) return stringList(workspaces) ?? [];
   const object = asRecord(workspaces);
-  return object === null ? [] : stringList(object.packages) ?? [];
+  return object === null ? [] : (stringList(object.packages) ?? []);
 };
 
 const globMatches = (pattern: string, path: string): boolean => {
-  const escaped = pattern.split("").map((character) => ".+?^${}()|[]\\".includes(character) ? `\\${character}` : character).join("");
+  const escaped = pattern
+    .split("")
+    .map((character) => (".+?^${}()|[]\\".includes(character) ? `\\${character}` : character))
+    .join("");
   const glob = escaped.replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*");
   return new RegExp(`^${glob.endsWith("\\/") ? glob.slice(0, -2) : glob}(?:/|$)`).test(path);
 };
 
-const packagePath = (path: string) => path === "package.json" ? "." : path.slice(0, -"/package.json".length);
+const packagePath = (path: string) =>
+  path === "package.json" ? "." : path.slice(0, -"/package.json".length);
 
 function addManifestFacts(
   source: AxisProjectSource,
@@ -77,7 +93,8 @@ function addManifestFacts(
   facts: AxisOnboardingFact[],
 ): void {
   const manager = manifest.packageManager;
-  if (typeof manager === "string" && manager.trim() !== "") facts.push(makeFact(source, "package-manager", manager));
+  if (typeof manager === "string" && manager.trim() !== "")
+    facts.push(makeFact(source, "package-manager", manager));
 
   const engines = asRecord(manifest.engines);
   for (const [name, value] of Object.entries(engines ?? {})) {
@@ -85,11 +102,16 @@ function addManifestFacts(
   }
 
   const currentPath = packagePath(source.path);
-  const patterns = rootManifest === manifest ? workspacePatterns(manifest) : workspacePatternsForPackages;
+  const patterns =
+    rootManifest === manifest ? workspacePatterns(manifest) : workspacePatternsForPackages;
   if (rootManifest === manifest && patterns.length > 0) {
     facts.push(makeFact(source, "workspace.type", "workspace"));
     facts.push(makeFact(source, "workspace.patterns", JSON.stringify(patterns)));
-  } else if (rootManifest !== null && currentPath !== "." && patterns.some((pattern) => globMatches(pattern, currentPath))) {
+  } else if (
+    rootManifest !== null &&
+    currentPath !== "." &&
+    patterns.some((pattern) => globMatches(pattern, currentPath))
+  ) {
     facts.push(makeFact(source, "workspace.type", "workspace-package"));
     facts.push(makeFact(source, "workspace.path", currentPath));
   } else if (currentPath === ".") {
@@ -118,18 +140,34 @@ export function deriveProjectFacts(
   const digests: AxisOnboardingDigest[] = [];
   const facts: AxisOnboardingFact[] = [];
   const diagnostics: AxisProjectFactDiagnostic[] = [];
-  const manifests = new Map<string, { source: AxisProjectSource; manifest: Record<string, unknown> }>();
+  const manifests = new Map<
+    string,
+    { source: AxisProjectSource; manifest: Record<string, unknown> }
+  >();
 
   for (const source of inventory.sources) {
     if (source.status !== "read" || source.content === null) {
-      if (source.status !== "read") diagnostics.push({ path: source.path, status: source.status, message: source.error ?? "Source is absent." });
+      if (source.status !== "read")
+        diagnostics.push({
+          path: source.path,
+          status: source.status,
+          message: source.error ?? "Source is absent.",
+        });
       continue;
     }
     const value = source.content;
-    digests.push({ id: digestId(source, value), sourceId: sourceId(source.path), algorithm: "sha256", value: digest(value), observedAt });
+    digests.push({
+      id: digestId(source, value),
+      sourceId: sourceId(source.path),
+      algorithm: "sha256",
+      value: digest(value),
+      observedAt,
+    });
     if (
       source.truncated &&
-      (source.path.endsWith("package.json") || source.path === "pnpm-workspace.yaml" || source.path === "pnpm-workspace.yml")
+      (source.path.endsWith("package.json") ||
+        source.path === "pnpm-workspace.yaml" ||
+        source.path === "pnpm-workspace.yml")
     ) {
       diagnostics.push({
         path: source.path,
@@ -142,7 +180,11 @@ export function deriveProjectFacts(
       try {
         manifests.set(source.path, { source, manifest: parseManifest(source) });
       } catch (error) {
-        diagnostics.push({ path: source.path, status: "invalid", message: error instanceof Error ? error.message : "Invalid package.json." });
+        diagnostics.push({
+          path: source.path,
+          status: "invalid",
+          message: error instanceof Error ? error.message : "Invalid package.json.",
+        });
       }
     }
   }
@@ -151,7 +193,12 @@ export function deriveProjectFacts(
   let workspacePatternsForPackages = root === null ? [] : workspacePatterns(root);
 
   for (const source of inventory.sources) {
-    if (source.status !== "read" || source.content === null || !source.path.startsWith("pnpm-workspace.")) continue;
+    if (
+      source.status !== "read" ||
+      source.content === null ||
+      !source.path.startsWith("pnpm-workspace.")
+    )
+      continue;
     try {
       const parsed = asRecord(parseYaml(source.content));
       const packages = stringList(parsed?.packages);
@@ -160,7 +207,11 @@ export function deriveProjectFacts(
       facts.push(makeFact(source, "workspace.type", "workspace"));
       facts.push(makeFact(source, "workspace.patterns", JSON.stringify(packages)));
     } catch (error) {
-      diagnostics.push({ path: source.path, status: "invalid", message: error instanceof Error ? error.message : "Invalid pnpm workspace manifest." });
+      diagnostics.push({
+        path: source.path,
+        status: "invalid",
+        message: error instanceof Error ? error.message : "Invalid pnpm workspace manifest.",
+      });
     }
   }
 

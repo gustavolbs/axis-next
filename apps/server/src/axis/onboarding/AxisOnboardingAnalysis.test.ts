@@ -98,6 +98,17 @@ const baseInput = (): AxisOnboardingAnalysisInput => ({
   },
 });
 
+it("accepts an evidence-backed analysis with no proposed rules", () => {
+  const input = baseInput();
+  const result = analyzeAxisOnboarding({
+    ...input,
+    sources: [],
+    facts: [],
+    modelOutput: { candidates: [] },
+  });
+  expect(result.candidateRules).toEqual([]);
+});
+
 it("records stale test and coverage instructions with traceable candidates and facts", () => {
   const result = analyzeAxisOnboarding(baseInput());
 
@@ -244,6 +255,28 @@ it("rejects provider activation fields and scope-expanding content", () => {
     },
   };
   expect(() => analyzeAxisOnboarding(scopeExpansion)).toThrow(AxisOnboardingAnalysisError);
+});
+
+it("allows a cited convention forbidding deep relative imports", () => {
+  const result = analyzeAxisOnboarding({
+    ...baseInput(),
+    modelOutput: {
+      candidates: [
+        {
+          category: "convention",
+          effect: "preference",
+          text: "Use workspace package entry points; do not add deep imports into ../../../packages paths.",
+          sourceIds: ["src-instruction"],
+          factIds: [],
+        },
+      ],
+    },
+  });
+  expect(result.candidateRules).toContainEqual(
+    expect.objectContaining({
+      text: "Use workspace package entry points; do not add deep imports into ../../../packages paths.",
+    }),
+  );
 });
 
 it("rejects facts that are not evidenced by cited readable sources", () => {

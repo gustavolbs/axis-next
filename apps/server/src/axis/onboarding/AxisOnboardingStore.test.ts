@@ -77,7 +77,7 @@ layer("AxisOnboardingStore", (it) => {
         readonly environmentId: string;
         readonly projectId: string;
         readonly threadId: string;
-        readonly turnId: string;
+        readonly turnId: string | null;
         readonly status: string;
       }>`
         SELECT run_id AS "runId", context_id AS "contextId", scope_key AS "scopeKey",
@@ -172,7 +172,10 @@ layer("AxisOnboardingStore", (it) => {
       });
       assert.equal(retried.status, "running");
       assert.equal(retried.finishedAt, null);
-      assert.deepEqual(retried.execution, run.execution);
+      assert.notEqual(retried.execution.threadId, run.execution.threadId);
+      assert.match(retried.execution.threadId, /^onboarding-[a-f0-9]{48}-thread$/);
+      assert.equal(retried.execution.commandId, "command-retry-1");
+      assert.equal(retried.execution.turnId, null);
       assert.deepEqual(retriedAgain, retried);
 
       const counts = yield* sql<{ readonly runs: number; readonly commands: number }>`

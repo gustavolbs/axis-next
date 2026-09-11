@@ -1,6 +1,7 @@
 import {
   AxisProjectProfileConflictError,
   AxisLearningConflictError,
+  AxisOnboardingRunId,
   CommandId,
   type AxisLearningSnapshot,
   type AxisLearningListInput,
@@ -142,6 +143,32 @@ describe("Axis project work client state", () => {
             projectA = profile("project-a", projectA.revision + 1);
             return Effect.succeed(projectA);
           },
+          [WS_METHODS.axisOnboardingApply]: () => {
+            projectA = profile("project-a", projectA.revision + 1);
+            return Effect.succeed({
+              profile: projectA,
+              invalidatedRuleIds: [],
+              acceptedCandidateIds: [],
+              run: {
+                run: {
+                  id: "onboarding-a",
+                  scope: scope("project-a"),
+                  execution: { threadId: "thread-a", turnId: "turn-a", commandId: "scan-a" },
+                  status: "completed",
+                  sources: [],
+                  digests: [],
+                  facts: [],
+                  candidateRules: [],
+                  conflicts: [],
+                  decisions: [],
+                  error: null,
+                  startedAt: "2026-09-10T00:00:00.000Z",
+                  finishedAt: "2026-09-10T00:01:00.000Z",
+                },
+                progress: { stage: "completed", completedSteps: 3, totalSteps: 3, message: null },
+              },
+            });
+          },
         } as unknown as WsRpcProtocolClient;
         const session: RpcSession = {
           client,
@@ -221,6 +248,27 @@ describe("Axis project work client state", () => {
           }),
         );
         expect(AsyncResult.isFailure(conflict)).toBe(true);
+
+        const appliedProfile = yield* Stream.runHead(
+          AtomRegistry.toStream(registry, projectAAtom).pipe(
+            Stream.filter((result) => AsyncResult.isSuccess(result) && result.value.revision === 2),
+          ),
+        ).pipe(Effect.forkChild);
+        const applied = yield* Effect.promise(() =>
+          atoms.applyAxisOnboarding.run(registry, {
+            environmentId,
+            input: {
+              scope: scope("project-a"),
+              runId: AxisOnboardingRunId.make("onboarding-a"),
+              expectedProfileRevision: 1,
+              decisions: [],
+              commandId: CommandId.make("apply-a"),
+            },
+          }),
+        );
+        expect(AsyncResult.isSuccess(applied)).toBe(true);
+        yield* Fiber.join(appliedProfile);
+        expect((yield* AtomRegistry.getResult(registry, projectBAtom)).revision).toBe(0);
 
         const learningAAtom = atoms.axisLearningSnapshot({
           environmentId,

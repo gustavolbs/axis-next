@@ -112,6 +112,11 @@ const seedDependentLearning = Effect.gen(function* () {
 const seedDependentProjectWork = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const now = "2026-09-05T00:00:00.000Z";
+  for (const contextId of ["company_a", "personal"]) {
+    yield* sql`INSERT INTO axis_onboarding_runs VALUES ('run', ${contextId}, 'env', 'project', 'scope', 'thread', 'turn', 'completed', '{}', ${now}, ${now}, ${now})`;
+    yield* sql`INSERT INTO axis_onboarding_commands VALUES (${contextId}, 'scope', 'run', 'start', 'start', 'digest', ${now})`;
+    yield* sql`INSERT INTO axis_onboarding_applications VALUES (${contextId}, 'scope', 'run', 'apply', 'digest', '{}', ${now})`;
+  }
   yield* sql`
     INSERT INTO axis_project_profiles
       (context_id, environment_id, project_id, scope_key, revision, profile_json, created_at, updated_at)
@@ -407,6 +412,9 @@ layer("AxisContextCatalogStore", (it) => {
         readonly tasks: number;
         readonly commands: number;
         readonly taskLifecycle: number;
+        readonly onboardingRuns: number;
+        readonly onboardingCommands: number;
+        readonly onboardingApplications: number;
       }>`
         SELECT
           (SELECT COUNT(*) FROM axis_learning_evidence
@@ -426,7 +434,10 @@ layer("AxisContextCatalogStore", (it) => {
           (SELECT COUNT(*) FROM axis_task_commands
            WHERE context_id = 'company_a') AS commands,
           (SELECT COUNT(*) FROM axis_task_lifecycle_events
-           WHERE context_id = 'company_a') AS "taskLifecycle"
+           WHERE context_id = 'company_a') AS "taskLifecycle",
+          (SELECT COUNT(*) FROM axis_onboarding_runs WHERE context_id = 'company_a') AS "onboardingRuns",
+          (SELECT COUNT(*) FROM axis_onboarding_commands WHERE context_id = 'company_a') AS "onboardingCommands",
+          (SELECT COUNT(*) FROM axis_onboarding_applications WHERE context_id = 'company_a') AS "onboardingApplications"
       `;
       assert.deepEqual(rows[0], {
         evidence: 0,
@@ -438,7 +449,13 @@ layer("AxisContextCatalogStore", (it) => {
         tasks: 0,
         commands: 0,
         taskLifecycle: 0,
+        onboardingRuns: 0,
+        onboardingCommands: 0,
+        onboardingApplications: 0,
       });
+      assert.deepEqual(yield* sql`SELECT context_id FROM axis_onboarding_runs`, [{ context_id: "personal" }]);
+      assert.deepEqual(yield* sql`SELECT context_id FROM axis_onboarding_commands`, [{ context_id: "personal" }]);
+      assert.deepEqual(yield* sql`SELECT context_id FROM axis_onboarding_applications`, [{ context_id: "personal" }]);
 
       const survivingRows = yield* sql<{
         readonly evidence: number;

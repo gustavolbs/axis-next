@@ -11,6 +11,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { AxisContextProjectScope, AxisProjectRuleCategory } from "./axisProjectProfile.ts";
+import { ModelSelection } from "./orchestration.ts";
 
 const ENTITY_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 const onboardingId = <Brand extends string>(brand: Brand) =>
@@ -47,6 +48,7 @@ const onboardingSourceFields = {
   id: AxisOnboardingSourceId,
   path: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
   kind: Schema.Literals(["manifest", "instruction", "ci", "template", "convention"]),
+  warning: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2_000))),
 };
 
 /** A source is either read successfully or failed to read; failure is never absence. */
@@ -92,7 +94,10 @@ export const AxisOnboardingCandidateRule = Schema.Struct({
   category: AxisProjectRuleCategory,
   text: boundedNonEmptyText,
   effect: Schema.Literals(["restriction", "preference", "default"]),
-  sourceIds: Schema.Array(AxisOnboardingSourceId).check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+  sourceIds: Schema.Array(AxisOnboardingSourceId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(100),
+  ),
   factIds: Schema.Array(AxisOnboardingFactId).check(Schema.isMaxLength(100)),
 });
 export type AxisOnboardingCandidateRule = typeof AxisOnboardingCandidateRule.Type;
@@ -118,7 +123,7 @@ export type AxisOnboardingDecision = typeof AxisOnboardingDecision.Type;
 /** The canonical T3 execution records are references, not onboarding replicas. */
 export const AxisOnboardingExecution = Schema.Struct({
   threadId: ThreadId,
-  turnId: TurnId,
+  turnId: Schema.NullOr(TurnId),
   commandId: CommandId,
 });
 export type AxisOnboardingExecution = typeof AxisOnboardingExecution.Type;
@@ -127,6 +132,7 @@ const onboardingRunFields = {
   id: AxisOnboardingRunId,
   scope: AxisContextProjectScope,
   execution: AxisOnboardingExecution,
+  modelSelection: Schema.optionalKey(ModelSelection),
   sources: Schema.Array(AxisOnboardingSource).check(Schema.isMaxLength(200)),
   digests: Schema.Array(AxisOnboardingDigest).check(Schema.isMaxLength(200)),
   facts: Schema.Array(AxisOnboardingFact).check(Schema.isMaxLength(500)),
@@ -173,7 +179,8 @@ export type AxisOnboardingStartInput = typeof AxisOnboardingStartInput.Type;
 /** Client request for a new run; the server derives all observed project data. */
 export const AxisOnboardingStartRequest = Schema.Struct({
   scope: AxisContextProjectScope,
-  execution: AxisOnboardingExecution,
+  commandId: CommandId,
+  modelSelection: ModelSelection,
 });
 export type AxisOnboardingStartRequest = typeof AxisOnboardingStartRequest.Type;
 

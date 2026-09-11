@@ -152,12 +152,8 @@ const parseProviderOutput = (raw: unknown): AxisOnboardingProviderOutput => {
   if (value.scope !== undefined && !isScope(value.scope)) {
     return fail("invalid_output", "The onboarding provider returned an invalid scope.");
   }
-  if (
-    !Array.isArray(value.candidates) ||
-    value.candidates.length === 0 ||
-    value.candidates.length > 500
-  ) {
-    return fail("invalid_output", "The onboarding provider must return at least one candidate.");
+  if (!Array.isArray(value.candidates) || value.candidates.length > 500) {
+    return fail("invalid_output", "The onboarding provider must return a bounded candidate array.");
   }
 
   const candidates: AxisOnboardingCandidateDraft[] = [];
@@ -242,7 +238,9 @@ const isBranchSourceFact = (fact: AxisOnboardingFact) =>
   branchSourceKeys.has(fact.key.toLocaleLowerCase("en-US"));
 
 const hasScopeExpansion = (text: string) =>
-  /(?:\.\.\/|\b(?:outside|another|other|entire|whole)\s+(?:project|repository|workspace|scope)\b|\b(?:all|every|any)\s+(?:projects?|repositories?|workspaces?)\b|\b(?:across|for)\s+(?:all|every|multiple)\s+(?:projects?|repositories?|workspaces?)\b)/i.test(text);
+  /(?:\b(?:outside|another|other|entire|whole)\s+(?:project|repository|workspace|scope)\b|\b(?:all|every|any)\s+(?:projects?|repositories?|workspaces?)\b|\b(?:across|for)\s+(?:all|every|multiple)\s+(?:projects?|repositories?|workspaces?)\b)/i.test(
+    text,
+  );
 
 const isReadableSource = (
   source: AxisOnboardingAnalysisSource | undefined,
@@ -263,9 +261,7 @@ const validateCandidateEvidence = (
   if (candidate.factIds.some((id) => !factsById.has(id))) {
     return fail("unknown_fact", "The onboarding provider referenced an unknown fact.");
   }
-  if (
-    candidate.factIds.some((id) => !candidate.sourceIds.includes(factsById.get(id)!.sourceId))
-  ) {
+  if (candidate.factIds.some((id) => !candidate.sourceIds.includes(factsById.get(id)!.sourceId))) {
     return fail("missing_evidence", "Every fact reference must belong to a cited source.");
   }
   if (candidate.factIds.length === 0 && candidate.sourceIds.length === 0) {
@@ -334,10 +330,7 @@ const detectTestCoverageDrift = (
   );
   const evidenceSourceIds = [...new Set(evidenceFacts.map((fact) => fact.sourceId))].sort();
   if (
-    evidenceSourceIds.some(
-      (id) =>
-        !isReadableSource(sources.find((source) => source.id === id)),
-    )
+    evidenceSourceIds.some((id) => !isReadableSource(sources.find((source) => source.id === id)))
   ) {
     return null;
   }
@@ -419,7 +412,9 @@ export const analyzeAxisOnboarding = (
   }
 
   const branch: AxisOnboardingBranchAnalysis = {
-    sourceFacts: input.facts.filter(isBranchSourceFact).toSorted((left, right) => left.id.localeCompare(right.id)),
+    sourceFacts: input.facts
+      .filter(isBranchSourceFact)
+      .toSorted((left, right) => left.id.localeCompare(right.id)),
     pullRequestPolicies: input.effectiveContext.rules
       .filter((rule) => rule.category === "pull-request-policy")
       .toSorted((left, right) => left.id.localeCompare(right.id)),
