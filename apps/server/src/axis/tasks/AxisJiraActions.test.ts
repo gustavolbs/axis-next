@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -133,7 +134,7 @@ layer("AxisJiraActions", (it) => {
         }),
       );
       assert.instanceOf(error, AxisJiraActionsError);
-      if (error instanceof AxisJiraActionsError) {
+      if (Schema.is(AxisJiraActionsError)(error)) {
         assert.equal(error.reason, "missing_field");
       }
     }),
@@ -158,7 +159,7 @@ layer("AxisJiraActions", (it) => {
         }),
       );
       assert.instanceOf(error, AxisJiraActionsError);
-      if (error instanceof AxisJiraActionsError) {
+      if (Schema.is(AxisJiraActionsError)(error)) {
         assert.equal(error.reason, "auth_revoked");
       }
     }),

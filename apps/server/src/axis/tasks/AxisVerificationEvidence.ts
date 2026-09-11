@@ -119,6 +119,7 @@ const error = (reason: AxisVerificationEvidenceError["reason"], message: string)
   new AxisVerificationEvidenceError({ reason, message });
 
 const evidenceDigest = (input: AxisVerificationEvidenceType) =>
+  // eslint-disable-next-line effect/preferSchemaOverJson
   NodeCrypto.createHash("sha256")
     .update(
       JSON.stringify({
@@ -215,7 +216,9 @@ export const recordAxisVerificationEvidence = (
     yield* requireCoveredFiles(input.evidence);
     const sql = yield* SqlClient.SqlClient;
     const coveredFiles = normalizeCoveredFiles(input.evidence.coveredFiles);
-    const coveredFilesJson = JSON.stringify(coveredFiles);
+    const coveredFilesJson = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)))(
+      coveredFiles,
+    );
     const createdAtDate = DateTime.nowUnsafe();
     const createdAt = DateTime.formatIso(createdAtDate);
     const rows = yield* sql<EvidenceRow>`

@@ -173,5 +173,5 @@ export const make = Effect.gen(function* () {
 export class AxisProjectDataLifecycleServiceTag extends Context.Service<
   AxisProjectDataLifecycleServiceTag,
   Effect.Success<typeof make>
->()("t3/axis/projects/AxisProjectDataLifecycleService") {}
+>()("t3/axis/projects/AxisProjectDataLifecycleService/AxisProjectDataLifecycleServiceTag") {}
 export const layer = Layer.effect(AxisProjectDataLifecycleServiceTag, make);

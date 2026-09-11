@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -135,7 +136,7 @@ layer("AxisTrelloActions", (it) => {
         }),
       );
       assert.instanceOf(error, AxisTrelloActionsError);
-      if (error instanceof AxisTrelloActionsError) {
+      if (Schema.is(AxisTrelloActionsError)(error)) {
         assert.equal(error.reason, "missing_field");
       }
     }),

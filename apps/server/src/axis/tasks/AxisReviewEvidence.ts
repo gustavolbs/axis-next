@@ -142,6 +142,9 @@ const decodeFindings = (raw: unknown) =>
   ).pipe(Effect.mapError(() => error("persistence_failed", "Cannot decode stored findings.")));
 
 const snapshotDigest = (input: AxisReviewEvidenceRequest) =>
+  // JSON.stringify on a structured object is acceptable here because we feed the
+  // payload straight into SHA-256; we never round-trip the JSON.
+  // eslint-disable-next-line effect/preferSchemaOverJson
   NodeCrypto.createHash("sha256")
     .update(
       JSON.stringify({
@@ -204,9 +207,14 @@ export const recordAxisReviewEvidence = (
       );
     }
     const sql = yield* SqlClient.SqlClient;
-    const filesJson = JSON.stringify([...new Set(input.filesCovered)].sort());
-    const rulesJson = JSON.stringify([...new Set(input.rulesUsed)].sort());
-    const findingsJson = JSON.stringify(
+    const filesCodec = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+    const rulesCodec = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+    const findingsCodec = Schema.encodeSync(
+      Schema.fromJsonString(Schema.Array(AxisReviewFindingSchema)),
+    );
+    const filesJson = filesCodec([...new Set(input.filesCovered)].sort());
+    const rulesJson = rulesCodec([...new Set(input.rulesUsed)].sort());
+    const findingsJson = findingsCodec(
       [...input.findings].sort((a, b) => a.id.localeCompare(b.id)),
     );
     const createdAtDate = DateTime.nowUnsafe();
@@ -297,6 +305,22 @@ export const recordAxisReviewEvidence = (
         "Insert returned no row and the existing review is missing.",
       );
     }
+    const previousEvidence = yield* decodeRow(previous);
+    const previousFiles = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(Schema.Array(Schema.String)),
+    )(previous.filesJson as string).pipe(
+      Effect.mapError(() => error("persistence_failed", "Cannot decode stored files.")),
+    );
+    const previousRules = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(Schema.Array(Schema.String)),
+    )(previous.rulesJson as string).pipe(
+      Effect.mapError(() => error("persistence_failed", "Cannot decode stored rules.")),
+    );
+    const previousFindings = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(Schema.Array(AxisReviewFindingSchema)),
+    )(previous.findingsJson as string).pipe(
+      Effect.mapError(() => error("persistence_failed", "Cannot decode stored findings.")),
+    );
     const previousDigest = snapshotDigest({
       ...input,
       threadId: previous.threadId as ThreadId,
@@ -304,9 +328,9 @@ export const recordAxisReviewEvidence = (
       baseSha: previous.baseSha as string,
       headSha: previous.headSha as string,
       diffDigest: previous.diffDigest as string,
-      filesCovered: JSON.parse(previous.filesJson as string) as ReadonlyArray<string>,
-      rulesUsed: JSON.parse(previous.rulesJson as string) as ReadonlyArray<string>,
-      findings: JSON.parse(previous.findingsJson as string),
+      filesCovered: previousFiles,
+      rulesUsed: previousRules,
+      findings: previousFindings,
       reviewer: previous.reviewer as string,
       note: previous.note as string | null,
     });
@@ -375,6 +399,7 @@ export const diffDigestFor = (input: {
   readonly headSha: string;
   readonly diff: string;
 }): string =>
+  // eslint-disable-next-line effect/preferSchemaOverJson
   NodeCrypto.createHash("sha256")
     .update(JSON.stringify({ base: input.baseSha, head: input.headSha, diff: input.diff }), "utf8")
     .digest("hex");

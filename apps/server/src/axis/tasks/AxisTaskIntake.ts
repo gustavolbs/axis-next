@@ -102,6 +102,7 @@ const error = (reason: AxisTaskIntakeError["reason"], message: string) =>
   new AxisTaskIntakeError({ reason, message });
 
 const fingerprintFor = (input: AxisTaskIntakeInput): string => {
+  // eslint-disable-next-line effect/preferSchemaOverJson
   const payload = JSON.stringify({
     scope: projectScopeKeyFor(input.scope),
     commandId: input.commandId,
@@ -278,7 +279,7 @@ export const createAxisTaskFromIntake = (
         ${input.source.kind},
         ${sourceId},
         ${fingerprint},
-        ${JSON.stringify(task)},
+        ${Schema.encodeSync(Schema.fromJsonString(AxisTaskExtension))(task)},
         ${task.createdAt}
       )
     `.pipe(Effect.mapError(() => error("persistence_failed", "Cannot persist intake task.")));

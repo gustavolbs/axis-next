@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -82,7 +83,7 @@ layer("AxisReviewEvidence", (it) => {
           }),
         );
         assert.equal(divergentError._tag, "AxisReviewEvidenceError");
-        if (divergentError instanceof AxisReviewEvidenceError) {
+        if (Schema.is(AxisReviewEvidenceError)(divergentError)) {
           assert.equal(divergentError.reason, "duplicate");
         }
 
@@ -106,7 +107,7 @@ layer("AxisReviewEvidence", (it) => {
           }),
         );
         assert.equal(staleDiffError._tag, "AxisReviewEvidenceError");
-        if (staleDiffError instanceof AxisReviewEvidenceError) {
+        if (Schema.is(AxisReviewEvidenceError)(staleDiffError)) {
           assert.equal(staleDiffError.reason, "stale_review");
         }
 
@@ -120,7 +121,7 @@ layer("AxisReviewEvidence", (it) => {
           }),
         );
         assert.equal(headChangedError._tag, "AxisReviewEvidenceError");
-        if (headChangedError instanceof AxisReviewEvidenceError) {
+        if (Schema.is(AxisReviewEvidenceError)(headChangedError)) {
           assert.equal(headChangedError.reason, "head_changed");
         }
       }),
@@ -138,7 +139,7 @@ layer("AxisReviewEvidence", (it) => {
         }),
       );
       assert.equal(emptyError._tag, "AxisReviewEvidenceError");
-      if (emptyError instanceof AxisReviewEvidenceError) {
+      if (Schema.is(AxisReviewEvidenceError)(emptyError)) {
         assert.equal(emptyError.reason, "invalid_input");
       }
     }),

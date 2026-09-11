@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import {
   type AxisPullRequestDeliveryAdapter,
@@ -116,7 +117,7 @@ it.effect("auth revocation surfaces as auth_revoked", () =>
     });
     const error = yield* Effect.flip(publishAxisPullRequestPlan(adapter, baseInput));
     assert.instanceOf(error, AxisPullRequestDeliveryError);
-    if (error instanceof AxisPullRequestDeliveryError) {
+    if (Schema.is(AxisPullRequestDeliveryError)(error)) {
       assert.equal(error.reason, "auth_revoked");
     }
   }),
@@ -129,7 +130,7 @@ it.effect("create failure surfaces as create_failed", () =>
     });
     const error = yield* Effect.flip(publishAxisPullRequestPlan(adapter, baseInput));
     assert.instanceOf(error, AxisPullRequestDeliveryError);
-    if (error instanceof AxisPullRequestDeliveryError) {
+    if (Schema.is(AxisPullRequestDeliveryError)(error)) {
       assert.equal(error.reason, "create_failed");
     }
   }),
@@ -142,7 +143,7 @@ it.effect("reconcile failure surfaces as reconcile_failed", () =>
     });
     const error = yield* Effect.flip(publishAxisPullRequestPlan(adapter, baseInput));
     assert.instanceOf(error, AxisPullRequestDeliveryError);
-    if (error instanceof AxisPullRequestDeliveryError) {
+    if (Schema.is(AxisPullRequestDeliveryError)(error)) {
       assert.equal(error.reason, "reconcile_failed");
     }
   }),

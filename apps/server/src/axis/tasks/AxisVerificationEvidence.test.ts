@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -100,7 +101,7 @@ layer("AxisVerificationEvidence", (it) => {
         }),
       );
       assert.equal(divergentError._tag, "AxisVerificationEvidenceError");
-      if (divergentError instanceof AxisVerificationEvidenceError) {
+      if (Schema.is(AxisVerificationEvidenceError)(divergentError)) {
         assert.equal(divergentError.reason, "duplicate");
       }
 
@@ -148,7 +149,7 @@ layer("AxisVerificationEvidence", (it) => {
         }),
       );
       assert.equal(emptyCommandError._tag, "AxisVerificationEvidenceError");
-      if (emptyCommandError instanceof AxisVerificationEvidenceError) {
+      if (Schema.is(AxisVerificationEvidenceError)(emptyCommandError)) {
         assert.equal(emptyCommandError.reason, "command_missing");
       }
 
@@ -162,7 +163,7 @@ layer("AxisVerificationEvidence", (it) => {
         }),
       );
       assert.equal(missingFilesError._tag, "AxisVerificationEvidenceError");
-      if (missingFilesError instanceof AxisVerificationEvidenceError) {
+      if (Schema.is(AxisVerificationEvidenceError)(missingFilesError)) {
         assert.equal(missingFilesError.reason, "invalid_input");
       }
 
