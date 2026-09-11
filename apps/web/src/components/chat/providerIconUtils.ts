@@ -26,6 +26,7 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
  */
 export const PROVIDER_ICON_BY_GATEWAY: Partial<Record<ProviderGatewayId, Icon>> = {
   ["routemux" as ProviderGatewayId]: RouteMuxIcon,
+  ["routemux-codex" as ProviderGatewayId]: RouteMuxIcon,
 };
 
 export function resolveProviderIcon(input: {

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getProviderGateway,
   PROVIDER_GATEWAYS,
+  providerGatewayCodexLaunchArgs,
   providerGatewayEnvironment,
 } from "./providerGateway.ts";
 
@@ -20,6 +21,18 @@ describe("provider gateways", () => {
     expect(routemux?.baseUrl).toBe("https://api.routemux.com");
     expect(routemux?.driver).toBe("claudeAgent");
     expect(routemux?.apiKeyVariable).toBe("ANTHROPIC_AUTH_TOKEN");
+  });
+
+  it("defines a Codex/Responses RouteMux preset", () => {
+    const routemux = getProviderGateway("routemux-codex");
+    expect(routemux?.driver).toBe("codex");
+    expect(routemux?.baseUrl).toBe("https://api.routemux.com/v1");
+    expect(routemux?.apiKeyVariable).toBe("ROUTEMUX_API_KEY");
+    expect(routemux?.modelsPath).toBe("/models");
+    expect(routemux?.modelsQuery).toContain("protocol=openai_responses");
+    expect(providerGatewayCodexLaunchArgs(routemux)).toContain(
+      'model_providers.routemux.wire_api="responses"',
+    );
   });
 
   it("marks only the credential variable sensitive", () => {

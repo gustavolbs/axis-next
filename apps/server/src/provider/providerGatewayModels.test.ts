@@ -11,10 +11,16 @@ import {
 } from "./providerGatewayModels.ts";
 
 const routemux = getProviderGateway("routemux") as ProviderGatewayDefinition;
+const routemuxCodex = getProviderGateway("routemux-codex") as ProviderGatewayDefinition;
 
 const environment: NodeJS.ProcessEnv = {
   ANTHROPIC_AUTH_TOKEN: "sk-routemux-test",
   ANTHROPIC_BASE_URL: "https://api.routemux.com",
+};
+
+const codexEnvironment: NodeJS.ProcessEnv = {
+  ROUTEMUX_API_KEY: "sk-routemux-test",
+  ROUTEMUX_BASE_URL: "https://api.routemux.com/v1",
 };
 
 function stubClient(
@@ -154,6 +160,24 @@ describe("fetchGatewayModels", () => {
         ),
       );
       expect(url).toBe("https://proxy.internal/v1/models");
+    }),
+  );
+
+  it.effect("uses the Codex catalog filter for Responses models with tool calling", () =>
+    Effect.gen(function* () {
+      let url: string | undefined;
+      yield* fetchGatewayModels({ gateway: routemuxCodex, environment: codexEnvironment }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          stubClient((request) => {
+            url = request.url;
+            return Response.json({ data: [{ id: "minimax/minimax-m3" }] });
+          }),
+        ),
+      );
+      expect(url).toBe(
+        "https://api.routemux.com/v1/models?protocol=openai_responses&capability=tool_calling",
+      );
     }),
   );
 

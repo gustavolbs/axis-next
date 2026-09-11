@@ -97,9 +97,9 @@ export const fetchGatewayModels = Effect.fn("fetchGatewayModels")(function* (inp
 
   const response = yield* client
     .execute(
-      HttpClientRequest.get(`${baseUrl.replace(/\/+$/u, "")}${input.gateway.modelsPath}`).pipe(
-        HttpClientRequest.setHeader("authorization", `Bearer ${apiKey}`),
-      ),
+      HttpClientRequest.get(
+        `${baseUrl.replace(/\/+$/u, "")}${input.gateway.modelsPath}${input.gateway.modelsQuery ?? ""}`,
+      ).pipe(HttpClientRequest.setHeader("authorization", `Bearer ${apiKey}`)),
     )
     .pipe(
       Effect.mapError(

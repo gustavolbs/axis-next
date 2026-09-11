@@ -2,10 +2,9 @@
  * Gateway presets — hosted multi-model endpoints an existing driver can be
  * pointed at instead of its vendor's own API.
  *
- * A gateway is deliberately *not* a driver. RouteMux speaks the Anthropic
- * Messages protocol, so the Claude driver runs it unchanged; the preset only
- * supplies the base URL, the credential variable, and where to read the live
- * model catalog. Everything downstream — threads, checkpoints, MCP grants, context
+ * A gateway is deliberately *not* a driver. The preset supplies the protocol
+ * driver, base URL, credential variable, and where to read the live model
+ * catalog. Everything downstream — threads, checkpoints, MCP grants, context
  * isolation, the API-billed boundary — treats the result as an ordinary
  * API-key provider instance.
  *
@@ -42,6 +41,13 @@ export interface ProviderGatewayDefinition {
    * repository, which would go stale every time the gateway adds a model.
    */
   readonly modelsPath: string;
+  /** Optional query string used to restrict a gateway's live catalog. */
+  readonly modelsQuery?: string;
+  /** Codex configuration needed when this gateway runs through Codex CLI. */
+  readonly codex?: {
+    readonly providerId: string;
+    readonly wireApi: "responses";
+  };
 }
 
 const ROUTEMUX: ProviderGatewayDefinition = {
@@ -65,7 +71,49 @@ const ROUTEMUX: ProviderGatewayDefinition = {
   modelsPath: "/v1/models",
 };
 
-export const PROVIDER_GATEWAYS: ReadonlyArray<ProviderGatewayDefinition> = [ROUTEMUX];
+const ROUTEMUX_CODEX: ProviderGatewayDefinition = {
+  id: ProviderGatewayId.make("routemux-codex"),
+  label: "RouteMux (Codex)",
+  driver: ProviderDriverKind.make("codex"),
+  // Codex's OpenAI-compatible provider uses the RouteMux Responses endpoint.
+  baseUrlVariable: "ROUTEMUX_BASE_URL",
+  baseUrl: "https://api.routemux.com/v1",
+  apiKeyVariable: "ROUTEMUX_API_KEY",
+  clearVariables: [
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+  ],
+  consoleUrl: "https://routemux.com/console/keys",
+  modelsPath: "/models",
+  modelsQuery: "?protocol=openai_responses&capability=tool_calling",
+  codex: { providerId: "routemux", wireApi: "responses" },
+};
+
+export const PROVIDER_GATEWAYS: ReadonlyArray<ProviderGatewayDefinition> = [
+  ROUTEMUX,
+  ROUTEMUX_CODEX,
+];
+
+/**
+ * CLI overrides are deliberately generated from the gateway definition so a
+ * Codex instance cannot accidentally use its normal OpenAI endpoint.
+ */
+export function providerGatewayCodexLaunchArgs(
+  gateway: ProviderGatewayDefinition | undefined,
+): string | undefined {
+  if (!gateway?.codex) return undefined;
+  const { providerId, wireApi } = gateway.codex;
+  return [
+    `-c model_provider="${providerId}"`,
+    `-c model_providers.${providerId}.name="${gateway.label}"`,
+    `-c model_providers.${providerId}.base_url="${gateway.baseUrl}"`,
+    `-c model_providers.${providerId}.env_key="${gateway.apiKeyVariable}"`,
+    `-c model_providers.${providerId}.wire_api="${wireApi}"`,
+  ].join(" ");
+}
 
 const BY_ID: ReadonlyMap<string, ProviderGatewayDefinition> = new Map(
   PROVIDER_GATEWAYS.map((gateway) => [gateway.id, gateway] as const),
