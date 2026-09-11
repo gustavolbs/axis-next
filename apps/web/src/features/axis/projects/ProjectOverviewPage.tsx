@@ -10,7 +10,7 @@ import {
   type EnvironmentConnectionState,
   type ScopedProjectRef,
 } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
+import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AlertCircleIcon,
@@ -20,7 +20,7 @@ import {
   ExternalLinkIcon,
   SettingsIcon,
 } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { SidebarInset } from "~/components/ui/sidebar";
 import { Button } from "~/components/ui/button";
@@ -146,6 +146,27 @@ export function ProjectOverviewPage({
   readonly selectedProjectId?: string;
 }) {
   const navigate = useNavigate({ from: "/projects/$projectKey" });
+  const rootNavigate = useNavigate();
+  const canGoBack = useCanGoBack();
+  const navigateBackWithinApp = useCallback(() => {
+    if (canGoBack) {
+      window.history.back();
+      return;
+    }
+    void rootNavigate({ to: "/" });
+  }, [canGoBack, rootNavigate]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement) activeElement.blur();
+      navigateBackWithinApp();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigateBackWithinApp]);
   const groups = useSettingsProjectGroups();
   const environments = useEnvironments().environments;
   const group = groups.find((candidate) => candidate.projectKey === projectKey) ?? null;
@@ -442,6 +463,15 @@ export function ProjectOverviewPage({
     return (
       <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground isolate">
         <WorkspacePageHeader>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Back to workspace"
+            title="Back to workspace"
+            onClick={navigateBackWithinApp}
+          >
+            <ArrowLeftIcon />
+          </Button>
           <span className="text-sm font-medium">Project Overview</span>
         </WorkspacePageHeader>
         <WorkspacePageContainer>
@@ -465,7 +495,7 @@ export function ProjectOverviewPage({
           variant="ghost"
           aria-label="Back to workspace"
           title="Back to workspace"
-          onClick={() => window.history.back()}
+          onClick={navigateBackWithinApp}
         >
           <ArrowLeftIcon />
         </Button>
