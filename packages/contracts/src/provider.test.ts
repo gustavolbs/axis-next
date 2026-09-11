@@ -164,11 +164,13 @@ describe("ProviderSendTurnInput", () => {
         threadId: "thread-1",
         axisContextInstructions: "## Axis effective context\nRun focused tests.",
         axisContextDigest: "axis-digest",
+        axisLearningVersionIds: ["learning-version-1"],
         axisTokenEfficiencyPolicy: { engine: "deterministic", mode: "compress" },
       }),
     ).toMatchObject({
       threadId: "thread-1",
       axisContextDigest: "axis-digest",
+      axisLearningVersionIds: ["learning-version-1"],
       axisTokenEfficiencyPolicy: { engine: "deterministic", mode: "compress" },
     });
   });

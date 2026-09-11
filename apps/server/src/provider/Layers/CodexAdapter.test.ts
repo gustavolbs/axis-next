@@ -414,7 +414,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }),
   );
 
-  it.effect("maps codex model options before sending a turn", () =>
+  it.effect("maps model options and protected Axis instructions before sending a turn", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
       yield* adapter.startSession({
@@ -435,6 +435,9 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
             { id: "serviceTier", value: "priority" },
           ]),
           attachments: [],
+          axisContextInstructions:
+            "## Axis effective context (digest: axis-digest)\nRun focused tests.",
+          axisContextDigest: "axis-digest",
         }),
       );
 
@@ -443,6 +446,8 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         model: "gpt-5.3-codex",
         effort: "high",
         serviceTier: "priority",
+        axisContextInstructions:
+          "## Axis effective context (digest: axis-digest)\nRun focused tests.",
       });
     }),
   );

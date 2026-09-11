@@ -184,7 +184,6 @@ const applyLearningChanges = (
     );
   }
   const learnedTokenEfficiencyPolicyKeys = new Set<string>();
-  const sourceRefs = new Set(profile.rules.map((rule) => rule.sourceRef));
   const conflicts: Array<string> = [];
   const learningVersionIds: Array<AxisLearningVersionId> = [];
 
@@ -209,7 +208,6 @@ const applyLearningChanges = (
         continue;
       }
       rules.set(change.rule.id, change.rule);
-      sourceRefs.add(change.rule.sourceRef);
       learningVersionIds.push(version.id);
     } else if (change.op === "remove-rule") {
       const previous = rules.get(change.ruleId);
@@ -280,7 +278,7 @@ const applyLearningChanges = (
         left.providerInstanceId.localeCompare(right.providerInstanceId) ||
         left.model.localeCompare(right.model),
     ),
-    sourceRefs: [...sourceRefs].sort(),
+    sourceRefs: [...new Set(filteredRules.map((rule) => rule.sourceRef))].sort(),
     conflicts,
     learningVersionIds: learningVersionIds.sort(),
   };

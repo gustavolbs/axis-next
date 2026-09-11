@@ -640,6 +640,7 @@ layer("AxisEffectiveContext", (it) => {
 
       const unrelatedPath = yield* resolve("manual-first", ["docs/readme.md"]);
       assert.deepEqual(unrelatedPath.rules, []);
+      assert.deepEqual(unrelatedPath.sourceRefs, []);
     }),
   );
 
