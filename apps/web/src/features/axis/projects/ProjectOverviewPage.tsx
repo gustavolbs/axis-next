@@ -40,7 +40,7 @@ import { ProjectPatternsPanel } from "./ProjectPatternsPanel";
 import { ProjectContextPreviewPanel } from "./ProjectContextPreviewPanel";
 import { ProjectWorkflowView } from "./ProjectWorkflowView";
 import { ProjectIntegrationsPanel } from "./ProjectIntegrationsPanel";
-import { AxisLearningSettings } from "../settings/AxisLearningSettings";
+import { ProjectLearningPanel } from "./ProjectLearningPanel";
 import type {
   ProjectOnboardingConnectionState,
   ProjectOnboardingProgress,
@@ -704,12 +704,10 @@ export function ProjectOverviewPage({
             </>
           ) : null}
           {view === "learning" && selectedScope !== null && selectedProject !== null ? (
-            <AxisLearningSettings
+            <ProjectLearningPanel
               key={`${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
               environmentId={selectedProject.environmentId}
-              contexts={[]}
-              projectBindings={[]}
-              fixedScope={selectedScope}
+              scope={selectedScope}
               projectLabel={overviewGroup.label}
               connectionState={learningConnectionState}
             />
