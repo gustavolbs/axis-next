@@ -133,7 +133,7 @@ layer("AxisJiraActions", (it) => {
           pullRequestUrl: null,
         }),
       );
-      assert.instanceOf(error, AxisJiraActionsError);
+      assert.equal(Schema.is(AxisJiraActionsError)(error), true);
       if (Schema.is(AxisJiraActionsError)(error)) {
         assert.equal(error.reason, "missing_field");
       }
@@ -158,7 +158,7 @@ layer("AxisJiraActions", (it) => {
           pullRequestUrl: null,
         }),
       );
-      assert.instanceOf(error, AxisJiraActionsError);
+      assert.equal(Schema.is(AxisJiraActionsError)(error), true);
       if (Schema.is(AxisJiraActionsError)(error)) {
         assert.equal(error.reason, "auth_revoked");
       }

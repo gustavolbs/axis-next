@@ -399,7 +399,6 @@ export const diffDigestFor = (input: {
   readonly headSha: string;
   readonly diff: string;
 }): string =>
-  // eslint-disable-next-line effect/preferSchemaOverJson
   NodeCrypto.createHash("sha256")
     .update(JSON.stringify({ base: input.baseSha, head: input.headSha, diff: input.diff }), "utf8")
     .digest("hex");

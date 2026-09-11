@@ -4,11 +4,7 @@ import * as Layer from "effect/Layer";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
-import {
-  AxisReviewFeedbackError,
-  feedbackFingerprintFor,
-  recordAxisReviewFeedback,
-} from "./AxisReviewFeedback.ts";
+import { feedbackFingerprintFor, recordAxisReviewFeedback } from "./AxisReviewFeedback.ts";
 import { AxisContextId, CommandId, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { AxisReviewFeedbackResult } from "./AxisReviewFeedback.ts";
 

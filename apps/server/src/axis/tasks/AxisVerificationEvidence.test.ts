@@ -1,9 +1,9 @@
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -52,6 +52,8 @@ const stepId = AxisTaskStepId.make("step-1");
 const commandId = CommandId.make("cmd-1");
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
+const isVerificationEvidenceError = Schema.is(AxisVerificationEvidenceError);
+void Exit;
 
 layer("AxisVerificationEvidence", (it) => {
   it.effect("runs migration 066 and creates the table", () =>
@@ -101,7 +103,7 @@ layer("AxisVerificationEvidence", (it) => {
         }),
       );
       assert.equal(divergentError._tag, "AxisVerificationEvidenceError");
-      if (Schema.is(AxisVerificationEvidenceError)(divergentError)) {
+      if (isVerificationEvidenceError(divergentError)) {
         assert.equal(divergentError.reason, "duplicate");
       }
 
@@ -149,7 +151,7 @@ layer("AxisVerificationEvidence", (it) => {
         }),
       );
       assert.equal(emptyCommandError._tag, "AxisVerificationEvidenceError");
-      if (Schema.is(AxisVerificationEvidenceError)(emptyCommandError)) {
+      if (isVerificationEvidenceError(emptyCommandError)) {
         assert.equal(emptyCommandError.reason, "command_missing");
       }
 
@@ -163,7 +165,7 @@ layer("AxisVerificationEvidence", (it) => {
         }),
       );
       assert.equal(missingFilesError._tag, "AxisVerificationEvidenceError");
-      if (Schema.is(AxisVerificationEvidenceError)(missingFilesError)) {
+      if (isVerificationEvidenceError(missingFilesError)) {
         assert.equal(missingFilesError.reason, "invalid_input");
       }
 

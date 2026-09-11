@@ -135,7 +135,7 @@ layer("AxisTrelloActions", (it) => {
           reason: null,
         }),
       );
-      assert.instanceOf(error, AxisTrelloActionsError);
+      assert.equal(Schema.is(AxisTrelloActionsError)(error), true);
       if (Schema.is(AxisTrelloActionsError)(error)) {
         assert.equal(error.reason, "missing_field");
       }

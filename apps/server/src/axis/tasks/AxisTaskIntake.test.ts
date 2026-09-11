@@ -1,11 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../../persistence/Migrations.ts";
-import { AxisTaskIntakeError, createAxisTaskFromIntake } from "./AxisTaskIntake.ts";
+import { createAxisTaskFromIntake } from "./AxisTaskIntake.ts";
 import { AxisContextId, CommandId, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 
 const scope = {

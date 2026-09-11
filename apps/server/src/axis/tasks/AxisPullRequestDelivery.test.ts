@@ -116,7 +116,7 @@ it.effect("auth revocation surfaces as auth_revoked", () =>
         Effect.fail({ _tag: "AuthRevokedError", message: "Token revoked" }),
     });
     const error = yield* Effect.flip(publishAxisPullRequestPlan(adapter, baseInput));
-    assert.instanceOf(error, AxisPullRequestDeliveryError);
+    assert.equal(Schema.is(AxisPullRequestDeliveryError)(error), true);
     if (Schema.is(AxisPullRequestDeliveryError)(error)) {
       assert.equal(error.reason, "auth_revoked");
     }
@@ -129,7 +129,7 @@ it.effect("create failure surfaces as create_failed", () =>
       createChangeRequest: () => Effect.fail({ _tag: "NetworkError", message: "Host unreachable" }),
     });
     const error = yield* Effect.flip(publishAxisPullRequestPlan(adapter, baseInput));
-    assert.instanceOf(error, AxisPullRequestDeliveryError);
+    assert.equal(Schema.is(AxisPullRequestDeliveryError)(error), true);
     if (Schema.is(AxisPullRequestDeliveryError)(error)) {
       assert.equal(error.reason, "create_failed");
     }
@@ -142,7 +142,7 @@ it.effect("reconcile failure surfaces as reconcile_failed", () =>
       findChangeRequest: () => Effect.fail({ _tag: "RateLimit", message: "rate limited" }),
     });
     const error = yield* Effect.flip(publishAxisPullRequestPlan(adapter, baseInput));
-    assert.instanceOf(error, AxisPullRequestDeliveryError);
+    assert.equal(Schema.is(AxisPullRequestDeliveryError)(error), true);
     if (Schema.is(AxisPullRequestDeliveryError)(error)) {
       assert.equal(error.reason, "reconcile_failed");
     }

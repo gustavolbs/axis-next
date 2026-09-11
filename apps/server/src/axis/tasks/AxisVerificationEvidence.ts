@@ -119,7 +119,6 @@ const error = (reason: AxisVerificationEvidenceError["reason"], message: string)
   new AxisVerificationEvidenceError({ reason, message });
 
 const evidenceDigest = (input: AxisVerificationEvidenceType) =>
-  // eslint-disable-next-line effect/preferSchemaOverJson
   NodeCrypto.createHash("sha256")
     .update(
       JSON.stringify({
