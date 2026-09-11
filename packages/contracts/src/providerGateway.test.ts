@@ -35,6 +35,16 @@ describe("provider gateways", () => {
     );
   });
 
+  it("defines an OpenCode/Chat RouteMux preset", () => {
+    const routemux = getProviderGateway("routemux-opencode");
+    expect(routemux?.driver).toBe("opencode");
+    expect(routemux?.baseUrl).toBe("https://api.routemux.com/v1");
+    expect(routemux?.apiKeyVariable).toBe("ROUTEMUX_API_KEY");
+    expect(routemux?.modelsPath).toBe("/models");
+    expect(routemux?.modelsQuery).toContain("protocol=openai_chat");
+    expect(routemux?.opencode).toEqual({ providerId: "routemux", wireApi: "chat" });
+  });
+
   it("marks only the credential variable sensitive", () => {
     for (const gateway of PROVIDER_GATEWAYS) {
       const environment = providerGatewayEnvironment(gateway, "sk-secret");

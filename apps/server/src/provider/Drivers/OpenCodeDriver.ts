@@ -12,11 +12,12 @@
  *
  * @module provider/Drivers/OpenCodeDriver
  */
-import { OpenCodeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { OpenCodeSettings, getProviderGateway, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -35,7 +36,12 @@ import {
 } from "../Layers/OpenCodeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import { OpenCodeRuntime } from "../opencodeRuntime.ts";
+import {
+  makeOpenCodeGatewayConfig,
+  openCodeGatewayModels,
+  OPENCODE_GATEWAY_FALLBACK_MODELS,
+  OpenCodeRuntime,
+} from "../opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -55,6 +61,7 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
+import { makeGatewayModelSource } from "../providerGatewayModels.ts";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
@@ -106,7 +113,46 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+      const inheritedProcessEnv = mergeProviderInstanceEnvironment(environment);
+      const gatewayDefinition = getProviderGateway(gateway);
+      const gatewayModelSource = yield* makeGatewayModelSource({
+        gateway: gatewayDefinition,
+        environment: inheritedProcessEnv,
+        httpClient,
+      });
+      const configuredModels = effectiveConfig.customModels.map((entry) =>
+        typeof entry === "string"
+          ? { slug: entry, name: entry }
+          : { slug: entry.slug, name: entry.name ?? entry.slug },
+      );
+      // OpenCode reads its provider and agent map before the local server
+      // starts. Resolve the live catalog once here, with a short bound, then
+      // inject only the generated config into this instance's child env.
+      const gatewayModelsResult =
+        gatewayDefinition?.opencode && gatewayModelSource !== undefined
+          ? yield* gatewayModelSource.read.pipe(Effect.timeoutOption("5 seconds"))
+          : undefined;
+      const liveGatewayModels = gatewayModelsResult
+        ? Option.getOrUndefined(gatewayModelsResult)?.models
+        : undefined;
+      const openCodeGatewayCatalog =
+        gatewayDefinition?.opencode === undefined
+          ? []
+          : openCodeGatewayModels(
+              liveGatewayModels ?? [...configuredModels, ...OPENCODE_GATEWAY_FALLBACK_MODELS],
+              gatewayDefinition.opencode.providerId,
+            );
+      const processEnv =
+        gatewayDefinition?.opencode === undefined
+          ? inheritedProcessEnv
+          : {
+              ...inheritedProcessEnv,
+              OPENCODE_CONFIG_CONTENT: makeOpenCodeGatewayConfig({
+                gateway: gatewayDefinition,
+                models: openCodeGatewayCatalog,
+              }),
+            };
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -119,7 +165,6 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         gateway,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,

@@ -1,6 +1,12 @@
 import * as NodeURL from "node:url";
 
-import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  ProviderApprovalDecision,
+  ProviderGatewayDefinition,
+  RuntimeMode,
+  ServerProviderModel,
+} from "@t3tools/contracts";
 import {
   createOpencodeClient,
   type Agent,
@@ -37,6 +43,115 @@ import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
+
+/** Models used when a RouteMux listing is unavailable during process startup. */
+export const OPENCODE_GATEWAY_FALLBACK_MODELS: ReadonlyArray<{
+  readonly slug: string;
+  readonly name: string;
+}> = [
+  { slug: "minimax/minimax-m3", name: "MiniMax M3" },
+  { slug: "deepseek/deepseek-v4-pro-cheap", name: "DeepSeek V4 Pro Cheap" },
+  { slug: "zhipu/glm-5.3-flash", name: "GLM 5.3 Flash" },
+];
+
+function isClaudeModel(model: Pick<ServerProviderModel, "slug" | "name">): boolean {
+  const haystack = `${model.slug} ${model.name}`.toLowerCase();
+  return haystack.includes("claude") || haystack.startsWith("anthropic/");
+}
+
+/** Keep the OpenCode RouteMux preset from exposing or selecting Claude models. */
+export function openCodeGatewayModels(
+  models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "name">>,
+  providerId = "routemux",
+): ReadonlyArray<{ readonly slug: string; readonly name: string }> {
+  const seen = new Set<string>();
+  const result: Array<{ readonly slug: string; readonly name: string }> = [];
+  for (const model of models) {
+    const rawSlug = model.slug.trim();
+    const slug = rawSlug.startsWith(`${providerId}/`)
+      ? rawSlug.slice(providerId.length + 1)
+      : rawSlug;
+    if (!slug || seen.has(slug) || isClaudeModel({ slug, name: model.name })) continue;
+    seen.add(slug);
+    result.push({ slug, name: model.name.trim() || slug });
+  }
+  return result.toSorted((left, right) => left.slug.localeCompare(right.slug));
+}
+
+function selectOpenCodeGatewayModel(
+  models: ReadonlyArray<{ readonly slug: string; readonly name: string }>,
+  preferred: ReadonlyArray<(model: { readonly slug: string; readonly name: string }) => boolean>,
+  fallbackIndex: number,
+) {
+  return (
+    preferred.map((predicate) => models.find(predicate)).find((model) => model !== undefined) ??
+    models[fallbackIndex] ??
+    models[0]
+  );
+}
+
+/**
+ * Build an OpenCode config for an OpenAI-compatible gateway.
+ *
+ * The API key is intentionally represented by OpenCode's environment reference
+ * syntax. This string may be sent to a child process, but it is also surfaced
+ * in diagnostics and must therefore never contain the actual credential.
+ */
+export function makeOpenCodeGatewayConfig(input: {
+  readonly gateway: ProviderGatewayDefinition;
+  readonly models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "name">>;
+}): string {
+  const opencode = input.gateway.opencode;
+  if (!opencode) return OPENCODE_EMPTY_CONFIG_CONTENT;
+  const models = openCodeGatewayModels(input.models, opencode.providerId);
+  const modelDefinitions = Object.fromEntries(
+    models.map((model) => [model.slug, { name: model.name }]),
+  );
+  const buildModel = selectOpenCodeGatewayModel(
+    models,
+    [
+      (model) => model.slug.toLowerCase() === "minimax/minimax-m3",
+      (model) =>
+        model.slug.toLowerCase().includes("minimax") && model.slug.toLowerCase().includes("m3"),
+    ],
+    0,
+  );
+  const reviewerModel = selectOpenCodeGatewayModel(
+    models,
+    [
+      (model) => model.slug.toLowerCase() === "deepseek/deepseek-v4-pro-cheap",
+      (model) => model.slug.toLowerCase() === "deepseek/deepseek-v4-pro",
+      (model) => model.slug.toLowerCase().includes("deepseek"),
+      (model) =>
+        model.slug.toLowerCase().includes("glm") || model.slug.toLowerCase().includes("zhipu"),
+    ],
+    1,
+  );
+  const modelRef = (model: { readonly slug: string } | undefined) =>
+    model ? `${opencode.providerId}/${model.slug}` : undefined;
+  const buildRef = modelRef(buildModel);
+  const reviewerRef = modelRef(reviewerModel);
+  const agents = {
+    ...(buildRef ? { build: { mode: "primary", model: buildRef } } : {}),
+    ...(buildRef ? { plan: { mode: "primary", model: buildRef } } : {}),
+    ...(reviewerRef ? { reviewer: { mode: "subagent", model: reviewerRef } } : {}),
+  };
+  return JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    provider: {
+      [opencode.providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: input.gateway.label,
+        options: {
+          baseURL: input.gateway.baseUrl,
+          apiKey: `{env:${input.gateway.apiKeyVariable}}`,
+        },
+        models: modelDefinitions,
+      },
+    },
+    ...(Object.keys(agents).length > 0 ? { agent: agents } : {}),
+  });
+}
 
 export const MINIMUM_OPENCODE_VERSION = "1.14.19";
 const OPENCODE_HEALTH_TIMEOUT = "5 seconds";

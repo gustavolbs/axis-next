@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.0] - 2026-09-10
+
+### Added
+
+- Add a RouteMux OpenCode gateway preset that uses OpenAI-compatible Chat Completions, live tool-capable model discovery, and isolated MiniMax coordinator and DeepSeek reviewer agents without exposing Claude models.
+
 ## [0.11.2] - 2026-09-10
 
 ### Added

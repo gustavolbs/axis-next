@@ -48,6 +48,11 @@ export interface ProviderGatewayDefinition {
     readonly providerId: string;
     readonly wireApi: "responses";
   };
+  /** OpenCode configuration needed when this gateway runs through OpenCode CLI. */
+  readonly opencode?: {
+    readonly providerId: string;
+    readonly wireApi: "chat";
+  };
 }
 
 const ROUTEMUX: ProviderGatewayDefinition = {
@@ -92,9 +97,33 @@ const ROUTEMUX_CODEX: ProviderGatewayDefinition = {
   codex: { providerId: "routemux", wireApi: "responses" },
 };
 
+const ROUTEMUX_OPENCODE: ProviderGatewayDefinition = {
+  id: ProviderGatewayId.make("routemux-opencode"),
+  label: "RouteMux (OpenCode)",
+  // OpenCode speaks OpenAI-compatible Chat Completions through its
+  // `@ai-sdk/openai-compatible` provider. The OpenCode driver owns the
+  // generated config and process environment for this preset.
+  driver: ProviderDriverKind.make("opencode"),
+  baseUrlVariable: "ROUTEMUX_BASE_URL",
+  baseUrl: "https://api.routemux.com/v1",
+  apiKeyVariable: "ROUTEMUX_API_KEY",
+  clearVariables: [
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+  ],
+  consoleUrl: "https://routemux.com/console/keys",
+  modelsPath: "/models",
+  modelsQuery: "?protocol=openai_chat&capability=tool_calling",
+  opencode: { providerId: "routemux", wireApi: "chat" },
+};
+
 export const PROVIDER_GATEWAYS: ReadonlyArray<ProviderGatewayDefinition> = [
   ROUTEMUX,
   ROUTEMUX_CODEX,
+  ROUTEMUX_OPENCODE,
 ];
 
 /**

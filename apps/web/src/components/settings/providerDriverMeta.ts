@@ -130,6 +130,10 @@ const GATEWAY_PRESENTATION: Readonly<
     icon: RouteMuxIcon,
     description: "RouteMux models through the Codex CLI, billed per request.",
   },
+  "routemux-opencode": {
+    icon: RouteMuxIcon,
+    description: "RouteMux models through the OpenCode CLI, billed per request.",
+  },
 };
 
 export const PROVIDER_GATEWAY_OPTIONS: readonly ProviderGatewayOption[] = PROVIDER_GATEWAYS.flatMap(

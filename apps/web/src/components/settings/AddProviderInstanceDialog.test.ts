@@ -134,6 +134,7 @@ describe("API-key provider preset", () => {
 describe("gateway provider preset", () => {
   const routemux = getProviderGateway("routemux") as ProviderGatewayDefinition;
   const routemuxCodex = getProviderGateway("routemux-codex") as ProviderGatewayDefinition;
+  const routemuxOpenCode = getProviderGateway("routemux-opencode") as ProviderGatewayDefinition;
 
   it("builds an isolated, API-billed RouteMux instance on the Claude driver", () => {
     const instance = buildGatewayProviderInstance({
@@ -178,6 +179,32 @@ describe("gateway provider preset", () => {
       gateway: "routemux-codex",
       config: {
         shadowHomePath: "~/.t3/provider-homes/routemux_codex",
+      },
+    });
+    expect(instance.environment).toEqual(
+      expect.arrayContaining([
+        { name: "ROUTEMUX_API_KEY", value: "sk-routemux-test", sensitive: true },
+        { name: "ROUTEMUX_BASE_URL", value: "https://api.routemux.com/v1", sensitive: false },
+        { name: "OPENAI_API_KEY", value: "", sensitive: false },
+        { name: "ANTHROPIC_AUTH_TOKEN", value: "", sensitive: false },
+      ]),
+    );
+  });
+
+  it("builds an isolated RouteMux instance on the OpenCode driver", () => {
+    const instance = buildGatewayProviderInstance({
+      instanceId: ProviderInstanceId.make("routemux_opencode"),
+      gateway: routemuxOpenCode,
+      apiKey: "  sk-routemux-test  ",
+      config: {},
+    });
+
+    expect(instance).toMatchObject({
+      driver: "opencode",
+      gateway: "routemux-opencode",
+      credentialSource: "api-key",
+      config: {
+        homePath: "~/.t3/provider-homes/routemux_opencode",
       },
     });
     expect(instance.environment).toEqual(

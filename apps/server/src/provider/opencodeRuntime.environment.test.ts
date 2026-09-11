@@ -15,9 +15,13 @@ import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { describe, expect, it } from "vite-plus/test";
 
+import { getProviderGateway } from "@t3tools/contracts";
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,
+  makeOpenCodeGatewayConfig,
+  openCodeGatewayModels,
+  OPENCODE_GATEWAY_FALLBACK_MODELS,
   OpenCodeRuntimeLive,
   resolveOpenCodeConfigContent,
   resolveOpenCodeServerPassword,
@@ -41,6 +45,58 @@ describe("resolveOpenCodeConfigContent", () => {
       }),
     ).toBe('{"source":"process"}');
     expect(resolveOpenCodeConfigContent(undefined, {})).toBe("{}");
+  });
+});
+
+describe("OpenCode RouteMux config", () => {
+  const gateway = getProviderGateway("routemux-opencode");
+
+  it("filters Claude models and normalizes the gateway prefix", () => {
+    const models = openCodeGatewayModels(
+      [
+        { slug: "routemux/minimax/minimax-m3", name: "MiniMax M3" },
+        { slug: "anthropic/claude-opus-5", name: "Claude Opus 5" },
+        { slug: "deepseek/deepseek-v4-pro-cheap", name: "DeepSeek V4 Pro Cheap" },
+      ],
+      "routemux",
+    );
+
+    expect(models).toEqual([
+      { slug: "deepseek/deepseek-v4-pro-cheap", name: "DeepSeek V4 Pro Cheap" },
+      { slug: "minimax/minimax-m3", name: "MiniMax M3" },
+    ]);
+  });
+
+  it("generates a credential-free provider config with coordinator and reviewer agents", () => {
+    expect(gateway).toBeDefined();
+    const models = OPENCODE_GATEWAY_FALLBACK_MODELS;
+    const config = JSON.parse(makeOpenCodeGatewayConfig({ gateway: gateway!, models })) as {
+      provider: Record<
+        string,
+        {
+          npm: string;
+          options: { baseURL: string; apiKey: string };
+          models: Record<string, { name: string }>;
+        }
+      >;
+      agent: Record<string, { mode: string; model: string }>;
+    };
+    const provider = config.provider.routemux!;
+
+    expect(provider.npm).toBe("@ai-sdk/openai-compatible");
+    expect(provider.options.baseURL).toBe("https://api.routemux.com/v1");
+    expect(provider.options.apiKey).toBe("{env:ROUTEMUX_API_KEY}");
+    expect(provider.models["minimax/minimax-m3"]).toEqual({ name: "MiniMax M3" });
+    expect(config.agent.build).toEqual({
+      mode: "primary",
+      model: "routemux/minimax/minimax-m3",
+    });
+    expect(config.agent.reviewer).toEqual({
+      mode: "subagent",
+      model: "routemux/deepseek/deepseek-v4-pro-cheap",
+    });
+    expect(JSON.stringify(config)).not.toContain("sk-");
+    expect(JSON.stringify(config).toLowerCase()).not.toContain("claude");
   });
 });
 
