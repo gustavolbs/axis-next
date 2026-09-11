@@ -852,6 +852,7 @@ describe("ClaudeAdapterLive", () => {
           "<runtime_info>In case you're asked: you are running in T3 Code through the Claude Code harness. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n" +
           axisContextInstructions,
       });
+      assert.deepEqual(createInput?.options.settingSources, []);
       assert.equal(createInput?.options.resume, undefined);
       assert.equal(
         createInput?.options.sessionId,
