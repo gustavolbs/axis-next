@@ -6,6 +6,7 @@ import {
   AxisLearningEvidence,
   AxisLearningLifecycleEvent,
   AxisLearningProposal,
+  AxisLearningProposalId,
   AxisLearningSnapshot,
   AxisLearningScope,
   AxisLearningVersion,
@@ -277,6 +278,78 @@ testLayer("AxisProjectDataLifecycle", (it) => {
       assert.deepEqual(result.retained.versionIds, [immutableVersion.id]);
       assert.deepEqual(result.retained.lifecycleIds, [immutableLifecycle.id]);
     }),
+  );
+
+  it.effect("does not list proposals outside the project's scope as retained during delete", () =>
+    Effect.gen(function* () {
+      const lifecycle = yield* AxisProjectDataLifecycle;
+      const authorization = yield* lifecycle.authorize({ action: "delete", scope: scopeA });
+      const orphanReferencedProposal = "P-orphan";
+      const versionReferencingOrphan = decodeVersion({
+        ...immutableVersion,
+        id: "version-orphan-ref",
+        proposalId: orphanReferencedProposal,
+      });
+      const lifecycleReferencingOrphan = decodeLifecycle({
+        ...immutableLifecycle,
+        id: "lifecycle-orphan-ref",
+        proposalId: orphanReferencedProposal,
+      });
+      const result = yield* lifecycle.delete(
+        authorization,
+        dataset({
+          learning: decodeSnapshot({
+            ...learning([immutableEvidence]),
+            proposals: [],
+            versions: [versionReferencingOrphan],
+            lifecycle: [lifecycleReferencingOrphan],
+          }),
+        }),
+      );
+
+      // The orphan proposal id must not appear in retained.proposalIds
+      // because this project does not own it. The reference is a
+      // foreign-key observation, not a row to retain on this scope's behalf.
+      const orphanId = AxisLearningProposalId.make(orphanReferencedProposal);
+      assert.equal(result.retained.proposalIds.includes(orphanId), false);
+    }),
+  );
+
+  it.effect(
+    "does not retain a proposal owned by a different project that happens to be referenced",
+    () =>
+      Effect.gen(function* () {
+        const lifecycle = yield* AxisProjectDataLifecycle;
+        const authorization = yield* lifecycle.authorize({ action: "delete", scope: scopeA });
+        // A proposal exists for scopeB but is referenced by scopeA's history.
+        // The delete plan for scopeA must not claim retention on scopeB's behalf.
+        const proposalOwnedByB = decodeProposal({
+          ...immutableProposal,
+          id: "proposal-by-b",
+          scope: decodeLearningScope(scopeB),
+        });
+        const result = yield* lifecycle.delete(
+          authorization,
+          dataset({
+            learning: decodeSnapshot({
+              ...learning([immutableEvidence]),
+              proposals: [],
+              versions: [],
+              lifecycle: [
+                decodeLifecycle({
+                  ...immutableLifecycle,
+                  id: "lifecycle-ref-b",
+                  proposalId: proposalOwnedByB.id,
+                  versionId: null,
+                }),
+              ],
+            }),
+          }),
+        );
+
+        const orphanId = AxisLearningProposalId.make(proposalOwnedByB.id);
+        assert.equal(result.retained.proposalIds.includes(orphanId), false);
+      }),
   );
 
   it.effect("rejects cross-scope policy use and keeps promotion clearly unavailable", () =>
