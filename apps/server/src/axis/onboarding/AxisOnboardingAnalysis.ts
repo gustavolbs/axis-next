@@ -238,7 +238,7 @@ const isBranchSourceFact = (fact: AxisOnboardingFact) =>
   branchSourceKeys.has(fact.key.toLocaleLowerCase("en-US"));
 
 const hasScopeExpansion = (text: string) =>
-  /(?:\b(?:outside|another|other|entire|whole)\s+(?:project|repository|workspace|scope)\b|\b(?:all|every|any)\s+(?:projects?|repositories?|workspaces?)\b|\b(?:across|for)\s+(?:all|every|multiple)\s+(?:projects?|repositories?|workspaces?)\b)/i.test(
+  /(?:\b(?:outside|another|other|entire|whole)\s+(?:projects?|repositories?|workspaces?|scope)\b|\b(?:all|every|any)\s+(?:projects?|repositories?|workspaces?)\b|\b(?:across|for)\s+(?:all|every|multiple)\s+(?:projects?|repositories?|workspaces?)\b)/i.test(
     text,
   );
 
