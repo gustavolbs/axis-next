@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.12.6] - 2026-09-11
+
+### Added
+
+- Server-owned agent identity: `AgentRunId` (minted by the router at
+  dispatch) and `ProviderExecutionId` (the real OpenCode session id when
+  the provider surfaces one) wired through a new `AgentRunRegistry`
+  service in `apps/server/src/orchestration/Services/AgentRunRegistry.ts`.
+  The runtime ingestion layer mints a `main` run on
+  `thread.turn-start-requested`, attaches the real provider id when
+  `thread.started` carries a non-placeholder `providerThreadId`, and
+  marks the run `completed` / `cancelled` on terminal turn events.
+- Placeholder rejection helpers (`isPlaceholderProviderExecutionId`,
+  `providerExecutionIdFrom`) so probe responses like `<id>`, `<model>`,
+  `placeholder`, `unknown`, `synthetic` and empty strings never promote
+  themselves to a `ProviderExecutionId`.
+- Focused tests covering the full invariant set:
+  server-minted id, real provider id acceptance, placeholder rejection,
+  sticky terminal status across cancel / retry / compaction, worker vs
+  reviewer distinction, late `providerExecutionId` patches, and
+  per-thread run lookup. 10 new contract tests, 15 new registry tests,
+  14 new ingestion-hook tests.
+
+### Fixed
+
+- Repair the `projectOverviewIntegration.test.ts` fixture to match the
+  current `AxisContextCatalog` schema (`providerOwnerships`,
+  `providerAccessGrants`, `kind`, `createdAt`, `updatedAt` on
+  `AxisContext`).
+
 ## [0.12.5] - 2026-09-11
 
 ### Added
