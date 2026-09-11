@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.2] - 2026-09-10
+
+### Added
+
+- Allow explicit RouteMux model mentions in OpenCode prompts to run as dynamically configured subagents.
+
 ## [0.12.1] - 2026-09-10
 
 ### Changed

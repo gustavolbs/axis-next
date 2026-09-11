@@ -55,7 +55,11 @@ RouteMux gateway. Enter a RouteMux API key for the instance and refresh its
 provider status. The model picker is populated from the live, tool-capable
 catalog returned for that key; Claude models are omitted.
 
-The model selected in the composer is sent with each turn. T3 Code does not
-assign a MiniMax, DeepSeek, GLM, GPT, or any other model to an agent role. An
-OpenCode subagent without its own explicit configuration inherits the parent
-turn's selected model.
+The model selected in the composer is the coordinator for that turn. To choose
+a different child model, mention its catalog name or exact slug together with
+the word **agent**, **subagent**, **worker**, or **reviewer** in your prompt, for
+example: “Call an agent using DeepSeek V4 Pro Relay and ask it to say hello.”
+T3 Code creates that child selection from the live catalog for the instance;
+there are no fixed MiniMax, DeepSeek, GLM, GPT, or role assignments. If no child
+model is mentioned, OpenCode's normal agent behavior applies and the child
+inherits the coordinator model when it has no explicit configuration.

@@ -29,7 +29,13 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
+import type {
+  AgentPartInput,
+  OpencodeClient,
+  Part,
+  PermissionRequest,
+  QuestionRequest,
+} from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -56,6 +62,8 @@ import {
   toOpenCodeFileParts,
   toOpenCodePermissionReply,
   toOpenCodeQuestionAnswers,
+  resolveOpenCodeGatewayAgentsInPrompt,
+  type OpenCodeGatewayAgent,
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
 import * as Option from "effect/Option";
@@ -449,6 +457,8 @@ export interface OpenCodeAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /** Live RouteMux models exposed as OpenCode subagents for explicit prompts. */
+  readonly gatewaySubagents?: ReadonlyArray<OpenCodeGatewayAgent>;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -3200,6 +3210,10 @@ export function makeOpenCodeAdapter(
           }
 
           const conciseOutputProfile = yield* readConciseOutputProfile;
+          const requestedGatewayAgents = resolveOpenCodeGatewayAgentsInPrompt({
+            text: text ?? "",
+            agents: options?.gatewaySubagents ?? [],
+          });
           let promptTimedOut = false;
           const promptEffect = runOpenCodeSdk("session.promptAsync", (signal) =>
             context.client.session.promptAsync(
@@ -3220,7 +3234,14 @@ export function makeOpenCodeAdapter(
                 ]
                   .filter((part): part is string => part !== undefined)
                   .join("\n\n"),
-                parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+                parts: [
+                  ...(text ? [{ type: "text" as const, text }] : []),
+                  ...requestedGatewayAgents.map((agent): AgentPartInput => ({
+                    type: "agent",
+                    name: agent.name,
+                  })),
+                  ...fileParts,
+                ],
               },
               { signal },
             ),

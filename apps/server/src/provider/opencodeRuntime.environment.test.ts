@@ -19,6 +19,8 @@ import { getProviderGateway } from "@t3tools/contracts";
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,
+  openCodeGatewayAgents,
+  resolveOpenCodeGatewayAgentsInPrompt,
   makeOpenCodeGatewayConfig,
   openCodeGatewayModels,
   OpenCodeRuntimeLive,
@@ -96,9 +98,58 @@ describe("OpenCode RouteMux config", () => {
     });
     expect(JSON.stringify(config)).toContain("deepseek-v4-pro-relay");
     expect(JSON.stringify(config)).not.toContain("deepseek-v4-pro-cheap");
-    expect(Object.values(config.agent).every((agent) => agent.model === undefined)).toBe(true);
+    expect(config.agent.reviewer?.model).toBeUndefined();
+    expect(config.agent["routemux-deepseek-deepseek-v4-pro-relay"]).toMatchObject({
+      mode: "subagent",
+      model: "routemux/deepseek/deepseek-v4-pro-relay",
+    });
     expect(JSON.stringify(config)).not.toContain("sk-");
     expect(JSON.stringify(config).toLowerCase()).not.toContain("claude");
+  });
+
+  it("resolves an explicit model mention to its generated subagent", () => {
+    const agents = openCodeGatewayAgents(
+      [
+        { slug: "minimax/minimax-m3", name: "MiniMax M3" },
+        { slug: "deepseek/deepseek-v4-pro-relay", name: "DeepSeek V4 Pro Relay" },
+      ],
+      "routemux",
+    );
+
+    expect(
+      resolveOpenCodeGatewayAgentsInPrompt({
+        text: "Chame um agent em Deepseek V4 Pro Relay que simplesmente diga oi.",
+        agents,
+      }).map((agent) => agent.slug),
+    ).toEqual(["deepseek/deepseek-v4-pro-relay"]);
+  });
+
+  it("does not turn an ordinary coordinator mention into a child agent", () => {
+    const agents = openCodeGatewayAgents(
+      [{ slug: "minimax/minimax-m3", name: "MiniMax M3" }],
+      "routemux",
+    );
+
+    expect(
+      resolveOpenCodeGatewayAgentsInPrompt({
+        text: "Use MiniMax M3 como coordenador desta tarefa.",
+        agents,
+      }),
+    ).toEqual([]);
+  });
+
+  it("matches the model portion of a slug when the gateway has no display name", () => {
+    const agents = openCodeGatewayAgents(
+      [{ slug: "deepseek/deepseek-v4-pro-relay", name: "deepseek/deepseek-v4-pro-relay" }],
+      "routemux",
+    );
+
+    expect(
+      resolveOpenCodeGatewayAgentsInPrompt({
+        text: "Use DeepSeek V4 Pro Relay as a reviewer agent.",
+        agents,
+      }).map((agent) => agent.slug),
+    ).toEqual(["deepseek/deepseek-v4-pro-relay"]);
   });
 
   it("does not invent models or role assignments when RouteMux has no catalog", () => {

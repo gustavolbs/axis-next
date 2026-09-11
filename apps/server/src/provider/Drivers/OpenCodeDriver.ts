@@ -39,6 +39,7 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
   makeOpenCodeGatewayConfig,
+  openCodeGatewayAgents,
   openCodeGatewayModels,
   OpenCodeRuntime,
 } from "../opencodeRuntime.ts";
@@ -152,6 +153,10 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         gatewayDefinition?.opencode === undefined
           ? []
           : openCodeGatewayModels(liveGatewayModels ?? [], gatewayDefinition.opencode.providerId);
+      const openCodeGatewaySubagents =
+        gatewayDefinition?.opencode === undefined
+          ? []
+          : openCodeGatewayAgents(liveGatewayModels ?? [], gatewayDefinition.opencode.providerId);
       const processEnv =
         gatewayDefinition?.opencode === undefined
           ? inheritedProcessEnv
@@ -189,6 +194,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         instanceId,
         resolveConciseOutputProfile: resolveConciseOutputProfileForInstance,
         environment: processEnv,
+        gatewaySubagents: openCodeGatewaySubagents,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const serverOwner = yield* OpenCodeServerOwner.make({

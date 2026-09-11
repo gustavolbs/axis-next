@@ -68,6 +68,85 @@ export function openCodeGatewayModels(
   return result.toSorted((left, right) => left.slug.localeCompare(right.slug));
 }
 
+export interface OpenCodeGatewayAgent {
+  /** Agent identifier accepted by OpenCode's built-in `task` tool. */
+  readonly name: string;
+  /** Model id as returned by the gateway, without the OpenCode provider prefix. */
+  readonly slug: string;
+  readonly displayName: string;
+  /** Fully qualified OpenCode model reference, e.g. routemux/deepseek/foo. */
+  readonly modelRef: string;
+}
+
+function gatewayAgentName(slug: string, used: Set<string>): string {
+  const base = `routemux-${
+    slug
+      .replaceAll(/[^a-zA-Z0-9]+/gu, "-")
+      .replace(/^-+|-+$/gu, "")
+      .toLowerCase() || "model"
+  }`;
+  let name = base;
+  let suffix = 2;
+  while (used.has(name)) {
+    name = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  used.add(name);
+  return name;
+}
+
+/**
+ * Expose every live gateway model as a subagent definition. OpenCode's native
+ * task tool selects an agent name, not a model, so these short-lived
+ * definitions are the bridge that lets a user choose a child model without a
+ * fixed role-to-model policy.
+ */
+export function openCodeGatewayAgents(
+  models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "name">>,
+  providerId = "routemux",
+): ReadonlyArray<OpenCodeGatewayAgent> {
+  const used = new Set<string>();
+  return openCodeGatewayModels(models, providerId).map((model) => ({
+    name: gatewayAgentName(model.slug, used),
+    slug: model.slug,
+    displayName: model.name,
+    modelRef: `${providerId}/${model.slug}`,
+  }));
+}
+
+function normalizePromptMatch(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replaceAll(/[\u0300-\u036f]/gu, "")
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/gu, " ")
+    .trim();
+}
+
+/** Find models explicitly mentioned as agents/subagents in a user message. */
+export function resolveOpenCodeGatewayAgentsInPrompt(input: {
+  readonly text: string;
+  readonly agents: ReadonlyArray<OpenCodeGatewayAgent>;
+}): ReadonlyArray<OpenCodeGatewayAgent> {
+  const prompt = normalizePromptMatch(input.text);
+  if (!prompt) return [];
+  const agentIntent =
+    /\b(agent|agente|subagent|subagente|worker|reviewer|review|revisor|revisao|analysis|analise|delegat|chame)\b/u;
+
+  return input.agents.filter((agent) => {
+    const candidates = [agent.slug, agent.slug.split("/").at(-1), agent.displayName, agent.modelRef]
+      .flatMap((candidate) => (candidate === undefined ? [] : [normalizePromptMatch(candidate)]))
+      .filter((candidate) => candidate.length >= 3);
+    return candidates.some((candidate) => {
+      const index = prompt.indexOf(candidate);
+      if (index < 0) return false;
+      const start = Math.max(0, index - 96);
+      const end = Math.min(prompt.length, index + candidate.length + 96);
+      return agentIntent.test(prompt.slice(start, end));
+    });
+  });
+}
+
 /**
  * Build an OpenCode config for an OpenAI-compatible gateway.
  *
@@ -82,8 +161,19 @@ export function makeOpenCodeGatewayConfig(input: {
   const opencode = input.gateway.opencode;
   if (!opencode) return OPENCODE_EMPTY_CONFIG_CONTENT;
   const models = openCodeGatewayModels(input.models, opencode.providerId);
+  const agents = openCodeGatewayAgents(input.models, opencode.providerId);
   const modelDefinitions = Object.fromEntries(
     models.map((model) => [model.slug, { name: model.name }]),
+  );
+  const agentDefinitions = Object.fromEntries(
+    agents.map((agent) => [
+      agent.name,
+      {
+        mode: "subagent" as const,
+        model: agent.modelRef,
+        description: `RouteMux model ${agent.displayName} (${agent.slug})`,
+      },
+    ]),
   );
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -98,11 +188,12 @@ export function makeOpenCodeGatewayConfig(input: {
         models: modelDefinitions,
       },
     },
-    // Keep the reviewer available for the parent's Task/subagent mechanism,
-    // while leaving its model unset so OpenCode inherits the model selected
-    // for the current session. Axis remains the source of the user's model
-    // choice; this generated config never assigns one by role.
-    agent: { reviewer: { mode: "subagent" } },
+    // Keep the generic reviewer available, and expose each live model as a
+    // selectable child agent. No role receives a hardcoded model.
+    agent: {
+      reviewer: { mode: "subagent" },
+      ...agentDefinitions,
+    },
   });
 }
 
