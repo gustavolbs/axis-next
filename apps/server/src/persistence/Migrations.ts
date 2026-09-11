@@ -25,6 +25,7 @@ import Migration0066 from "./Migrations/066_AxisVerificationEvidence.ts";
 import Migration0067 from "./Migrations/067_AxisReviewEvidence.ts";
 import Migration0068 from "./Migrations/068_AxisReviewFeedback.ts";
 import Migration0069 from "./Migrations/069_AxisTaskIntake.ts";
+import Migration0070 from "./Migrations/070_AxisLearningOutcomes.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -162,6 +163,7 @@ export const migrationEntries = [
   [67, "AxisReviewEvidence", Migration0067],
   [68, "AxisReviewFeedback", Migration0068],
   [69, "AxisTaskIntake", Migration0069],
+  [70, "AxisLearningOutcomes", Migration0070],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
