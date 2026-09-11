@@ -101,11 +101,14 @@ layer("060_AxisLearningProjectScope", (it) => {
       yield* sql`DELETE FROM axis_learning_active_versions
         WHERE context_id = 'personal' AND target_key = 'workflow:legacy'`;
       assert.equal(
-        (yield* Effect.exit(sql`DELETE FROM axis_learning_versions WHERE id = 'legacy-version'`))._tag,
+        (yield* Effect.exit(sql`DELETE FROM axis_learning_versions WHERE id = 'legacy-version'`))
+          ._tag,
         "Failure",
       );
       assert.equal(
-        (yield* Effect.exit(sql`DELETE FROM axis_learning_lifecycle_events WHERE id = 'legacy-event'`))._tag,
+        (yield* Effect.exit(
+          sql`DELETE FROM axis_learning_lifecycle_events WHERE id = 'legacy-event'`,
+        ))._tag,
         "Failure",
       );
 

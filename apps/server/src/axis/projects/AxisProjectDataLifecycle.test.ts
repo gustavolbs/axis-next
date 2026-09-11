@@ -197,8 +197,14 @@ testLayer("AxisProjectDataLifecycle", (it) => {
       const exportedEvidence = exported.learning.evidence[0];
 
       assert.equal(exported.scope.project.projectId, "project-a");
-      assert.deepEqual(exported.tasks.map((item) => String(item.id)), ["task-a"]);
-      assert.deepEqual(exported.taskCommands.map((item) => item.commandId), ["command-a"]);
+      assert.deepEqual(
+        exported.tasks.map((item) => String(item.id)),
+        ["task-a"],
+      );
+      assert.deepEqual(
+        exported.taskCommands.map((item) => item.commandId),
+        ["command-a"],
+      );
       assert.equal(exportedEvidence?.availability, "unavailable");
       if (exportedEvidence?.availability === "unavailable") {
         assert.equal(exportedEvidence.reason, "expired");

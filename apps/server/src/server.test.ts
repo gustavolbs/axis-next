@@ -878,7 +878,8 @@ const buildAppUnderTest = (options?: {
             ...options?.layers?.axisLearningEngine,
           }),
           Layer.mock(AxisLearningService.AxisLearningService)({
-            requestImprovements: () => Effect.die("Axis Learning improvements are not stubbed in this test"),
+            requestImprovements: () =>
+              Effect.die("Axis Learning improvements are not stubbed in this test"),
             ...options?.layers?.axisLearningService,
           }),
           Layer.mock(AxisProjectProfileStore)({
@@ -5758,12 +5759,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.deepEqual(response, expected);
-      assert.deepEqual(requestImprovements.mock.calls, [[{
-        scope,
-        evidenceIds: [AxisLearningEvidenceId.make("evidence-1")],
-        commandId,
-        deadlineMs: 10_000,
-      }]]);
+      assert.deepEqual(requestImprovements.mock.calls, [
+        [
+          {
+            scope,
+            evidenceIds: [AxisLearningEvidenceId.make("evidence-1")],
+            commandId,
+            deadlineMs: 10_000,
+          },
+        ],
+      ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -5800,80 +5805,82 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("keeps legacy Learning proposal actions context-scoped and blocks legacy activation", () =>
-    Effect.gen(function* () {
-      const proposal = yield* decodeAxisLearningProposal({
-        id: "legacy-proposal",
-        contextId: "personal",
-        kind: "workflow-recommendation",
-        targetKey: "workflow:legacy",
-        title: "Legacy proposal",
-        rationale: "Readable legacy proposal.",
-        evidenceIds: ["legacy-evidence"],
-        change: { kind: "legacy-unknown", value: { legacy: true } },
-        status: "draft",
-        createdAt: "2026-09-10T00:00:00.000Z",
-        updatedAt: "2026-09-10T00:00:00.000Z",
-        reviewedAt: null,
-        reviewedBy: null,
-        reviewNote: null,
-      });
-      const catalog = yield* decodeAxisContextCatalogSnapshot({
-        revision: 1,
-        updatedAt: "2026-09-10T00:00:00.000Z",
-        catalog: {
-          contexts: [
-            {
-              id: "personal",
-              kind: "personal",
-              name: "Personal",
-              createdAt: "2026-09-10T00:00:00.000Z",
-              updatedAt: "2026-09-10T00:00:00.000Z",
-            },
-          ],
-        },
-      });
-      const getProposal = vi.fn<AxisLearningStore["Service"]["getProposal"]>(() =>
-        Effect.succeed(proposal),
-      );
-      const submitForReview = vi.fn<AxisLearningStore["Service"]["submitForReview"]>(
-        (_id, _lookup, _input) => Effect.succeed({ ...proposal, status: "in-review" }),
-      );
-      const activate = vi.fn(() => Effect.die("legacy activation must not reach the store"));
-      yield* buildAppUnderTest({
-        layers: {
-          axisContextCatalog: { get: Effect.succeed(catalog) },
-          axisLearning: {
-            getProposal,
-            submitForReview,
-            activate: activate as unknown as AxisLearningStore["Service"]["activate"],
+  it.effect(
+    "keeps legacy Learning proposal actions context-scoped and blocks legacy activation",
+    () =>
+      Effect.gen(function* () {
+        const proposal = yield* decodeAxisLearningProposal({
+          id: "legacy-proposal",
+          contextId: "personal",
+          kind: "workflow-recommendation",
+          targetKey: "workflow:legacy",
+          title: "Legacy proposal",
+          rationale: "Readable legacy proposal.",
+          evidenceIds: ["legacy-evidence"],
+          change: { kind: "legacy-unknown", value: { legacy: true } },
+          status: "draft",
+          createdAt: "2026-09-10T00:00:00.000Z",
+          updatedAt: "2026-09-10T00:00:00.000Z",
+          reviewedAt: null,
+          reviewedBy: null,
+          reviewNote: null,
+        });
+        const catalog = yield* decodeAxisContextCatalogSnapshot({
+          revision: 1,
+          updatedAt: "2026-09-10T00:00:00.000Z",
+          catalog: {
+            contexts: [
+              {
+                id: "personal",
+                kind: "personal",
+                name: "Personal",
+                createdAt: "2026-09-10T00:00:00.000Z",
+                updatedAt: "2026-09-10T00:00:00.000Z",
+              },
+            ],
           },
-        },
-      });
+        });
+        const getProposal = vi.fn<AxisLearningStore["Service"]["getProposal"]>(() =>
+          Effect.succeed(proposal),
+        );
+        const submitForReview = vi.fn<AxisLearningStore["Service"]["submitForReview"]>(
+          (_id, _lookup, _input) => Effect.succeed({ ...proposal, status: "in-review" }),
+        );
+        const activate = vi.fn(() => Effect.die("legacy activation must not reach the store"));
+        yield* buildAppUnderTest({
+          layers: {
+            axisContextCatalog: { get: Effect.succeed(catalog) },
+            axisLearning: {
+              getProposal,
+              submitForReview,
+              activate: activate as unknown as AxisLearningStore["Service"]["activate"],
+            },
+          },
+        });
 
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.axisLearningSubmitProposal]({ id: proposal.id }),
-        ),
-      );
-      assert.equal(response.status, "in-review");
-      assert.deepEqual(getProposal.mock.calls, [[proposal.id, AxisContextId.make("personal")]]);
-      assert.equal(submitForReview.mock.calls.length, 1);
-      assert.equal(submitForReview.mock.calls[0]?.[1], AxisContextId.make("personal"));
-
-      const activationError = yield* Effect.flip(
-        Effect.scoped(
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const response = yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
-            client[WS_METHODS.axisLearningActivateVersion]({
-              id: AxisLearningVersionId.make("legacy-version"),
-            }),
+            client[WS_METHODS.axisLearningSubmitProposal]({ id: proposal.id }),
           ),
-        ),
-      );
-      assert.equal(activationError._tag, "AxisLearningRevisionRequiredError");
-      assert.equal(activate.mock.calls.length, 0);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        );
+        assert.equal(response.status, "in-review");
+        assert.deepEqual(getProposal.mock.calls, [[proposal.id, AxisContextId.make("personal")]]);
+        assert.equal(submitForReview.mock.calls.length, 1);
+        assert.equal(submitForReview.mock.calls[0]?.[1], AxisContextId.make("personal"));
+
+        const activationError = yield* Effect.flip(
+          Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[WS_METHODS.axisLearningActivateVersion]({
+                id: AxisLearningVersionId.make("legacy-version"),
+              }),
+            ),
+          ),
+        );
+        assert.equal(activationError._tag, "AxisLearningRevisionRequiredError");
+        assert.equal(activate.mock.calls.length, 0);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes one MCP sync by source id through the shared coordinator", () =>

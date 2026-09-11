@@ -59,11 +59,7 @@ export const AxisTrelloSourceSnapshot = Schema.Struct({
 export type AxisTrelloSourceSnapshot = typeof AxisTrelloSourceSnapshot.Type;
 
 const AxisTrelloNativeLabel = Schema.Struct({
-  name: Schema.String.check(
-    Schema.isTrimmed(),
-    Schema.isNonEmpty(),
-    Schema.isMaxLength(256),
-  ),
+  name: Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty(), Schema.isMaxLength(256)),
 });
 
 const AxisTrelloNativeList = Schema.Union([
@@ -236,7 +232,9 @@ function validateConfig(config: AxisTrelloSourceConfig): AxisTrelloSourceError |
   }
   if (
     config.maxCards !== undefined &&
-    (!Number.isInteger(config.maxCards) || config.maxCards < 1 || config.maxCards > MAX_CARDS_PER_READ)
+    (!Number.isInteger(config.maxCards) ||
+      config.maxCards < 1 ||
+      config.maxCards > MAX_CARDS_PER_READ)
   ) {
     return sourceError(
       "configuration",
@@ -282,9 +280,17 @@ function bindingMatchesConfig(
 function nativeStatus(card: AxisTrelloNativeCard): string | null {
   const directStatus = card.status?.trim() || null;
   const listStatus =
-    typeof card.list === "string" ? card.list : card.list === null || card.list === undefined ? null : card.list.name;
+    typeof card.list === "string"
+      ? card.list
+      : card.list === null || card.list === undefined
+        ? null
+        : card.list.name;
   const normalizedListStatus = listStatus?.trim() || null;
-  if (directStatus !== null && normalizedListStatus !== null && directStatus !== normalizedListStatus) {
+  if (
+    directStatus !== null &&
+    normalizedListStatus !== null &&
+    directStatus !== normalizedListStatus
+  ) {
     throw sourceError(
       "invalid-response",
       `Trello card '${card.id}' returned conflicting status and list values.`,
@@ -331,8 +337,7 @@ export function toAxisTaskSource(
         ? mapping.value
         : native === null
           ? undefined
-          : (config.statusMap[native] ??
-            (isAxisTrelloMappedStatus(native) ? native : undefined));
+          : (config.statusMap[native] ?? (isAxisTrelloMappedStatus(native) ? native : undefined));
   return decodeTaskSource({
     source: {
       kind: "trello",
@@ -417,7 +422,9 @@ export const readAxisTrelloSource = Effect.fn("readAxisTrelloSource")(function* 
   }
   const cursor = input.cursor ?? null;
   if (cursor !== null && cursor.length > MAX_CURSOR_LENGTH) {
-    return yield* Effect.fail(sourceError("configuration", "Trello cursor exceeds the allowed length."));
+    return yield* Effect.fail(
+      sourceError("configuration", "Trello cursor exceeds the allowed length."),
+    );
   }
   const limit = input.config.maxCards ?? MAX_CARDS_PER_READ;
   const page = yield* input.binding
@@ -450,7 +457,9 @@ export const readAxisTrelloSource = Effect.fn("readAxisTrelloSource")(function* 
     );
   }
   if (decodedPage.cursor !== null && decodedPage.cursor.length > MAX_CURSOR_LENGTH) {
-    return yield* Effect.fail(sourceError("invalid-response", "Trello MCP returned an oversized cursor."));
+    return yield* Effect.fail(
+      sourceError("invalid-response", "Trello MCP returned an oversized cursor."),
+    );
   }
 
   const items: AxisWorkHubCollectedItem[] = [];
@@ -561,7 +570,7 @@ export function makeAxisTrelloSource(): AxisTrelloSourceSession {
     Effect.suspend(() =>
       read({
         ...input,
-        cursor: input.cursor === undefined ? snapshot?.cursor ?? null : input.cursor,
+        cursor: input.cursor === undefined ? (snapshot?.cursor ?? null) : input.cursor,
       }),
     );
   return {

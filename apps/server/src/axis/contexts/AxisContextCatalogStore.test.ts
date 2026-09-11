@@ -453,9 +453,15 @@ layer("AxisContextCatalogStore", (it) => {
         onboardingCommands: 0,
         onboardingApplications: 0,
       });
-      assert.deepEqual(yield* sql`SELECT context_id FROM axis_onboarding_runs`, [{ context_id: "personal" }]);
-      assert.deepEqual(yield* sql`SELECT context_id FROM axis_onboarding_commands`, [{ context_id: "personal" }]);
-      assert.deepEqual(yield* sql`SELECT context_id FROM axis_onboarding_applications`, [{ context_id: "personal" }]);
+      assert.deepEqual(yield* sql`SELECT context_id FROM axis_onboarding_runs`, [
+        { context_id: "personal" },
+      ]);
+      assert.deepEqual(yield* sql`SELECT context_id FROM axis_onboarding_commands`, [
+        { context_id: "personal" },
+      ]);
+      assert.deepEqual(yield* sql`SELECT context_id FROM axis_onboarding_applications`, [
+        { context_id: "personal" },
+      ]);
 
       const survivingRows = yield* sql<{
         readonly evidence: number;

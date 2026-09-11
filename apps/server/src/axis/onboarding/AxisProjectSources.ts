@@ -312,17 +312,15 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const collect = (scope: AxisProjectScope.AxisResolvedProjectScope) =>
     Effect.gen(function* () {
-      const project = yield* projections
-        .getProjectShellById(scope.scope.project.projectId)
-        .pipe(
-          Effect.mapError(
-            () =>
-              new AxisProjectSourcesError({
-                reason: "project_not_found",
-                message: "The Project could not be read.",
-              }),
-          ),
-        );
+      const project = yield* projections.getProjectShellById(scope.scope.project.projectId).pipe(
+        Effect.mapError(
+          () =>
+            new AxisProjectSourcesError({
+              reason: "project_not_found",
+              message: "The Project could not be read.",
+            }),
+        ),
+      );
       if (project._tag === "None")
         return yield* new AxisProjectSourcesError({
           reason: "project_not_found",

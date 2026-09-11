@@ -158,10 +158,7 @@ function trelloReadError(cause: unknown): AxisTrelloMcpReadError {
   return new AxisTrelloMcpReadError({ message: message.slice(0, 512) });
 }
 
-export function ensureSelectedMcpIsUsable(
-  options: ProviderWorkHubSyncOptions,
-  mcpName: string,
-) {
+export function ensureSelectedMcpIsUsable(options: ProviderWorkHubSyncOptions, mcpName: string) {
   const selected =
     options.driver === "claudeAgent"
       ? selectClaudeMcp(options, mcpName)
@@ -189,40 +186,42 @@ function selectClaudeMcp(
 }
 
 /** Runs the Trello adapter after the source sync has resolved its identity. */
-export const collectTrelloWorkHubSource = Effect.fn("collectTrelloWorkHubSource")(function* (input: {
-  readonly request: AxisWorkHubCollectInput;
-  readonly options: ProviderWorkHubSyncOptions;
-  readonly readCards: AxisTrelloMcpBinding["readCards"];
-  readonly nowEpochMs: number;
-}) {
-  const unavailable = ensureSelectedMcpIsUsable(input.options, input.request.mcpName);
-  if (unavailable !== undefined) return yield* syncError(input.options, unavailable);
-  const config = trelloConfig(input.request);
-  const binding: AxisTrelloMcpBinding = {
-    identity: {
-      environmentId: config.environmentId,
-      contextId: config.contextId,
-      provider: config.provider,
-      capabilityId: config.capabilityId,
-      mcpName: config.mcpName,
-    },
-    readCards: input.readCards,
-  };
-  const result = yield* readAxisTrelloSource({
-    config,
-    binding,
-    cursor: input.request.previousCursor,
-  }).pipe(
-    Effect.mapError((cause) =>
-      syncError(input.options, `Trello MCP sync failed: ${cause.message}`, cause),
-    ),
-  );
-  return buildAxisWorkHubCacheSnapshot({
-    request: input.request,
-    result,
-    nowEpochMs: input.nowEpochMs,
-  });
-});
+export const collectTrelloWorkHubSource = Effect.fn("collectTrelloWorkHubSource")(
+  function* (input: {
+    readonly request: AxisWorkHubCollectInput;
+    readonly options: ProviderWorkHubSyncOptions;
+    readonly readCards: AxisTrelloMcpBinding["readCards"];
+    readonly nowEpochMs: number;
+  }) {
+    const unavailable = ensureSelectedMcpIsUsable(input.options, input.request.mcpName);
+    if (unavailable !== undefined) return yield* syncError(input.options, unavailable);
+    const config = trelloConfig(input.request);
+    const binding: AxisTrelloMcpBinding = {
+      identity: {
+        environmentId: config.environmentId,
+        contextId: config.contextId,
+        provider: config.provider,
+        capabilityId: config.capabilityId,
+        mcpName: config.mcpName,
+      },
+      readCards: input.readCards,
+    };
+    const result = yield* readAxisTrelloSource({
+      config,
+      binding,
+      cursor: input.request.previousCursor,
+    }).pipe(
+      Effect.mapError((cause) =>
+        syncError(input.options, `Trello MCP sync failed: ${cause.message}`, cause),
+      ),
+    );
+    return buildAxisWorkHubCacheSnapshot({
+      request: input.request,
+      result,
+      nowEpochMs: input.nowEpochMs,
+    });
+  },
+);
 
 function syncError(
   options: Pick<ProviderWorkHubSyncOptions, "driver" | "instanceId">,
@@ -331,9 +330,9 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
         const schemaJson = yield* encodeJson(toJsonSchemaObject(AxisTrelloNativePage)).pipe(
           Effect.mapError(trelloReadError),
         );
-        yield* fileSystem.writeFileString(schemaPath, schemaJson).pipe(
-          Effect.mapError(trelloReadError),
-        );
+        yield* fileSystem
+          .writeFileString(schemaPath, schemaJson)
+          .pipe(Effect.mapError(trelloReadError));
         const launchArgs = resolveCodexLaunchArgs(input.config.launchArgs, input.environment);
         const mcpOverrides = codexWorkHubMcpOverrides(
           input.options.availableMcps,
@@ -363,7 +362,9 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
             cwd: isolatedCwd,
             env: {
               ...input.environment,
-              ...(input.config.homePath ? { CODEX_HOME: expandHomePath(input.config.homePath) } : {}),
+              ...(input.config.homePath
+                ? { CODEX_HOME: expandHomePath(input.config.homePath) }
+                : {}),
             },
             shell: resolved.shell,
             stdin: {
@@ -376,7 +377,8 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
           Effect.timeoutOption(SYNC_TIMEOUT_MS),
           Effect.flatMap(
             Option.match({
-              onNone: () => Effect.fail(new AxisTrelloMcpReadError({ message: "Trello MCP sync timed out." })),
+              onNone: () =>
+                Effect.fail(new AxisTrelloMcpReadError({ message: "Trello MCP sync timed out." })),
               onSome: Effect.succeed,
             }),
           ),
@@ -384,12 +386,15 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
         );
         if (result.code !== 0) {
           return yield* new AxisTrelloMcpReadError({
-            message: result.stderr.trim() || result.stdout.trim() || `Codex exited with code ${result.code}.`,
+            message:
+              result.stderr.trim() ||
+              result.stdout.trim() ||
+              `Codex exited with code ${result.code}.`,
           });
         }
-        const rawOutput = yield* fileSystem.readFileString(outputPath).pipe(
-          Effect.mapError(trelloReadError),
-        );
+        const rawOutput = yield* fileSystem
+          .readFileString(outputPath)
+          .pipe(Effect.mapError(trelloReadError));
         return yield* decodeTrelloPage(rawOutput).pipe(Effect.mapError(trelloReadError));
       }).pipe(
         Effect.scoped,
@@ -438,10 +443,7 @@ export const collectCodexWorkHubSource = Effect.fn("collectCodexWorkHubSource")(
       ),
     );
   const launchArgs = resolveCodexLaunchArgs(input.config.launchArgs, input.environment);
-  const mcpOverrides = codexWorkHubMcpOverrides(
-    input.options.availableMcps,
-    input.request.mcpName,
-  );
+  const mcpOverrides = codexWorkHubMcpOverrides(input.options.availableMcps, input.request.mcpName);
   const resolved = yield* resolveSpawnCommand(
     input.config.binaryPath || "codex",
     [
@@ -618,7 +620,10 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
             Effect.timeoutOption(SYNC_TIMEOUT_MS),
             Effect.flatMap(
               Option.match({
-                onNone: () => Effect.fail(new AxisTrelloMcpReadError({ message: "Trello MCP sync timed out." })),
+                onNone: () =>
+                  Effect.fail(
+                    new AxisTrelloMcpReadError({ message: "Trello MCP sync timed out." }),
+                  ),
                 onSome: Effect.succeed,
               }),
             ),
@@ -626,7 +631,10 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
           );
           if (result.code !== 0) {
             return yield* new AxisTrelloMcpReadError({
-              message: result.stderr.trim() || result.stdout.trim() || `Claude exited with code ${result.code}.`,
+              message:
+                result.stderr.trim() ||
+                result.stdout.trim() ||
+                `Claude exited with code ${result.code}.`,
             });
           }
           return yield* decodeClaudeTrelloStructuredOutput(result.stdout).pipe(
@@ -676,8 +684,8 @@ export const collectClaudeWorkHubSource = Effect.fn("collectClaudeWorkHubSource"
       Effect.mapError((cause) => syncError(input.options, "Failed to resolve Claude CLI.", cause)),
     );
     const result = yield* spawnAndCollect(
-    input.config.binaryPath || "claude",
-    ChildProcess.make(resolved.command, resolved.args, {
+      input.config.binaryPath || "claude",
+      ChildProcess.make(resolved.command, resolved.args, {
         cwd: input.cwd,
         env: input.environment,
         shell: resolved.shell,

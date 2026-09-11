@@ -17,7 +17,11 @@ import {
   AxisTaskPersistenceError,
   AxisTaskValidationError,
 } from "../../../../../packages/contracts/src/axisTask.ts";
-import { CommandId, EnvironmentId, ThreadId } from "../../../../../packages/contracts/src/baseSchemas.ts";
+import {
+  CommandId,
+  EnvironmentId,
+  ThreadId,
+} from "../../../../../packages/contracts/src/baseSchemas.ts";
 import Migration0059 from "../../persistence/Migrations/059_AxisProjectWork.ts";
 import Migration0061 from "../../persistence/Migrations/061_AxisTaskCommands.ts";
 import {
@@ -39,12 +43,10 @@ const projection = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     Effect.succeed(
       threadId === "thread_missing"
         ? Option.none()
-        : Option.some(
-            {
-              id: threadId,
-              projectId: threadId === "thread_wrong_project" ? "different-project" : "project",
-            } as never,
-          ),
+        : Option.some({
+            id: threadId,
+            projectId: threadId === "thread_wrong_project" ? "different-project" : "project",
+          } as never),
     ),
 });
 const environment = Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({

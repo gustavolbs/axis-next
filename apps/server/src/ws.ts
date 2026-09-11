@@ -195,8 +195,10 @@ export const resolveAxisCallerContextId = (
   if (requestedContextId !== undefined && session.scopes.includes(AuthAccessWriteScope)) {
     return contexts.find((context) => context.id === requestedContextId)?.id;
   }
-  return contexts.find((context) => context.id === session.subject)?.id ??
-  contexts.find((context) => context.kind === "personal")?.id;
+  return (
+    contexts.find((context) => context.id === session.subject)?.id ??
+    contexts.find((context) => context.kind === "personal")?.id
+  );
 };
 
 type AxisTaskScopeIdentity = {
@@ -624,7 +626,10 @@ const makeWsRpcLayer = (
       const axisScratchChats = yield* AxisScratchChatRunner;
       const onboardingRpcError = (error: unknown) => {
         const tag =
-          typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string"
+          typeof error === "object" &&
+          error !== null &&
+          "_tag" in error &&
+          typeof error._tag === "string"
             ? error._tag
             : "";
         const code = tag.includes("Conflict")
@@ -643,7 +648,10 @@ const makeWsRpcLayer = (
         return new AxisOnboardingRpcError({
           code,
           message:
-            typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
+            typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof error.message === "string"
               ? error.message
               : String(error),
         });
@@ -687,16 +695,18 @@ const makeWsRpcLayer = (
                             message: "The authenticated caller has no Axis context.",
                           }),
                         )
-                      : resolver.resolveProject({
-                          caller: { environmentId, contextId: callerContextId },
-                          operation,
-                          scope,
-                        }).pipe(
-                          Effect.mapError(
-                            (error) =>
-                              new AxisProjectProfileValidationError({ message: error.message }),
-                          ),
-                        );
+                      : resolver
+                          .resolveProject({
+                            caller: { environmentId, contextId: callerContextId },
+                            operation,
+                            scope,
+                          })
+                          .pipe(
+                            Effect.mapError(
+                              (error) =>
+                                new AxisProjectProfileValidationError({ message: error.message }),
+                            ),
+                          );
                   }),
                 ),
               ),
@@ -740,7 +750,8 @@ const makeWsRpcLayer = (
                 if (scope.contextId !== callerContextId) {
                   return Effect.fail(
                     new AxisLearningValidationError({
-                      message: "The requested Axis context is not owned by the authenticated caller.",
+                      message:
+                        "The requested Axis context is not owned by the authenticated caller.",
                     }),
                   );
                 }
@@ -800,7 +811,7 @@ const makeWsRpcLayer = (
                     message: "The Learning scope context does not match the payload context.",
                   }),
                 )
-            : Effect.succeed(scope);
+              : Effect.succeed(scope);
           }),
         );
       const learningScopeKey = (scope: AxisLearningScope): string =>
@@ -2490,7 +2501,9 @@ const makeWsRpcLayer = (
             WS_METHODS.axisOnboardingList,
             validateProjectScope(scope, "read").pipe(
               Effect.flatMap((resolvedScope) =>
-                requireAxisOnboarding().pipe(Effect.flatMap((service) => service.list(resolvedScope))),
+                requireAxisOnboarding().pipe(
+                  Effect.flatMap((service) => service.list(resolvedScope)),
+                ),
               ),
               Effect.mapError(onboardingRpcError),
             ),
@@ -2501,7 +2514,9 @@ const makeWsRpcLayer = (
             WS_METHODS.axisOnboardingGet,
             validateProjectScope(scope, "read").pipe(
               Effect.flatMap((resolvedScope) =>
-                requireAxisOnboarding().pipe(Effect.flatMap((service) => service.get(resolvedScope, runId))),
+                requireAxisOnboarding().pipe(
+                  Effect.flatMap((service) => service.get(resolvedScope, runId)),
+                ),
               ),
               Effect.mapError(onboardingRpcError),
             ),
@@ -2512,9 +2527,12 @@ const makeWsRpcLayer = (
             WS_METHODS.axisOnboardingStart,
             validateProjectScope(input.scope, "write").pipe(
               Effect.flatMap((resolvedScope) =>
-                axisContextProjectScopeKey(resolvedScope) === axisContextProjectScopeKey(input.scope)
+                axisContextProjectScopeKey(resolvedScope) ===
+                axisContextProjectScopeKey(input.scope)
                   ? requireAxisOnboarding().pipe(
-                      Effect.flatMap((service) => service.start({ ...input, scope: resolvedScope })),
+                      Effect.flatMap((service) =>
+                        service.start({ ...input, scope: resolvedScope }),
+                      ),
                     )
                   : Effect.fail(
                       new AxisProjectProfileValidationError({
@@ -2531,7 +2549,9 @@ const makeWsRpcLayer = (
             WS_METHODS.axisOnboardingCancel,
             validateProjectScope(scope, "write").pipe(
               Effect.flatMap((resolvedScope) =>
-                requireAxisOnboarding().pipe(Effect.flatMap((service) => service.cancel(resolvedScope, input))),
+                requireAxisOnboarding().pipe(
+                  Effect.flatMap((service) => service.cancel(resolvedScope, input)),
+                ),
               ),
               Effect.mapError(onboardingRpcError),
             ),
@@ -2542,7 +2562,9 @@ const makeWsRpcLayer = (
             WS_METHODS.axisOnboardingRetry,
             validateProjectScope(scope, "write").pipe(
               Effect.flatMap((resolvedScope) =>
-                requireAxisOnboarding().pipe(Effect.flatMap((service) => service.retry(resolvedScope, input))),
+                requireAxisOnboarding().pipe(
+                  Effect.flatMap((service) => service.retry(resolvedScope, input)),
+                ),
               ),
               Effect.mapError(onboardingRpcError),
             ),
@@ -2553,9 +2575,12 @@ const makeWsRpcLayer = (
             WS_METHODS.axisOnboardingApply,
             validateProjectScope(input.scope, "write").pipe(
               Effect.flatMap((resolvedScope) =>
-                axisContextProjectScopeKey(resolvedScope) === axisContextProjectScopeKey(input.scope)
+                axisContextProjectScopeKey(resolvedScope) ===
+                axisContextProjectScopeKey(input.scope)
                   ? requireAxisOnboarding().pipe(
-                      Effect.flatMap((service) => service.apply({ ...input, scope: resolvedScope })),
+                      Effect.flatMap((service) =>
+                        service.apply({ ...input, scope: resolvedScope }),
+                      ),
                     )
                   : Effect.fail(
                       new AxisProjectProfileValidationError({
@@ -2572,7 +2597,9 @@ const makeWsRpcLayer = (
             WS_METHODS.axisLearningGetSnapshot,
             validateLearningContext(contextId, scope).pipe(
               Effect.flatMap((validatedScope) => validateLearningScope(validatedScope, "read")),
-              Effect.flatMap((validatedScope) => axisLearning.getSnapshot(contextId, validatedScope)),
+              Effect.flatMap((validatedScope) =>
+                axisLearning.getSnapshot(contextId, validatedScope),
+              ),
             ),
             { "rpc.aggregate": "axis" },
           ),
@@ -2581,13 +2608,14 @@ const makeWsRpcLayer = (
             WS_METHODS.axisLearningRequestImprovements,
             validateProjectScope(input.scope, "write").pipe(
               Effect.flatMap((validatedScope) =>
-                axisContextProjectScopeKey(validatedScope) !== axisContextProjectScopeKey(input.scope)
+                axisContextProjectScopeKey(validatedScope) !==
+                axisContextProjectScopeKey(input.scope)
                   ? Effect.fail(
                       new AxisProjectProfileValidationError({
                         message: "The Learning project scope changed during validation.",
                       }),
                     )
-                      : Option.match(axisLearningService, {
+                  : Option.match(axisLearningService, {
                       onNone: () =>
                         Effect.succeed({
                           id: `axis-learning-unavailable-${input.commandId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
@@ -2600,7 +2628,8 @@ const makeWsRpcLayer = (
                           proposals: [],
                           reason: "No Axis learning engine is configured.",
                         }),
-                      onSome: (service) => service.requestImprovements({ ...input, scope: validatedScope }),
+                      onSome: (service) =>
+                        service.requestImprovements({ ...input, scope: validatedScope }),
                     }),
               ),
             ),
@@ -2639,7 +2668,9 @@ const makeWsRpcLayer = (
                 nowIso.pipe(
                   Effect.flatMap((createdAt) =>
                     axisLearning.createProposal(
-                      validatedScope === undefined ? proposal : { ...proposal, scope: validatedScope },
+                      validatedScope === undefined
+                        ? proposal
+                        : { ...proposal, scope: validatedScope },
                       createdAt,
                     ),
                   ),
@@ -2669,7 +2700,9 @@ const makeWsRpcLayer = (
                   input: learningReviewInput(note),
                   versionId: learningRandomUUID.pipe(Effect.map(AxisLearningVersionId.make)),
                 }).pipe(
-                  Effect.flatMap(({ input, versionId }) => axisLearning.approve(id, lookup, versionId, input)),
+                  Effect.flatMap(({ input, versionId }) =>
+                    axisLearning.approve(id, lookup, versionId, input),
+                  ),
                 ),
               ),
             ),
@@ -2687,11 +2720,23 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningActivateVersion]: ({ id, scope, targetKey, versionId, expectedRevision, commandId }) =>
+        [WS_METHODS.axisLearningActivateVersion]: ({
+          id,
+          scope,
+          targetKey,
+          versionId,
+          expectedRevision,
+          commandId,
+        }) =>
           observeRpcEffect(
             WS_METHODS.axisLearningActivateVersion,
             Effect.gen(function* () {
-              if (scope === undefined || targetKey === undefined || expectedRevision === undefined || commandId === undefined) {
+              if (
+                scope === undefined ||
+                targetKey === undefined ||
+                expectedRevision === undefined ||
+                commandId === undefined
+              ) {
                 return yield* new AxisLearningRevisionRequiredError({
                   message: "Activation requires scope, target, expectedRevision, and commandId.",
                 });
@@ -2707,11 +2752,23 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningRollbackVersion]: ({ id, scope, targetKey, versionId, expectedRevision, commandId }) =>
+        [WS_METHODS.axisLearningRollbackVersion]: ({
+          id,
+          scope,
+          targetKey,
+          versionId,
+          expectedRevision,
+          commandId,
+        }) =>
           observeRpcEffect(
             WS_METHODS.axisLearningRollbackVersion,
             Effect.gen(function* () {
-              if (scope === undefined || targetKey === undefined || expectedRevision === undefined || commandId === undefined) {
+              if (
+                scope === undefined ||
+                targetKey === undefined ||
+                expectedRevision === undefined ||
+                commandId === undefined
+              ) {
                 return yield* new AxisLearningRevisionRequiredError({
                   message: "Rollback requires scope, target, expectedRevision, and commandId.",
                 });
@@ -2727,12 +2784,24 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "axis" },
           ),
-        [WS_METHODS.axisLearningDeactivateVersion]: ({ scope, targetKey, expectedRevision, commandId, note }) =>
+        [WS_METHODS.axisLearningDeactivateVersion]: ({
+          scope,
+          targetKey,
+          expectedRevision,
+          commandId,
+          note,
+        }) =>
           observeRpcEffect(
             WS_METHODS.axisLearningDeactivateVersion,
             validateRequiredLearningScope(scope, "write").pipe(
               Effect.flatMap((validatedScope) =>
-                axisLearning.deactivate(validatedScope, targetKey, expectedRevision, commandId, note),
+                axisLearning.deactivate(
+                  validatedScope,
+                  targetKey,
+                  expectedRevision,
+                  commandId,
+                  note,
+                ),
               ),
             ),
             { "rpc.aggregate": "axis" },
@@ -2740,7 +2809,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.axisTasksList]: ({ scope }) =>
           observeRpcEffect(
             WS_METHODS.axisTasksList,
-            validateTaskProjectScope(scope, "read").pipe(Effect.flatMap((resolved) => axisTasks.list(resolved))),
+            validateTaskProjectScope(scope, "read").pipe(
+              Effect.flatMap((resolved) => axisTasks.list(resolved)),
+            ),
             { "rpc.aggregate": "axis" },
           ),
         [WS_METHODS.axisTasksGet]: ({ scope, threadId }) =>
@@ -2755,11 +2826,15 @@ const makeWsRpcLayer = (
         [WS_METHODS.axisTasksCreate]: ({ task, commandId }) =>
           observeRpcEffect(
             WS_METHODS.axisTasksCreate,
-              validateTaskProjectScope(task.scope, "write").pipe(
-                Effect.flatMap((resolved) =>
+            validateTaskProjectScope(task.scope, "write").pipe(
+              Effect.flatMap((resolved) =>
                 axisTaskScopeMatchesValidatedScope(task.scope, resolved)
                   ? axisTasks.create(task, commandId)
-                  : Effect.fail(new AxisTaskValidationError({ message: "The task scope changed during validation." })),
+                  : Effect.fail(
+                      new AxisTaskValidationError({
+                        message: "The task scope changed during validation.",
+                      }),
+                    ),
               ),
             ),
             { "rpc.aggregate": "axis" },
@@ -2769,9 +2844,14 @@ const makeWsRpcLayer = (
             WS_METHODS.axisTasksUpdate,
             validateTaskProjectScope(mutation.task.scope, "write").pipe(
               Effect.flatMap((resolved) =>
-                axisContextProjectScopeKey(resolved) === axisContextProjectScopeKey(mutation.task.scope)
+                axisContextProjectScopeKey(resolved) ===
+                axisContextProjectScopeKey(mutation.task.scope)
                   ? axisTasks.update(mutation)
-                  : Effect.fail(new AxisTaskValidationError({ message: "The task scope changed during validation." })),
+                  : Effect.fail(
+                      new AxisTaskValidationError({
+                        message: "The task scope changed during validation.",
+                      }),
+                    ),
               ),
             ),
             { "rpc.aggregate": "axis" },
@@ -2780,9 +2860,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.axisTasksPause,
             validateTaskProjectScope(input.scope, "write").pipe(
-              Effect.flatMap((resolved) =>
-                axisTasks.pause({ ...input, scope: resolved }),
-              ),
+              Effect.flatMap((resolved) => axisTasks.pause({ ...input, scope: resolved })),
             ),
             { "rpc.aggregate": "axis" },
           ),
@@ -2807,7 +2885,9 @@ const makeWsRpcLayer = (
             WS_METHODS.axisProjectProfileGet,
             validateProjectScope(scope, "read").pipe(
               Effect.flatMap((validatedScope) =>
-                requireProjectProfileStore().pipe(Effect.flatMap((store) => store.get(validatedScope))),
+                requireProjectProfileStore().pipe(
+                  Effect.flatMap((store) => store.get(validatedScope)),
+                ),
               ),
             ),
             { "rpc.aggregate": "axis" },
@@ -2818,7 +2898,9 @@ const makeWsRpcLayer = (
             validateProjectScope(scope, "write").pipe(
               Effect.flatMap((validatedScope) =>
                 requireProjectProfileStore().pipe(
-                  Effect.flatMap((store) => store.replace(validatedScope, expectedRevision, changes)),
+                  Effect.flatMap((store) =>
+                    store.replace(validatedScope, expectedRevision, changes),
+                  ),
                 ),
               ),
             ),
@@ -2830,7 +2912,9 @@ const makeWsRpcLayer = (
             validateProjectScope(scope, "write").pipe(
               Effect.flatMap((validatedScope) =>
                 requireProjectProfileStore().pipe(
-                  Effect.flatMap((store) => store.resetOverride(validatedScope, ruleId, expectedRevision)),
+                  Effect.flatMap((store) =>
+                    store.resetOverride(validatedScope, ruleId, expectedRevision),
+                  ),
                 ),
               ),
             ),
