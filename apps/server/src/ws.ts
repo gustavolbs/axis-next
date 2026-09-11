@@ -183,6 +183,7 @@ import { AxisLearningService } from "./axis/learning/AxisLearningService.ts";
 import { AxisTaskStore } from "./axis/tasks/AxisTaskStore.ts";
 import { AxisTaskWorkflowService } from "./axis/tasks/AxisTaskWorkflowService.ts";
 import { AxisTaskFeedbackService } from "./axis/learning/AxisTaskFeedbackService.ts";
+import { AxisLearningOutcomes } from "./axis/learning/AxisLearningOutcomes.ts";
 import { AxisWorkHubSourceSync } from "./axis/workHub/AxisWorkHubSourceSync.ts";
 import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { AxisScratchChatRunner } from "./axis/scratch/AxisScratchChatRunner.ts";
@@ -604,6 +605,7 @@ const makeWsRpcLayer = (
       const axisTasks = yield* AxisTaskStore;
       const axisWorkflow = yield* Effect.serviceOption(AxisTaskWorkflowService);
       const axisTaskFeedback = yield* Effect.serviceOption(AxisTaskFeedbackService);
+      const axisLearningOutcomes = yield* Effect.serviceOption(AxisLearningOutcomes);
       const axisOnboarding = yield* Effect.serviceOption(AxisOnboardingService);
       const axisProjectProfile = yield* Effect.serviceOption(AxisProjectProfileStore);
       const axisProjectScope = yield* Effect.serviceOption(AxisProjectScope);
@@ -2740,6 +2742,23 @@ const makeWsRpcLayer = (
             WS_METHODS.axisLearningGetSnapshot,
             validateLearningContext(contextId, scope).pipe(
               Effect.flatMap((validatedScope) => validateLearningScope(validatedScope, "read")),
+              Effect.tap((validatedScope) =>
+                validatedScope?.project === undefined || Option.isNone(axisLearningOutcomes)
+                  ? Effect.void
+                  : axisLearningOutcomes.value
+                      .reconcileScope({
+                        contextId: validatedScope.contextId,
+                        project: validatedScope.project,
+                      })
+                      .pipe(
+                        Effect.mapError(
+                          () =>
+                            new AxisLearningPersistenceError({
+                              operation: "reconcile task Learning outcomes",
+                            }),
+                        ),
+                      ),
+              ),
               Effect.flatMap((validatedScope) =>
                 axisLearning.getSnapshot(contextId, validatedScope),
               ),
@@ -2997,7 +3016,20 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.axisTaskFeedbackRecord,
             taskFeedbackContext(input).pipe(
-              Effect.flatMap(({ caller, service }) => service.record(caller, input)),
+              Effect.flatMap(({ caller, service }) =>
+                Option.isNone(axisLearningOutcomes)
+                  ? service.record(caller, input)
+                  : axisLearningOutcomes.value.record(caller, input).pipe(
+                      Effect.map(({ canonical }) => canonical),
+                      Effect.mapError(
+                        (cause) =>
+                          new AxisTaskFeedbackError({
+                            reason: "persistence_failed",
+                            message: cause.message.slice(0, 512),
+                          }),
+                      ),
+                    ),
+              ),
             ),
             { "rpc.aggregate": "axis" },
           ),

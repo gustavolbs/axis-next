@@ -87,7 +87,9 @@ export const ProviderSendTurnInput = Schema.Struct({
   /** Digest of the server-resolved Axis context consumed by this turn. */
   axisContextDigest: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   /** Server-resolved Learning versions that contributed to the effective context. */
-  axisLearningVersionIds: Schema.optional(Schema.Array(AxisLearningVersionId)),
+  axisLearningVersionIds: Schema.optional(
+    Schema.Array(AxisLearningVersionId).check(Schema.isMaxLength(32)),
+  ),
   /** Token-efficiency policy resolved by Axis for this provider/model. */
   axisTokenEfficiencyPolicy: Schema.optional(
     Schema.Struct({
