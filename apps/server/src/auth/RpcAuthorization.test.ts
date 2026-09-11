@@ -55,6 +55,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.axisLearningRejectProposal,
       WS_METHODS.axisLearningActivateVersion,
       WS_METHODS.axisLearningRollbackVersion,
+      WS_METHODS.axisLearningDeactivateVersion,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
     }

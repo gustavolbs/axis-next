@@ -302,6 +302,27 @@ const layer = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(layer)("AntigravityAdapter", (it) => {
+  it.effect("rejects project policies before dispatching an unprotected ACP prompt", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "auto-accept-edits",
+        modelSelection: { instanceId, model: nativeAlternative },
+      });
+      const callsBefore = [...h.calls];
+      const error = yield* h.adapter.sendTurn({
+        threadId,
+        input: "Apply project rules",
+        axisContextInstructions: "Never modify billing records",
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("ProviderAdapterValidationError");
+      expect(h.calls).toEqual(callsBefore);
+      expect(h.hasActivePrompt()).toBe(false);
+    }),
+  );
+
   it.effect(
     "runs native auth, resume, models, commands, and streaming through the ACP transport",
     () =>

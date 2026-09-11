@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.0] - 2026-09-09
+
+### Added
+
+- Add project-scoped Axis profiles, portable task contracts, and Learning scope compatibility with revision-preserving persistence migrations.
+
 ## [0.3.0] - 2026-09-09
 
 ### Added

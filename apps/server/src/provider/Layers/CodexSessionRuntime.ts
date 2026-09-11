@@ -166,6 +166,7 @@ export interface CodexSessionRuntimeOptions {
   readonly chatOnly?: boolean;
   readonly model?: string;
   readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
+  readonly axisContextInstructions?: string;
   readonly resolveConciseOutputProfile?: Effect.Effect<
     TokenEfficiencyConciseOutputProfile | undefined
   >;
@@ -184,6 +185,7 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly axisContextInstructions?: string;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -584,8 +586,13 @@ function buildCodexCollaborationMode(input: {
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
   readonly browserToolsAvailable?: boolean;
+  readonly additionalInstructions?: string;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
-  if (input.interactionMode === undefined && input.conciseOutputProfile === undefined) {
+  if (
+    input.interactionMode === undefined &&
+    input.conciseOutputProfile === undefined &&
+    input.additionalInstructions === undefined
+  ) {
     return undefined;
   }
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
@@ -602,6 +609,9 @@ function buildCodexCollaborationMode(input: {
           reasoningEffort,
           ...(input.conciseOutputProfile
             ? { conciseOutputProfile: input.conciseOutputProfile }
+            : {}),
+          ...(input.additionalInstructions
+            ? { additionalInstructions: input.additionalInstructions }
             : {}),
         },
         input.browserToolsAvailable ?? true,
@@ -626,6 +636,7 @@ export function buildTurnStartParams(input: {
   readonly conciseOutputProfile?: TokenEfficiencyConciseOutputProfile;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean;
+  readonly additionalInstructions?: string;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -653,6 +664,9 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     ...(input.conciseOutputProfile ? { conciseOutputProfile: input.conciseOutputProfile } : {}),
+    ...(input.additionalInstructions
+      ? { additionalInstructions: input.additionalInstructions }
+      : {}),
     browserToolsAvailable: input.browserToolsAvailable ?? true,
   });
 
@@ -2362,6 +2376,9 @@ export const makeCodexSessionRuntime = (
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
             ...(conciseOutputProfile ? { conciseOutputProfile } : {}),
+            ...(input.axisContextInstructions
+              ? { additionalInstructions: input.axisContextInstructions }
+              : {}),
             // Derived from the session's own MCP configuration rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.

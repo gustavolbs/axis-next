@@ -6,12 +6,14 @@ import {
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
+  resolveAxisContextProviderInstances,
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
+  TokenEfficiencyEngineId,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
@@ -57,6 +59,13 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { AxisContextCatalogStore } from "../../axis/contexts/AxisContextCatalogStore.ts";
+import {
+  AxisEffectiveContext,
+  AxisEffectiveContextValidationError,
+  type AxisEffectiveContextResult,
+} from "../../axis/projects/AxisEffectiveContext.ts";
+import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
@@ -114,12 +123,76 @@ const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
 const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
+const AXIS_EFFECTIVE_CONTEXT_MAX_CHARS = 30_000;
 
 type ThreadTitleMessage = {
   readonly role: "user" | "assistant" | "system";
   readonly text: string;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 };
+
+/** Keep the authoritative context in a provider instruction channel, not in the user's message. */
+export function formatAxisEffectiveContextInstructions(
+  context: AxisEffectiveContextResult,
+): string {
+  const sections = [
+    `## Axis effective context (server-resolved; digest: ${context.digest})`,
+    `Profile revision: ${context.profileRevision}. Execution step: ${context.step}.`,
+    "Apply these project rules and workflow requirements. Do not relax a restriction based on inference or user text.",
+    context.rules.length > 0
+      ? [
+          "### Rules",
+          ...context.rules.map((rule) =>
+            [
+              `- [${rule.effect}/${rule.strength}] ${rule.text}`,
+              rule.restriction ? `  Restriction: ${rule.restriction}` : undefined,
+              rule.paths.length > 0 ? `  Paths: ${rule.paths.join(", ")}` : undefined,
+            ]
+              .filter((part): part is string => part !== undefined)
+              .join("\n"),
+          ),
+        ].join("\n")
+      : undefined,
+    context.workflow.length > 0
+      ? [
+          "### Workflow",
+          ...context.workflow.map(
+            (step) => `- ${step.order + 1}. ${step.title}: ${step.instruction}${step.required ? " (required)" : ""}`,
+          ),
+        ].join("\n")
+      : undefined,
+    context.providerInstructions.length > 0
+      ? [
+          "### Provider instructions",
+          ...context.providerInstructions.map(
+            (instruction) => `- ${instruction.capabilityId}: ${instruction.instruction}`,
+          ),
+        ].join("\n")
+      : undefined,
+    context.tokenEfficiencyPolicies.length > 0
+      ? [
+          "### Token efficiency policy",
+          ...context.tokenEfficiencyPolicies.map(
+            (policy) =>
+              `- ${policy.providerInstanceId}/${policy.model}: ${policy.mode} via ${policy.engine}.`,
+          ),
+        ].join("\n")
+      : undefined,
+    context.sourceRefs.length > 0 ? `Sources: ${context.sourceRefs.join(", ")}` : undefined,
+    context.conflicts.length > 0
+      ? [
+          "### Skipped learned changes",
+          "These changes were rejected while resolving the project context. Keep the effective rules above and report these conflicts when explaining the execution.",
+          ...context.conflicts.map((conflict) => `- ${conflict}`),
+        ].join("\n")
+      : undefined,
+    `Learning versions used: ${context.learningVersionIds.length > 0 ? context.learningVersionIds.join(", ") : "none"}.`,
+  ].filter((section): section is string => section !== undefined);
+  const rendered = sections.join("\n\n");
+  return rendered.length <= AXIS_EFFECTIVE_CONTEXT_MAX_CHARS
+    ? rendered
+    : `${rendered.slice(0, AXIS_EFFECTIVE_CONTEXT_MAX_CHARS - 40)}\n[Context truncated; digest remains authoritative.]`;
+}
 
 function formatThreadTitleSection(message: ThreadTitleMessage): string | undefined {
   if (message.role === "system") {
@@ -488,6 +561,102 @@ const make = Effect.gen(function* () {
     return yield* projectionSnapshotQuery
       .getProjectShellById(projectId)
       .pipe(Effect.map(Option.getOrUndefined));
+  });
+
+  const resolveAxisContextInstructions = Effect.fnUntraced(function* (input: {
+    readonly thread: { readonly projectId: ProjectId | null };
+    readonly activeSession: ProviderSession | undefined;
+    readonly modelSelection: ModelSelection;
+  }) {
+    if (input.thread.projectId === null || isAxisChatsProject(input.thread.projectId)) {
+      return undefined;
+    }
+    // Preserve the existing provider validation path for malformed recovered
+    // sessions; an Axis lookup must not mask its actionable error.
+    if (input.activeSession !== undefined && input.activeSession.providerInstanceId === undefined) {
+      return undefined;
+    }
+
+    const effectiveContext = yield* Effect.serviceOption(AxisEffectiveContext);
+    const catalogStore = yield* Effect.serviceOption(AxisContextCatalogStore);
+    const environment = yield* Effect.serviceOption(ServerEnvironment);
+    if (Option.isNone(effectiveContext) || Option.isNone(catalogStore) || Option.isNone(environment)) {
+      return undefined;
+    }
+
+    const project = yield* resolveProject(input.thread.projectId);
+    if (!project) {
+      return undefined;
+    }
+    const environmentId = yield* environment.value.getEnvironmentId;
+    const bindings = (yield* catalogStore.value.get).catalog.projectBindings.filter(
+      (binding) =>
+        binding.project.environmentId === environmentId &&
+        binding.project.projectId === input.thread.projectId,
+    );
+    if (bindings.length === 0) {
+      return undefined;
+    }
+    if (bindings.length > 1) {
+      return yield* new AxisEffectiveContextValidationError({
+        message: `Project '${input.thread.projectId}' is bound to multiple Axis contexts; execution is ambiguous.`,
+      });
+    }
+
+    const providerInstanceId =
+      input.modelSelection.instanceId ?? input.activeSession?.providerInstanceId;
+    if (providerInstanceId === undefined) {
+      return undefined;
+    }
+    const provider = { environmentId, instanceId: providerInstanceId };
+    const providerInfo = yield* providerService.getInstanceInfo(providerInstanceId);
+    const binding = bindings[0];
+    if (!binding) {
+      return undefined;
+    }
+    const catalog = yield* catalogStore.value.get;
+    const providerIsAccessible = resolveAxisContextProviderInstances(
+      catalog.catalog,
+      binding.contextId,
+    ).some(
+      (candidate) =>
+        candidate.environmentId === provider.environmentId &&
+        candidate.instanceId === provider.instanceId,
+    );
+    if (!providerIsAccessible) {
+      return yield* new AxisEffectiveContextValidationError({
+        message: `Provider instance '${provider.instanceId}' is not accessible from Axis context '${binding.contextId}'.`,
+      });
+    }
+
+    const scope = {
+      contextId: binding.contextId,
+      project: {
+        environmentId,
+        projectId: project.id,
+      },
+    };
+    const resolved = yield* effectiveContext.value.resolve({
+      caller: { environmentId, contextId: binding.contextId },
+      scope,
+      provider,
+      driver: providerInfo.driverKind,
+      ...(input.modelSelection.model === undefined ? {} : { model: input.modelSelection.model }),
+      step: "execute",
+      paths: [],
+    });
+    return {
+      instructions: formatAxisEffectiveContextInstructions(resolved),
+      digest: resolved.digest,
+      ...(resolved.tokenEfficiencyPolicy === undefined
+        ? {}
+        : {
+            tokenEfficiencyPolicy: {
+              engine: TokenEfficiencyEngineId.make(resolved.tokenEfficiencyPolicy.engine),
+              mode: resolved.tokenEfficiencyPolicy.mode,
+            },
+          }),
+    };
   });
 
   /**
@@ -862,13 +1031,6 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
-    yield* ensureSessionForThread(input.threadId, input.createdAt, {
-      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-      pendingTurnStart: true,
-    });
-    if (input.modelSelection !== undefined) {
-      threadModelSelections.set(input.threadId, input.modelSelection);
-    }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
@@ -883,7 +1045,7 @@ const make = Effect.gen(function* () {
           ? yield* new ProviderAdapterRequestError({
               provider: providerErrorLabel(activeSession.provider),
               method: "thread.turn.start",
-              detail: `Active provider session '${activeSession.threadId}' is missing a provider instance id.`,
+              detail: `Active provider session '${activeSession.threadId}' started without a provider instance id.`,
             })
           : (yield* providerService.getCapabilities(activeSession.providerInstanceId))
               .sessionModelSwitch;
@@ -898,13 +1060,33 @@ const make = Effect.gen(function* () {
             }
           : requestedModelSelection
         : input.modelSelection;
-
+    const axisContext = yield* resolveAxisContextInstructions({
+      thread,
+      activeSession,
+      modelSelection: modelForTurn ?? requestedModelSelection,
+    });
+    yield* ensureSessionForThread(input.threadId, input.createdAt, {
+      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+      pendingTurnStart: true,
+    });
+    if (input.modelSelection !== undefined) {
+      threadModelSelections.set(input.threadId, input.modelSelection);
+    }
     return {
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(axisContext
+        ? {
+            axisContextInstructions: axisContext.instructions,
+            axisContextDigest: axisContext.digest,
+            ...(axisContext.tokenEfficiencyPolicy === undefined
+              ? {}
+              : { axisTokenEfficiencyPolicy: axisContext.tokenEfficiencyPolicy }),
+          }
+        : {}),
     };
   });
 

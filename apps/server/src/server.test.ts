@@ -8,7 +8,11 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   AuthAccessTokenType,
   AxisContextCatalogSnapshot,
+  AxisLearningProposal,
+  AxisLearningProposalId,
   AxisLearningSnapshot,
+  AxisLearningEvidenceId,
+  AxisLearningVersionId,
   AxisWorkHubSourceValidationError,
   AxisWorkHubSyncError,
   AxisWorkHubCacheSnapshot,
@@ -20,6 +24,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type DpopFailureReason,
   EnvironmentId,
+  AxisContextId,
+  AxisProjectProfile,
   EventId,
   GitCommandError,
   KeybindingRule,
@@ -102,6 +108,8 @@ const decodeAxisContextCatalogSnapshot = Schema.decodeUnknownEffect(AxisContextC
 const decodeAxisWorkHubCacheSnapshot = Schema.decodeUnknownEffect(AxisWorkHubCacheSnapshot);
 const decodeAxisWorkHubSourceStatus = Schema.decodeUnknownEffect(AxisWorkHubSourceStatus);
 const decodeAxisLearningSnapshot = Schema.decodeUnknownEffect(AxisLearningSnapshot);
+const decodeAxisProjectProfile = Schema.decodeUnknownEffect(AxisProjectProfile);
+const decodeAxisLearningProposal = Schema.decodeUnknownEffect(AxisLearningProposal);
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import { AXIS_CHATS_PROJECT_ID } from "./axis/chats/AxisChats.ts";
@@ -109,6 +117,14 @@ import { AxisContextCatalogStore } from "./axis/contexts/AxisContextCatalogStore
 import { AxisWorkHubCacheStore } from "./axis/workHub/AxisWorkHubCacheStore.ts";
 import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActivityRunner.ts";
 import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
+import { AxisLearningEngine } from "./axis/learning/AxisLearningEngine.ts";
+import * as AxisLearningService from "./axis/learning/AxisLearningService.ts";
+import { AxisProjectProfileStore } from "./axis/projects/AxisProjectProfileStore.ts";
+import {
+  AxisProjectScope,
+  make as makeAxisProjectScope,
+} from "./axis/projects/AxisProjectScope.ts";
+import { AxisTaskStore } from "./axis/tasks/AxisTaskStore.ts";
 import { AxisScratchChatRunner } from "./axis/scratch/AxisScratchChatRunner.ts";
 import { AxisWorkHubSourceSync } from "./axis/workHub/AxisWorkHubSourceSync.ts";
 import * as ServerConfig from "./config.ts";
@@ -558,6 +574,10 @@ const buildAppUnderTest = (options?: {
     axisWorkHubCache?: Partial<AxisWorkHubCacheStore["Service"]>;
     axisScheduledActivities?: Partial<AxisScheduledActivityRunner["Service"]>;
     axisLearning?: Partial<AxisLearningStore["Service"]>;
+    axisLearningEngine?: Partial<AxisLearningEngine["Service"]>;
+    axisLearningService?: Partial<AxisLearningService.AxisLearningService["Service"]>;
+    axisProjectProfile?: Partial<AxisProjectProfileStore["Service"]>;
+    axisProjectScope?: Partial<AxisProjectScope["Service"]>;
     axisScratchChats?: Partial<AxisScratchChatRunner["Service"]>;
     axisWorkHubSourceSync?: Partial<AxisWorkHubSourceSync["Service"]>;
   };
@@ -846,6 +866,36 @@ const buildAppUnderTest = (options?: {
           }),
           Layer.mock(AxisLearningStore)({
             ...options?.layers?.axisLearning,
+          }),
+          Layer.mock(AxisLearningEngine)({
+            status: { availability: "absent", message: "Test engine is not configured." },
+            run: () =>
+              Effect.succeed({
+                status: "unavailable" as const,
+                availability: "absent" as const,
+                message: "Test engine is not configured.",
+              }),
+            ...options?.layers?.axisLearningEngine,
+          }),
+          Layer.mock(AxisLearningService.AxisLearningService)({
+            requestImprovements: () => Effect.die("Axis Learning improvements are not stubbed in this test"),
+            ...options?.layers?.axisLearningService,
+          }),
+          Layer.mock(AxisProjectProfileStore)({
+            ...options?.layers?.axisProjectProfile,
+          }),
+          Layer.mock(AxisProjectScope)({
+            ...options?.layers?.axisProjectScope,
+          }),
+          Layer.mock(AxisTaskStore)({
+            get: () => Effect.succeed(Option.none()),
+            list: () => Effect.succeed([]),
+            create: () => Effect.die("Axis task create is not stubbed in this test"),
+            update: () => Effect.die("Axis task update is not stubbed in this test"),
+            pause: () => Effect.die("Axis task pause is not stubbed in this test"),
+            reopen: () => Effect.die("Axis task reopen is not stubbed in this test"),
+            unlinkSource: () => Effect.die("Axis task unlink is not stubbed in this test"),
+            listLifecycle: () => Effect.succeed([]),
           }),
           Layer.mock(AxisScratchChatRunner)({
             list: () => Effect.succeed([] as ReadonlyArray<never>),
@@ -5461,6 +5511,107 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("validates Axis project scope through RPC before reading or writing profiles", () =>
+    Effect.gen(function* () {
+      const environmentId = testEnvironmentDescriptor.environmentId;
+      const scope = {
+        contextId: AxisContextId.make("personal"),
+        project: { environmentId, projectId: defaultProjectId },
+      };
+      let catalog = yield* decodeAxisContextCatalogSnapshot({
+        revision: 1,
+        updatedAt: "2026-09-09T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "personal",
+              kind: "personal",
+              name: "Personal",
+              createdAt: "2026-09-09T00:00:00.000Z",
+              updatedAt: "2026-09-09T00:00:00.000Z",
+            },
+          ],
+          projectBindings: [{ contextId: "personal", project: scope.project }],
+        },
+      });
+      const catalogGet = Effect.sync(() => catalog);
+      const resolver = yield* makeAxisProjectScope.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(AxisContextCatalogStore)({ get: catalogGet }),
+            Layer.mock(ServerEnvironment.ServerEnvironment)({
+              getEnvironmentId: Effect.succeed(environmentId),
+            }),
+            Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+              getProjectShellById: (id) =>
+                Effect.succeed(
+                  id === defaultProjectId
+                    ? Option.some(makeDefaultOrchestrationReadModel().projects[0]!)
+                    : Option.none(),
+                ),
+            }),
+          ),
+        ),
+      );
+      const profile = yield* decodeAxisProjectProfile({
+        scope,
+        revision: 0,
+        sources: [],
+        facts: [],
+        rules: [],
+        manualDecisions: [],
+        workflow: [],
+        updatedAt: "2026-09-09T00:00:00.000Z",
+      });
+      const get = vi.fn<AxisProjectProfileStore["Service"]["get"]>(() => Effect.succeed(profile));
+      const replace = vi.fn<AxisProjectProfileStore["Service"]["replace"]>(() =>
+        Effect.succeed(profile),
+      );
+      yield* buildAppUnderTest({
+        layers: {
+          axisContextCatalog: { get: catalogGet },
+          axisProjectScope: resolver,
+          axisProjectProfile: { get, replace },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            for (const invalidScope of [
+              { ...scope, contextId: AxisContextId.make("company") },
+              {
+                ...scope,
+                project: { ...scope.project, environmentId: EnvironmentId.make("foreign") },
+              },
+              { ...scope, project: { ...scope.project, projectId: ProjectId.make("missing") } },
+            ]) {
+              const error = yield* client[WS_METHODS.axisProjectProfileGet]({
+                scope: invalidScope,
+              }).pipe(Effect.flip);
+              assert.equal(error._tag, "AxisProjectProfileValidationError");
+            }
+            assert.equal(get.mock.calls.length, 0);
+            const result = yield* client[WS_METHODS.axisProjectProfileGet]({ scope });
+            assert.deepEqual(result, profile);
+            catalog = {
+              ...catalog,
+              revision: 2,
+              catalog: { ...catalog.catalog, projectBindings: [] },
+            };
+            const error = yield* client[WS_METHODS.axisProjectProfileReplace]({
+              scope,
+              expectedRevision: 0,
+              changes: [],
+            }).pipe(Effect.flip);
+            assert.equal(error._tag, "AxisProjectProfileValidationError");
+            assert.equal(replace.mock.calls.length, 0);
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes an authorized context-scoped Axis Learning snapshot", () =>
     Effect.gen(function* () {
       const snapshot = yield* decodeAxisLearningSnapshot({
@@ -5474,17 +5625,240 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const getSnapshot = vi.fn<AxisLearningStore["Service"]["getSnapshot"]>(() =>
         Effect.succeed(snapshot),
       );
-      yield* buildAppUnderTest({ layers: { axisLearning: { getSnapshot } } });
+      const catalog = yield* decodeAxisContextCatalogSnapshot({
+        revision: 1,
+        updatedAt: "2026-09-09T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "personal",
+              kind: "personal",
+              name: "Personal",
+              createdAt: "2026-09-09T00:00:00.000Z",
+              updatedAt: "2026-09-09T00:00:00.000Z",
+            },
+            {
+              id: "company",
+              kind: "company",
+              name: "Company",
+              createdAt: "2026-09-09T00:00:00.000Z",
+              updatedAt: "2026-09-09T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      yield* buildAppUnderTest({
+        layers: {
+          axisLearning: { getSnapshot },
+          axisContextCatalog: { get: Effect.succeed(catalog) },
+        },
+      });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const response = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.axisLearningGetSnapshot]({ contextId: snapshot.contextId }),
+          Effect.gen(function* () {
+            const denied = yield* client[WS_METHODS.axisLearningGetSnapshot]({
+              contextId: AxisContextId.make("company"),
+            }).pipe(Effect.flip);
+            assert.equal(denied._tag, "AxisLearningValidationError");
+            assert.equal(getSnapshot.mock.calls.length, 0);
+            return yield* client[WS_METHODS.axisLearningGetSnapshot]({
+              contextId: snapshot.contextId,
+            });
+          }),
         ),
       );
 
       assert.deepEqual(response, snapshot);
-      assert.deepEqual(getSnapshot.mock.calls, [[snapshot.contextId]]);
+      assert.deepEqual(getSnapshot.mock.calls, [[snapshot.contextId, undefined]]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes a project-scoped Axis Learning improvement request", () =>
+    Effect.gen(function* () {
+      const scope = {
+        contextId: AxisContextId.make("personal"),
+        project: {
+          environmentId: testEnvironmentDescriptor.environmentId,
+          projectId: defaultProjectId,
+        },
+      };
+      const catalog = yield* decodeAxisContextCatalogSnapshot({
+        revision: 1,
+        updatedAt: "2026-09-10T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "personal",
+              kind: "personal",
+              name: "Personal",
+              createdAt: "2026-09-10T00:00:00.000Z",
+              updatedAt: "2026-09-10T00:00:00.000Z",
+            },
+          ],
+          projectBindings: [{ contextId: "personal", project: scope.project }],
+        },
+      });
+      const resolver = yield* makeAxisProjectScope.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(AxisContextCatalogStore)({ get: Effect.succeed(catalog) }),
+            Layer.mock(ServerEnvironment.ServerEnvironment)({
+              getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
+            }),
+            Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+              getProjectShellById: () =>
+                Effect.succeed(Option.some(makeDefaultOrchestrationReadModel().projects[0]!)),
+            }),
+          ),
+        ),
+      );
+      const commandId = CommandId.make("command-axis-learning-request");
+      const expected = {
+        id: "axis-learning-run-test",
+        status: "unavailable" as const,
+        commandId,
+        engine: { availability: "absent" as const, message: "Hermes is not configured." },
+        proposals: [],
+        reason: "Hermes is not configured.",
+      };
+      const requestImprovements = vi.fn(() => Effect.succeed(expected));
+      yield* buildAppUnderTest({
+        layers: {
+          axisContextCatalog: { get: Effect.succeed(catalog) },
+          axisProjectScope: resolver,
+          axisLearningService: { requestImprovements },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.axisLearningRequestImprovements]({
+            scope,
+            evidenceIds: [AxisLearningEvidenceId.make("evidence-1")],
+            commandId,
+            deadlineMs: 10_000,
+          }),
+        ),
+      );
+
+      assert.deepEqual(response, expected);
+      assert.deepEqual(requestImprovements.mock.calls, [[{
+        scope,
+        evidenceIds: [AxisLearningEvidenceId.make("evidence-1")],
+        commandId,
+        deadlineMs: 10_000,
+      }]]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("authorizes Axis RPCs through the generic websocket scope gate", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const { response: exchangeResponse, body: tokenBody } = yield* exchangeAccessToken(
+        defaultDesktopBootstrapToken,
+        { scope: "access:write" },
+      );
+      assert.equal(exchangeResponse.status, 200);
+      assert.isDefined(tokenBody.access_token);
+
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${tokenBody.access_token ?? ""}` },
+      });
+      const ticketBody = (yield* ticketResponse.json) as { readonly ticket: string };
+      assert.equal(ticketResponse.status, 200);
+
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticketBody.ticket)}`;
+      const error = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.axisLearningGetSnapshot]({
+              contextId: AxisContextId.make("personal"),
+            }),
+          ),
+        ),
+      );
+      assert.equal(error._tag, "EnvironmentAuthorizationError");
+      if (error._tag === "EnvironmentAuthorizationError") {
+        assert.equal(error.requiredScope, "orchestration:read");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps legacy Learning proposal actions context-scoped and blocks legacy activation", () =>
+    Effect.gen(function* () {
+      const proposal = yield* decodeAxisLearningProposal({
+        id: "legacy-proposal",
+        contextId: "personal",
+        kind: "workflow-recommendation",
+        targetKey: "workflow:legacy",
+        title: "Legacy proposal",
+        rationale: "Readable legacy proposal.",
+        evidenceIds: ["legacy-evidence"],
+        change: { kind: "legacy-unknown", value: { legacy: true } },
+        status: "draft",
+        createdAt: "2026-09-10T00:00:00.000Z",
+        updatedAt: "2026-09-10T00:00:00.000Z",
+        reviewedAt: null,
+        reviewedBy: null,
+        reviewNote: null,
+      });
+      const catalog = yield* decodeAxisContextCatalogSnapshot({
+        revision: 1,
+        updatedAt: "2026-09-10T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "personal",
+              kind: "personal",
+              name: "Personal",
+              createdAt: "2026-09-10T00:00:00.000Z",
+              updatedAt: "2026-09-10T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      const getProposal = vi.fn<AxisLearningStore["Service"]["getProposal"]>(() =>
+        Effect.succeed(proposal),
+      );
+      const submitForReview = vi.fn<AxisLearningStore["Service"]["submitForReview"]>(
+        (_id, _lookup, _input) => Effect.succeed({ ...proposal, status: "in-review" }),
+      );
+      const activate = vi.fn(() => Effect.die("legacy activation must not reach the store"));
+      yield* buildAppUnderTest({
+        layers: {
+          axisContextCatalog: { get: Effect.succeed(catalog) },
+          axisLearning: {
+            getProposal,
+            submitForReview,
+            activate: activate as unknown as AxisLearningStore["Service"]["activate"],
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.axisLearningSubmitProposal]({ id: proposal.id }),
+        ),
+      );
+      assert.equal(response.status, "in-review");
+      assert.deepEqual(getProposal.mock.calls, [[proposal.id, AxisContextId.make("personal")]]);
+      assert.equal(submitForReview.mock.calls.length, 1);
+      assert.equal(submitForReview.mock.calls[0]?.[1], AxisContextId.make("personal"));
+
+      const activationError = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.axisLearningActivateVersion]({
+              id: AxisLearningVersionId.make("legacy-version"),
+            }),
+          ),
+        ),
+      );
+      assert.equal(activationError._tag, "AxisLearningRevisionRequiredError");
+      assert.equal(activate.mock.calls.length, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

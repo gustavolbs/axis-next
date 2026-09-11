@@ -1,4 +1,5 @@
 import {
+  type AxisLearningScope,
   type EnvironmentId,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -21,7 +22,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -834,12 +835,170 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:providers:${environmentId}`),
     ),
   );
+  const learningEnvironmentRefresh = Atom.family((_environmentId: EnvironmentId) => Atom.make(0));
+  const learningScopeRefresh = Atom.family((_key: string) => Atom.make(0));
+  const learningRefreshKey = (environmentId: EnvironmentId, scope: AxisLearningScope) =>
+    JSON.stringify([environmentId, scope.contextId, scope.project?.environmentId, scope.project?.projectId]);
+  const refreshLearning = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    scope: AxisLearningScope | undefined,
+  ) => Effect.sync(() => {
+    // Legacy commands identify only a proposal, so invalidate that environment's
+    // active Learning queries when the request cannot identify its scope.
+    const signal = scope === undefined
+      ? learningEnvironmentRefresh(environmentId)
+      : learningScopeRefresh(learningRefreshKey(environmentId, scope));
+    registry.set(signal, registry.get(signal) + 1);
+  });
+  const axisProjectProfile = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:axis:project-profile",
+    tag: WS_METHODS.axisProjectProfileGet,
+    staleTimeMs: 5_000,
+  });
+  const axisTasks = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:axis:tasks",
+    tag: WS_METHODS.axisTasksList,
+    staleTimeMs: 5_000,
+  });
+  const axisTask = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:axis:task",
+    tag: WS_METHODS.axisTasksGet,
+    staleTimeMs: 5_000,
+  });
+  const axisOnboardingRuns = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:axis:onboarding-runs",
+    tag: WS_METHODS.axisOnboardingList,
+    staleTimeMs: 1_000,
+  });
+  const axisOnboardingRun = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:axis:onboarding-run",
+    tag: WS_METHODS.axisOnboardingGet,
+    staleTimeMs: 1_000,
+  });
+
+  const refreshAxisOnboardingQueries = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    scope: Parameters<typeof axisOnboardingRuns>[0]["input"]["scope"],
+    runId?: Parameters<typeof axisOnboardingRun>[0]["input"]["runId"],
+  ) => {
+    registry.refresh(axisOnboardingRuns({ environmentId, input: { scope } }));
+    if (runId !== undefined) {
+      registry.refresh(axisOnboardingRun({ environmentId, input: { scope, runId } }));
+    }
+  };
+
+  const refreshAxisTaskQueries = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    scope: Parameters<typeof axisTasks>[0]["input"]["scope"],
+    threadId: Parameters<typeof axisTask>[0]["input"]["threadId"],
+  ) => {
+    registry.refresh(axisTasks({ environmentId, input: { scope } }));
+    registry.refresh(axisTask({ environmentId, input: { scope, threadId } }));
+  };
 
   return {
     configValueAtom,
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    axisProjectProfile,
+    axisTasks,
+    axisTask,
+    axisOnboardingRuns,
+    axisOnboardingRun,
+    startAxisOnboarding: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:onboarding-start",
+      tag: WS_METHODS.axisOnboardingStart,
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => refreshAxisOnboardingQueries(registry, environmentId, input.scope)),
+    }),
+    cancelAxisOnboarding: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:onboarding-cancel",
+      tag: WS_METHODS.axisOnboardingCancel,
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => refreshAxisOnboardingQueries(registry, environmentId, input.scope, input.input.runId)),
+    }),
+    retryAxisOnboarding: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:onboarding-retry",
+      tag: WS_METHODS.axisOnboardingRetry,
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => refreshAxisOnboardingQueries(registry, environmentId, input.scope, input.input.runId)),
+    }),
+    applyAxisOnboarding: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:onboarding-apply",
+      tag: WS_METHODS.axisOnboardingApply,
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => refreshAxisOnboardingQueries(registry, environmentId, input.scope, input.runId)),
+    }),
+    createAxisTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:task-create",
+      tag: WS_METHODS.axisTasksCreate,
+      onSuccess: (target, registry) =>
+        Effect.sync(() =>
+          refreshAxisTaskQueries(registry, target.environmentId, target.input.task.scope, target.input.task.threadId),
+        ),
+    }),
+    updateAxisTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:task-update",
+      tag: WS_METHODS.axisTasksUpdate,
+      onSuccess: (target, registry) =>
+        Effect.sync(() =>
+          refreshAxisTaskQueries(registry, target.environmentId, target.input.task.scope, target.input.task.threadId),
+        ),
+    }),
+    pauseAxisTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:task-pause",
+      tag: WS_METHODS.axisTasksPause,
+      onSuccess: (target, registry) =>
+        Effect.sync(() =>
+          refreshAxisTaskQueries(registry, target.environmentId, target.input.scope, target.input.threadId),
+        ),
+    }),
+    reopenAxisTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:task-reopen",
+      tag: WS_METHODS.axisTasksReopen,
+      onSuccess: (target, registry) =>
+        Effect.sync(() =>
+          refreshAxisTaskQueries(registry, target.environmentId, target.input.scope, target.input.threadId),
+        ),
+    }),
+    unlinkAxisTaskSource: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:task-unlink-source",
+      tag: WS_METHODS.axisTasksUnlinkSource,
+      onSuccess: (target, registry) =>
+        Effect.sync(() =>
+          refreshAxisTaskQueries(registry, target.environmentId, target.input.scope, target.input.threadId),
+        ),
+    }),
+    replaceAxisProjectProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:project-profile-replace",
+      tag: WS_METHODS.axisProjectProfileReplace,
+      onSuccess: (target, registry) =>
+        Effect.sync(() =>
+          registry.refresh(
+            axisProjectProfile({
+              environmentId: target.environmentId,
+              input: { scope: target.input.scope },
+            }),
+          ),
+        ),
+    }),
+    resetAxisProjectProfileOverride: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:project-profile-reset-override",
+      tag: WS_METHODS.axisProjectProfileResetOverride,
+      onSuccess: (target, registry) =>
+        Effect.sync(() =>
+          registry.refresh(
+            axisProjectProfile({
+              environmentId: target.environmentId,
+              input: { scope: target.input.scope },
+            }),
+          ),
+        ),
+    }),
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:provider:auth-state",
       tag: WS_METHODS.providerAuthSubscribe,
@@ -1091,34 +1250,60 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:axis:learning-snapshot",
       tag: WS_METHODS.axisLearningGetSnapshot,
       staleTimeMs: 5_000,
+      refreshTrigger: ({ environmentId, input }) => Atom.make((get) => [
+        get(learningEnvironmentRefresh(environmentId)),
+        get(learningScopeRefresh(learningRefreshKey(environmentId, input.scope ?? { contextId: input.contextId }))),
+      ]),
+    }),
+    requestAxisLearningImprovements: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-request-improvements",
+      tag: WS_METHODS.axisLearningRequestImprovements,
+      onSuccess: ({ environmentId, input }, registry) =>
+        refreshLearning(registry, environmentId, input.scope),
     }),
     recordAxisLearningEvidence: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:axis:learning-record-evidence",
       tag: WS_METHODS.axisLearningRecordEvidence,
+      onSuccess: ({ environmentId, input }, registry) => refreshLearning(
+        registry, environmentId, input.scope ?? input.evidence.provenance.scope ?? { contextId: input.evidence.provenance.contextId },
+      ),
     }),
     createAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:axis:learning-create-proposal",
       tag: WS_METHODS.axisLearningCreateProposal,
+      onSuccess: ({ environmentId, input }, registry) => refreshLearning(
+        registry, environmentId, input.scope ?? input.proposal.scope ?? { contextId: input.proposal.contextId },
+      ),
     }),
     submitAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:axis:learning-submit-proposal",
       tag: WS_METHODS.axisLearningSubmitProposal,
+      onSuccess: ({ environmentId, input }, registry) => refreshLearning(registry, environmentId, input.scope),
     }),
     approveAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:axis:learning-approve-proposal",
       tag: WS_METHODS.axisLearningApproveProposal,
+      onSuccess: ({ environmentId, input }, registry) => refreshLearning(registry, environmentId, input.scope),
     }),
     rejectAxisLearningProposal: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:axis:learning-reject-proposal",
       tag: WS_METHODS.axisLearningRejectProposal,
+      onSuccess: ({ environmentId, input }, registry) => refreshLearning(registry, environmentId, input.scope),
     }),
     activateAxisLearningVersion: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:axis:learning-activate-version",
       tag: WS_METHODS.axisLearningActivateVersion,
+      onSuccess: ({ environmentId, input }, registry) => refreshLearning(registry, environmentId, input.scope),
     }),
     rollbackAxisLearningVersion: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:axis:learning-rollback-version",
       tag: WS_METHODS.axisLearningRollbackVersion,
+      onSuccess: ({ environmentId, input }, registry) => refreshLearning(registry, environmentId, input.scope),
+    }),
+    deactivateAxisLearningVersion: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:axis:learning-deactivate-version",
+      tag: WS_METHODS.axisLearningDeactivateVersion,
+      onSuccess: ({ environmentId, input }, registry) => refreshLearning(registry, environmentId, input.scope),
     }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",

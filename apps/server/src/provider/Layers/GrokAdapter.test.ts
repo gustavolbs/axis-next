@@ -229,6 +229,12 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         runtimeMode: "full-access",
         modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-mock-alt" },
       });
+      const policyError = yield* adapter.sendTurn({
+        threadId,
+        input: "Apply project rules",
+        axisContextInstructions: "Never modify billing records",
+      }).pipe(Effect.flip);
+      assert.equal(policyError._tag, "ProviderAdapterValidationError");
       yield* adapter.sendTurn({ threadId, input: "First prompt" });
       yield* adapter.sendTurn({
         threadId,

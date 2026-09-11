@@ -4,12 +4,19 @@ import {
   PreviewAutomationUnavailableError,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type TokenEfficiencyEngineId,
+  type TokenEfficiencyMode,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
 export type McpCapability = "preview";
+
+export interface McpTokenEfficiencyPolicy {
+  readonly engine: TokenEfficiencyEngineId;
+  readonly mode: TokenEfficiencyMode;
+}
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
@@ -19,6 +26,8 @@ export interface McpInvocationScope {
   /** Model selected when the provider-scoped credential was issued. */
   readonly model?: string;
   readonly contextId?: AxisContextId;
+  /** Latest server-resolved policy for this thread's provider/model. */
+  readonly tokenEfficiencyPolicy?: McpTokenEfficiencyPolicy;
   /** Present for credentials issued by current provider sessions. */
   readonly provider?: ProviderDriverKind;
   readonly capabilities: ReadonlySet<McpCapability>;

@@ -44,7 +44,11 @@ import {
   SYNTHETIC_CLAUDE_STANDARD_MODEL,
   SYNTHETIC_CLAUDE_THINKING_MODEL,
 } from "../ClaudeModelCatalog.testFixtures.ts";
-import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
+import {
+  ProviderAdapterProcessError,
+  ProviderAdapterRequestError,
+  ProviderAdapterValidationError,
+} from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
@@ -70,6 +74,11 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public closeCalls = 0;
   public closeError: unknown | undefined;
+  public closeErrorOnce: unknown | undefined;
+
+  public get closed(): boolean {
+    return this.done;
+  }
 
   emit(message: SDKMessage): void {
     if (this.done) {
@@ -119,6 +128,11 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly close = (): void => {
     this.closeCalls += 1;
+    if (this.closeErrorOnce !== undefined) {
+      const cause = this.closeErrorOnce;
+      this.closeErrorOnce = undefined;
+      throw cause;
+    }
     if (this.closeError !== undefined) {
       throw this.closeError;
     }
@@ -167,8 +181,10 @@ function makeHarness(config?: {
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
   readonly scopedLimitNames?: ClaudeAdapterLiveOptions["scopedLimitNames"];
+  readonly createQuery?: ClaudeAdapterLiveOptions["createQuery"];
 }) {
   const query = new FakeClaudeQuery();
+  const queries: Array<FakeClaudeQuery> = [];
   let createInput:
     | {
         readonly prompt: AsyncIterable<SDKUserMessage>;
@@ -182,6 +198,14 @@ function makeHarness(config?: {
     modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     createQuery: (input) => {
       createInput = input;
+      if (config?.createQuery) {
+        const created = config.createQuery(input);
+        if (created instanceof FakeClaudeQuery) {
+          queries.push(created);
+        }
+        return created;
+      }
+      queries.push(query);
       return query;
     },
     ...(config?.nativeEventLogger
@@ -214,6 +238,7 @@ function makeHarness(config?: {
       Layer.provideMerge(NodeServices.layer),
     ),
     query,
+    queries,
     getLastCreateQueryInput: () => createInput,
   };
 }
@@ -304,6 +329,18 @@ async function readPromptMessages(
 const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 const SYNTHETIC_SUBAGENT_MODEL = "claude-synthetic-subagent[expanded]";
+
+function successfulClaudeResult(uuid: string, sessionId = "sdk-session-axis"): SDKMessage {
+  return {
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    errors: [],
+    num_turns: 1,
+    session_id: sessionId,
+    uuid,
+  } as unknown as SDKMessage;
+}
 
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
@@ -775,6 +812,564 @@ describe("ClaudeAdapterLive", () => {
         readFirstPromptText(harness.getLastCreateQueryInput()),
       );
       assert.equal(promptText, "/compact");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("starts a replacement Claude query with protected Axis context", () => {
+    const harness = makeHarness({
+      createQuery: () => new FakeClaudeQuery(),
+    });
+    const axisContextInstructions =
+      "## Axis effective context (digest: digest-1)\nUse this context.";
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "user request",
+        attachments: [],
+        axisContextInstructions,
+        axisContextDigest: "digest-1",
+      });
+
+      assert.equal(harness.queries.length, 2);
+      assert.equal(harness.queries[0]?.closeCalls, 1);
+      const createInput = harness.getLastCreateQueryInput();
+      const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
+      assert.equal(promptText, "user request");
+      assert.deepEqual(createInput?.options.systemPrompt, {
+        type: "preset",
+        preset: "claude_code",
+        append:
+          "<runtime_info>In case you're asked: you are running in T3 Code through the Claude Code harness. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n" +
+          axisContextInstructions,
+      });
+      assert.equal(createInput?.options.resume, undefined);
+      assert.equal(
+        createInput?.options.sessionId,
+        (session.resumeCursor as { readonly resume?: string }).resume,
+      );
+      assert.equal(
+        (turn.resumeCursor as { readonly axisContextDigest?: string }).axisContextDigest,
+        "digest-1",
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not replace a Claude session while a turn still uses its query", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const query = harness.queries[0];
+      if (!query) {
+        return;
+      }
+
+      let signalModelSetStarted!: () => void;
+      const modelSetStarted = new Promise<void>((resolve) => {
+        signalModelSetStarted = resolve;
+      });
+      let releaseModelSet!: () => void;
+      const modelSetReleased = new Promise<void>((resolve) => {
+        releaseModelSet = resolve;
+      });
+      Object.assign(query, {
+        setModel: async () => {
+          signalModelSetStarted();
+          await modelSetReleased;
+        },
+      });
+
+      const modelSelection = createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        SYNTHETIC_CLAUDE_STANDARD_MODEL,
+      );
+      const turnFiber = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "send before replacing",
+          modelSelection,
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => modelSetStarted);
+
+      const replacementFiber = yield* adapter
+        .startSession({
+          threadId: session.threadId,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(query.closeCalls, 0);
+      assert.equal(harness.queries.length, 1);
+
+      releaseModelSet();
+      yield* Fiber.join(turnFiber);
+      yield* Fiber.join(replacementFiber);
+
+      assert.equal(query.closeCalls, 1);
+      assert.equal(harness.queries.length, 2);
+      assert.equal(yield* adapter.hasSession(session.threadId), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps queued stop and recreation operations in order after a turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const query = harness.queries[0];
+      if (!query) {
+        return;
+      }
+
+      let signalModelSetStarted!: () => void;
+      const modelSetStarted = new Promise<void>((resolve) => {
+        signalModelSetStarted = resolve;
+      });
+      let releaseModelSet!: () => void;
+      const modelSetReleased = new Promise<void>((resolve) => {
+        releaseModelSet = resolve;
+      });
+      Object.assign(query, {
+        setModel: async () => {
+          signalModelSetStarted();
+          await modelSetReleased;
+        },
+      });
+      const modelSelection = createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        SYNTHETIC_CLAUDE_STANDARD_MODEL,
+      );
+
+      const turnFiber = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "hold the query",
+          modelSelection,
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => modelSetStarted);
+
+      const stopFiber = yield* adapter.stopSession(session.threadId).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const replacementFiber = yield* adapter
+        .startSession({
+          threadId: session.threadId,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(query.closeCalls, 0);
+      assert.equal(harness.queries.length, 1);
+
+      releaseModelSet();
+      yield* Fiber.join(turnFiber);
+      yield* Fiber.join(stopFiber);
+      yield* Fiber.join(replacementFiber);
+
+      assert.equal(query.closeCalls, 1);
+      assert.equal(harness.queries.length, 2);
+      assert.equal(yield* adapter.hasSession(session.threadId), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not hang an Axis context restart on a stream that ignores close", () => {
+    const harness = makeHarness({
+      createQuery: () => new FakeClaudeQuery(),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const previousQuery = harness.queries[0];
+      if (!previousQuery) {
+        return;
+      }
+
+      Object.assign(previousQuery, {
+        close: () => {
+          previousQuery.closeCalls += 1;
+        },
+      });
+
+      const restartFiber = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "restart despite a stuck stream",
+          axisContextInstructions: "## Axis effective context",
+          axisContextDigest: "stuck-stream",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(restartFiber);
+
+      assert.equal(previousQuery.closeCalls, 1);
+      assert.equal(harness.queries.length, 2);
+      assert.equal(harness.queries[1]?.closeCalls, 0);
+      assert.equal(yield* adapter.hasSession(session.threadId), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("closes both queries when the previous query close fails during restart", () => {
+    const harness = makeHarness({
+      createQuery: () => new FakeClaudeQuery(),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const previousQuery = harness.queries[0];
+      if (!previousQuery) return;
+      previousQuery.closeErrorOnce = new Error("first close failed");
+
+      const result = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "restart with cleanup",
+          attachments: [],
+          axisContextInstructions: "## Axis effective context (digest: cleanup)",
+          axisContextDigest: "cleanup",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      assert.equal(harness.queries.length, 2);
+      assert.equal(previousQuery.closeCalls, 2);
+      assert.equal(previousQuery.closed, true);
+      assert.equal(harness.queries[1]?.closeCalls, 1);
+      assert.equal(harness.queries[1]?.closed, true);
+      assert.equal(yield* adapter.hasSession(session.threadId), false);
+      assert.equal((yield* adapter.listSessions()).length, 0);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("reuses unchanged Axis context and restarts only between turns", () => {
+    const harness = makeHarness({
+      createQuery: () => new FakeClaudeQuery(),
+    });
+    const contextOne = "## Axis effective context (digest: digest-1)\nUse context one.";
+    const contextTwo = "## Axis effective context (digest: digest-2)\nUse context two.";
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const finishTurn = (query: FakeClaudeQuery, uuid: string) =>
+        Effect.gen(function* () {
+          const completed = yield* Stream.filter(
+            adapter.streamEvents,
+            (event) => event.type === "turn.completed",
+          ).pipe(Stream.runHead, Effect.forkChild);
+          query.emit(successfulClaudeResult(uuid));
+          yield* Fiber.join(completed);
+        });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "first",
+        attachments: [],
+        axisContextInstructions: contextOne,
+        axisContextDigest: "digest-1",
+      });
+      const firstQuery = harness.queries[1];
+      if (!firstQuery) return;
+      yield* finishTurn(firstQuery, "axis-result-1");
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "same context",
+        attachments: [],
+        axisContextInstructions: contextOne,
+        axisContextDigest: "digest-1",
+      });
+      assert.equal(harness.queries.length, 2);
+      yield* finishTurn(firstQuery, "axis-result-2");
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "changed context",
+        attachments: [],
+        axisContextInstructions: contextTwo,
+        axisContextDigest: "digest-2",
+      });
+      assert.equal(harness.queries.length, 3);
+      assert.equal(harness.queries[1]?.closeCalls, 1);
+      assert.match(
+        String(
+          (harness.getLastCreateQueryInput()?.options.systemPrompt as { readonly append?: string })
+            ?.append,
+        ),
+        /digest-2/u,
+      );
+      const secondQuery = harness.queries[2];
+      if (!secondQuery) return;
+      yield* finishTurn(secondQuery, "axis-result-3");
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "remove context",
+        attachments: [],
+      });
+      assert.equal(harness.queries.length, 4);
+      assert.equal(
+        String(
+          (harness.getLastCreateQueryInput()?.options.systemPrompt as { readonly append?: string })
+            ?.append,
+        ).includes("digest-2"),
+        false,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rejects Axis context changes during an active Claude steer", () => {
+    const harness = makeHarness({
+      createQuery: () => new FakeClaudeQuery(),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "first",
+        attachments: [],
+        axisContextInstructions: "## Axis effective context (digest: digest-1)",
+        axisContextDigest: "digest-1",
+      });
+
+      const result = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "steer with changed context",
+          attachments: [],
+          axisContextInstructions: "## Axis effective context (digest: digest-2)",
+          axisContextDigest: "digest-2",
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.instanceOf(result.failure, ProviderAdapterRequestError);
+        assert.equal(
+          result.failure.detail,
+          "Claude cannot change Axis context while an active turn is being steered.",
+        );
+      }
+      assert.equal(harness.queries.length, 2);
+      assert.equal(harness.queries[1]?.closeCalls, 0);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("restores protected Axis context from a Claude resume cursor", () => {
+    const harness = makeHarness({
+      createQuery: () => new FakeClaudeQuery(),
+    });
+    const axisContextInstructions =
+      "## Axis effective context (digest: digest-resume)\nResume context.";
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const firstSession = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const firstTurn = yield* adapter.sendTurn({
+        threadId: firstSession.threadId,
+        input: "first",
+        attachments: [],
+        axisContextInstructions,
+        axisContextDigest: "digest-resume",
+      });
+      const resumeCursor = firstTurn.resumeCursor;
+      if (!resumeCursor) return;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor,
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(harness.queries.length, 3);
+      assert.equal(
+        createInput?.options.resume,
+        (resumeCursor as { readonly resume?: string }).resume,
+      );
+      assert.match(
+        String((createInput?.options.systemPrompt as { readonly append?: string })?.append),
+        /digest-resume/u,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("preserves the effective model and effort across an Axis context restart", () => {
+    const harness = makeHarness({
+      createQuery: () => new FakeClaudeQuery(),
+    });
+    const modelA = createModelSelection(
+      ProviderInstanceId.make("claudeAgent"),
+      SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+      [
+        { id: "contextWindow", value: "expanded" },
+        { id: "effort", value: "max" },
+        { id: "fastMode", value: true },
+      ],
+    );
+    const modelB = createModelSelection(
+      ProviderInstanceId.make("claudeAgent"),
+      SYNTHETIC_CLAUDE_STANDARD_MODEL,
+      [
+        { id: "contextWindow", value: "standard" },
+        { id: "effort", value: "low" },
+      ],
+    );
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: modelA,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "switch model",
+        modelSelection: modelB,
+        attachments: [],
+      });
+      const completed = yield* Stream.filter(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runHead, Effect.forkChild);
+      harness.queries[0]?.emit(successfulClaudeResult("model-switch-result"));
+      yield* Fiber.join(completed);
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "apply changed context",
+        axisContextInstructions: "## Axis effective context (digest: model-policy)\nUse policy.",
+        axisContextDigest: "model-policy",
+        attachments: [],
+      });
+
+      assert.equal(harness.queries.length, 2);
+      assert.equal(harness.queries[1]?.closeCalls, 0);
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.model,
+        SYNTHETIC_CLAUDE_STANDARD_MODEL,
+      );
+      assert.equal(harness.getLastCreateQueryInput()?.options.effort, "low");
+      assert.equal(harness.getLastCreateQueryInput()?.options.permissionMode, "bypassPermissions");
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.settings, { fastMode: true });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("preserves plan mode across an Axis context restart without an override", () => {
+    const harness = makeHarness({
+      createQuery: () => new FakeClaudeQuery(),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "plan first",
+        interactionMode: "plan",
+        attachments: [],
+      });
+      const completed = yield* Stream.filter(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runHead, Effect.forkChild);
+      harness.queries[0]?.emit(successfulClaudeResult("plan-result"));
+      yield* Fiber.join(completed);
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "continue with changed context",
+        axisContextInstructions: "## Axis effective context (digest: plan-policy)\nUse policy.",
+        axisContextDigest: "plan-policy",
+        attachments: [],
+      });
+
+      assert.equal(harness.queries.length, 2);
+      assert.equal(harness.getLastCreateQueryInput()?.options.permissionMode, "plan");
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.allowDangerouslySkipPermissions,
+        undefined,
+      );
+      assert.deepEqual(harness.queries[0]?.setPermissionModeCalls, ["plan"]);
+      assert.deepEqual(harness.queries[1]?.setPermissionModeCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

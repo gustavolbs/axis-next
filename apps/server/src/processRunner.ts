@@ -33,6 +33,12 @@ export interface ProcessRunInput {
    * Partial stdout/stderr are not preserved.
    */
   readonly timeoutBehavior?: "error" | "timedOutResult" | undefined;
+  /**
+   * After requesting termination, forcefully kill the owned child after this duration.
+   */
+  readonly forceKillAfter?: Duration.Input | undefined;
+  /** Whether the child receives the host environment in addition to `env`. */
+  readonly extendEnv?: boolean | undefined;
 }
 
 export interface ProcessRunOutput {
@@ -293,7 +299,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
-  const extendEnv = input.env !== undefined;
+  const extendEnv = input.extendEnv ?? input.env !== undefined;
   const spawnCommand = yield* resolveSpawnCommand(
     input.command,
     input.args,
@@ -310,6 +316,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
               extendEnv,
             }
           : {}),
+        ...(input.forceKillAfter === undefined ? {} : { forceKillAfter: input.forceKillAfter }),
         shell: spawnCommand.shell,
       }),
     )

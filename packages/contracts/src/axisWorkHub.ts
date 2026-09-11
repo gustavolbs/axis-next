@@ -26,6 +26,20 @@ export const AxisWorkHubItemKind = Schema.Literals([
 ]);
 export type AxisWorkHubItemKind = typeof AxisWorkHubItemKind.Type;
 
+/** Preserves a source-native status when a connector cannot map it safely. */
+export const AxisWorkHubStatusMapping = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("mapped"),
+    native: Schema.NullOr(Schema.String),
+    value: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("unmapped"),
+    native: Schema.NullOr(Schema.String),
+  }),
+]);
+export type AxisWorkHubStatusMapping = typeof AxisWorkHubStatusMapping.Type;
+
 /** A connector's civil calendar date, intentionally independent of a timezone. */
 export const AxisWorkHubCalendarDate = Schema.String.pipe(
   Schema.check(
@@ -135,6 +149,7 @@ export const AxisWorkHubCollectedItem = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   status: Schema.NullOr(Schema.String),
+  statusMapping: Schema.optionalKey(Schema.NullOr(AxisWorkHubStatusMapping)),
   assignee: Schema.optionalKey(Schema.NullOr(Schema.String)),
   priority: Schema.optionalKey(Schema.NullOr(Schema.String)),
   dueDate: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
@@ -193,6 +208,7 @@ export const AxisWorkHubCachedItem = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   status: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  statusMapping: Schema.optionalKey(Schema.NullOr(AxisWorkHubStatusMapping)),
   assignee: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   priority: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   dueDate: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),

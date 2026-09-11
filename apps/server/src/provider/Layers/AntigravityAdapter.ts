@@ -1017,6 +1017,13 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     );
 
   const sendTurn: Adapter["sendTurn"] = Effect.fn("AntigravityAdapter.sendTurn")(function* (input) {
+    if (input.axisContextInstructions) {
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "sendTurn",
+        issue: "Antigravity ACP does not support a protected channel for Axis project rules. Choose a provider that supports Axis project instructions.",
+      });
+    }
     const context = yield* requireSession(input.threadId);
     if (input.modelSelection && input.modelSelection.instanceId !== options.instanceId) {
       return yield* new ProviderAdapterValidationError({

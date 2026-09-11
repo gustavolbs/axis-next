@@ -1,7 +1,14 @@
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  CommandId,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import {
   AxisContextCatalogError,
   AxisContextCatalogPersistenceError,
@@ -28,9 +35,22 @@ import {
   AxisScheduledActivityUpdateInput,
 } from "./axisScheduledActivity.ts";
 import {
-  AxisLearningActiveVersion,
+  AxisOnboardingApplyInput,
+  AxisOnboardingCandidateRuleId,
+  AxisOnboardingCancelInput,
+  AxisOnboardingGetInput,
+  AxisOnboardingListInput,
+  AxisOnboardingProgress,
+  AxisOnboardingRetryInput,
+  AxisOnboardingRun,
+  AxisOnboardingStartRequest,
+} from "./axisOnboarding.ts";
+import {
+  AxisLearningActivationResponse,
   AxisLearningCreateProposalInput,
+  AxisLearningDeactivateInput,
   AxisLearningEvidence,
+  AxisLearningEvidenceId,
   AxisLearningListInput,
   AxisLearningProposal,
   AxisLearningProposalActionInput,
@@ -41,6 +61,23 @@ import {
   AxisLearningVersion,
   AxisLearningVersionActionInput,
 } from "./axisLearning.ts";
+import { AxisLearningEngineError, AxisLearningEngineStatus } from "./axisLearningEngine.ts";
+import {
+  AxisTaskExtension,
+  AxisTaskLifecycleInput,
+  AxisTaskMutation,
+  AxisTaskStoreError,
+} from "./axisTask.ts";
+import {
+  AxisContextProjectScope,
+  AxisProjectProfile,
+  AxisProjectProfileError,
+  AxisProjectRuleId,
+  AxisProjectProfileGetInput,
+  AxisProjectProfileReplaceInput,
+  AxisProjectProfileResetOverrideInput,
+  AxisProjectProfileValidationError,
+} from "./axisProjectProfile.ts";
 import {
   AxisScratchChat,
   AxisScratchChatArchiveInput,
@@ -405,6 +442,24 @@ export const WS_METHODS = {
   axisLearningRejectProposal: "axis.learning.rejectProposal",
   axisLearningActivateVersion: "axis.learning.activateVersion",
   axisLearningRollbackVersion: "axis.learning.rollbackVersion",
+  axisLearningDeactivateVersion: "axis.learning.deactivateVersion",
+  axisLearningRequestImprovements: "axis.learning.requestImprovements",
+  axisOnboardingList: "axis.onboarding.list",
+  axisOnboardingGet: "axis.onboarding.get",
+  axisOnboardingStart: "axis.onboarding.start",
+  axisOnboardingCancel: "axis.onboarding.cancel",
+  axisOnboardingRetry: "axis.onboarding.retry",
+  axisOnboardingApply: "axis.onboarding.apply",
+  axisTasksList: "axis.tasks.list",
+  axisTasksGet: "axis.tasks.get",
+  axisTasksCreate: "axis.tasks.create",
+  axisTasksUpdate: "axis.tasks.update",
+  axisTasksPause: "axis.tasks.pause",
+  axisTasksReopen: "axis.tasks.reopen",
+  axisTasksUnlinkSource: "axis.tasks.unlinkSource",
+  axisProjectProfileGet: "axis.projectProfile.get",
+  axisProjectProfileReplace: "axis.projectProfile.replace",
+  axisProjectProfileResetOverride: "axis.projectProfile.resetOverride",
 
   // Axis scratch chats (project-less conversations)
   axisScratchChatsList: "axis.scratchChats.list",
@@ -700,7 +755,103 @@ export const WsAxisScheduledActivitiesListRunsRpc = Rpc.make(
   },
 );
 
-const AxisLearningRpcError = Schema.Union([AxisLearningStoreError, EnvironmentAuthorizationError]);
+const AxisLearningRpcError = Schema.Union([
+  AxisLearningStoreError,
+  AxisLearningEngineError,
+  AxisProjectProfileError,
+  AxisProjectProfileValidationError,
+  EnvironmentAuthorizationError,
+]);
+
+export class AxisOnboardingRpcError extends Schema.TaggedErrorClass<AxisOnboardingRpcError>()(
+  "AxisOnboardingRpcError",
+  {
+    code: Schema.Literals([
+      "persistence",
+      "conflict",
+      "validation",
+      "source",
+      "analysis",
+      "apply",
+      "cancelled",
+    ]),
+    message: Schema.String,
+  },
+) {}
+
+export const AxisOnboardingRunSnapshot = Schema.Struct({
+  run: AxisOnboardingRun,
+  progress: AxisOnboardingProgress,
+});
+export type AxisOnboardingRunSnapshot = typeof AxisOnboardingRunSnapshot.Type;
+
+export const AxisOnboardingRunList = Schema.Array(AxisOnboardingRunSnapshot);
+
+const AxisOnboardingRpcErrorSchema = Schema.Union([
+  AxisOnboardingRpcError,
+  AxisProjectProfileError,
+  AxisProjectProfileValidationError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsAxisOnboardingListRpc = Rpc.make("axis.onboarding.list", {
+  payload: AxisOnboardingListInput,
+  success: AxisOnboardingRunList,
+  error: AxisOnboardingRpcErrorSchema,
+});
+export const WsAxisOnboardingGetRpc = Rpc.make("axis.onboarding.get", {
+  payload: AxisOnboardingGetInput,
+  success: AxisOnboardingRunSnapshot,
+  error: AxisOnboardingRpcErrorSchema,
+});
+export const WsAxisOnboardingStartRpc = Rpc.make("axis.onboarding.start", {
+  payload: AxisOnboardingStartRequest,
+  success: AxisOnboardingRunSnapshot,
+  error: AxisOnboardingRpcErrorSchema,
+});
+export const WsAxisOnboardingCancelRpc = Rpc.make("axis.onboarding.cancel", {
+  payload: Schema.Struct({ scope: AxisContextProjectScope, input: AxisOnboardingCancelInput }),
+  success: AxisOnboardingRunSnapshot,
+  error: AxisOnboardingRpcErrorSchema,
+});
+export const WsAxisOnboardingRetryRpc = Rpc.make("axis.onboarding.retry", {
+  payload: Schema.Struct({ scope: AxisContextProjectScope, input: AxisOnboardingRetryInput }),
+  success: AxisOnboardingRunSnapshot,
+  error: AxisOnboardingRpcErrorSchema,
+});
+export const WsAxisOnboardingApplyRpc = Rpc.make("axis.onboarding.apply", {
+  payload: AxisOnboardingApplyInput,
+  success: Schema.Struct({
+    run: AxisOnboardingRunSnapshot,
+    profile: AxisProjectProfile,
+    invalidatedRuleIds: Schema.Array(AxisProjectRuleId),
+    acceptedCandidateIds: Schema.Array(AxisOnboardingCandidateRuleId),
+  }),
+  error: AxisOnboardingRpcErrorSchema,
+});
+
+export const AxisLearningRequestImprovementsInput = Schema.Struct({
+  scope: AxisContextProjectScope,
+  evidenceIds: Schema.Array(AxisLearningEvidenceId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(32),
+  ),
+  commandId: CommandId,
+  deadlineMs: PositiveInt.check(Schema.isLessThanOrEqualTo(120_000)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(45_000)),
+  ),
+});
+export type AxisLearningRequestImprovementsInput = typeof AxisLearningRequestImprovementsInput.Type;
+
+export const AxisLearningImprovementRun = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  status: Schema.Literals(["proposals", "no-change", "unavailable"]),
+  commandId: CommandId,
+  engine: AxisLearningEngineStatus,
+  proposals: Schema.Array(AxisLearningProposal),
+  reason: Schema.NullOr(Schema.String),
+});
+export type AxisLearningImprovementRun = typeof AxisLearningImprovementRun.Type;
 
 export const WsAxisLearningGetSnapshotRpc = Rpc.make(WS_METHODS.axisLearningGetSnapshot, {
   payload: AxisLearningListInput,
@@ -734,14 +885,86 @@ export const WsAxisLearningRejectProposalRpc = Rpc.make(WS_METHODS.axisLearningR
 });
 export const WsAxisLearningActivateVersionRpc = Rpc.make(WS_METHODS.axisLearningActivateVersion, {
   payload: AxisLearningVersionActionInput,
-  success: AxisLearningActiveVersion,
+  success: AxisLearningActivationResponse,
   error: AxisLearningRpcError,
 });
 export const WsAxisLearningRollbackVersionRpc = Rpc.make(WS_METHODS.axisLearningRollbackVersion, {
   payload: AxisLearningVersionActionInput,
-  success: AxisLearningActiveVersion,
+  success: AxisLearningActivationResponse,
   error: AxisLearningRpcError,
 });
+export const WsAxisLearningDeactivateVersionRpc = Rpc.make(
+  WS_METHODS.axisLearningDeactivateVersion,
+  {
+    payload: AxisLearningDeactivateInput,
+    success: AxisLearningActivationResponse,
+    error: AxisLearningRpcError,
+  },
+);
+export const WsAxisLearningRequestImprovementsRpc = Rpc.make(
+  WS_METHODS.axisLearningRequestImprovements,
+  {
+    payload: AxisLearningRequestImprovementsInput,
+    success: AxisLearningImprovementRun,
+    error: AxisLearningRpcError,
+  },
+);
+
+const AxisTaskRpcError = Schema.Union([AxisTaskStoreError, EnvironmentAuthorizationError]);
+export const WsAxisTasksListRpc = Rpc.make(WS_METHODS.axisTasksList, {
+  payload: Schema.Struct({ scope: AxisContextProjectScope }),
+  success: Schema.Array(AxisTaskExtension),
+  error: AxisTaskRpcError,
+});
+export const WsAxisTasksGetRpc = Rpc.make(WS_METHODS.axisTasksGet, {
+  payload: Schema.Struct({ scope: AxisContextProjectScope, threadId: ThreadId }),
+  success: Schema.NullOr(AxisTaskExtension),
+  error: AxisTaskRpcError,
+});
+export const WsAxisTasksCreateRpc = Rpc.make(WS_METHODS.axisTasksCreate, {
+  payload: Schema.Struct({ task: AxisTaskExtension, commandId: CommandId }),
+  success: AxisTaskExtension,
+  error: AxisTaskRpcError,
+});
+export const WsAxisTasksUpdateRpc = Rpc.make(WS_METHODS.axisTasksUpdate, {
+  payload: AxisTaskMutation,
+  success: AxisTaskExtension,
+  error: AxisTaskRpcError,
+});
+export const WsAxisTasksPauseRpc = Rpc.make(WS_METHODS.axisTasksPause, {
+  payload: AxisTaskLifecycleInput,
+  success: AxisTaskExtension,
+  error: AxisTaskRpcError,
+});
+export const WsAxisTasksReopenRpc = Rpc.make(WS_METHODS.axisTasksReopen, {
+  payload: AxisTaskLifecycleInput,
+  success: AxisTaskExtension,
+  error: AxisTaskRpcError,
+});
+export const WsAxisTasksUnlinkSourceRpc = Rpc.make(WS_METHODS.axisTasksUnlinkSource, {
+  payload: AxisTaskLifecycleInput,
+  success: AxisTaskExtension,
+  error: AxisTaskRpcError,
+});
+
+export const WsAxisProjectProfileGetRpc = Rpc.make(WS_METHODS.axisProjectProfileGet, {
+  payload: AxisProjectProfileGetInput,
+  success: AxisProjectProfile,
+  error: Schema.Union([AxisProjectProfileError, EnvironmentAuthorizationError]),
+});
+export const WsAxisProjectProfileReplaceRpc = Rpc.make(WS_METHODS.axisProjectProfileReplace, {
+  payload: AxisProjectProfileReplaceInput,
+  success: AxisProjectProfile,
+  error: Schema.Union([AxisProjectProfileError, EnvironmentAuthorizationError]),
+});
+export const WsAxisProjectProfileResetOverrideRpc = Rpc.make(
+  WS_METHODS.axisProjectProfileResetOverride,
+  {
+    payload: AxisProjectProfileResetOverrideInput,
+    success: AxisProjectProfile,
+    error: Schema.Union([AxisProjectProfileError, EnvironmentAuthorizationError]),
+  },
+);
 
 const AxisScratchChatRpcError = Schema.Union([
   AxisScratchChatError,
@@ -1507,6 +1730,24 @@ export const WsRpcGroup = RpcGroup.make(
   WsAxisLearningRejectProposalRpc,
   WsAxisLearningActivateVersionRpc,
   WsAxisLearningRollbackVersionRpc,
+  WsAxisLearningDeactivateVersionRpc,
+  WsAxisLearningRequestImprovementsRpc,
+  WsAxisOnboardingListRpc,
+  WsAxisOnboardingGetRpc,
+  WsAxisOnboardingStartRpc,
+  WsAxisOnboardingCancelRpc,
+  WsAxisOnboardingRetryRpc,
+  WsAxisOnboardingApplyRpc,
+  WsAxisTasksListRpc,
+  WsAxisTasksGetRpc,
+  WsAxisTasksCreateRpc,
+  WsAxisTasksUpdateRpc,
+  WsAxisTasksPauseRpc,
+  WsAxisTasksReopenRpc,
+  WsAxisTasksUnlinkSourceRpc,
+  WsAxisProjectProfileGetRpc,
+  WsAxisProjectProfileReplaceRpc,
+  WsAxisProjectProfileResetOverrideRpc,
   WsAxisScratchChatsListRpc,
   WsAxisScratchChatsGetRpc,
   WsAxisScratchChatsCreateRpc,

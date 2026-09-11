@@ -19,6 +19,7 @@ type ChildProcessCommand = {
   readonly args: ReadonlyArray<string>;
   readonly options: {
     readonly shell?: boolean | string;
+    readonly forceKillAfter?: Duration.Input;
   };
 };
 
@@ -289,6 +290,23 @@ describe("runProcess", () => {
     }),
   );
 
+  it.effect("passes force-kill configuration to the owned child", () =>
+    Effect.gen(function* () {
+      const spawner = makeSpawner((command) =>
+        Effect.sync(() => {
+          expect(command.options.forceKillAfter).toEqual(Duration.seconds(2));
+          return makeHandle({ stdout: "ok" });
+        }),
+      );
+
+      yield* runWith(spawner)({
+        command: "fake",
+        args: [],
+        forceKillAfter: Duration.seconds(2),
+      });
+    }),
+  );
+
   it.effect("writes stdin before waiting for exit", () =>
     Effect.gen(function* () {
       const stdinWritten = yield* Deferred.make<void>();
@@ -399,6 +417,7 @@ describe("runProcess", () => {
       });
     }),
   );
+
 });
 
 describe("isWindowsCommandNotFound", () => {

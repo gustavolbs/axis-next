@@ -28,10 +28,17 @@ export interface ProviderRuntimeBinding {
   readonly resumeCursor?: unknown | null;
   readonly runtimePayload?: unknown | null;
   readonly runtimeMode?: RuntimeMode;
+  /** Optimistic-concurrency version supplied by persisted reads. */
+  readonly lastSeenAt?: string;
 }
 
 export interface ProviderRuntimeBindingWithMetadata extends ProviderRuntimeBinding {
   readonly lastSeenAt: string;
+}
+
+export interface ProviderSessionDirectoryCompareAndSetInput {
+  readonly expected: ProviderRuntimeBindingWithMetadata;
+  readonly next: ProviderRuntimeBinding;
 }
 
 export type ProviderSessionDirectoryReadError = ProviderSessionDirectoryPersistenceError;
@@ -44,6 +51,20 @@ export interface ProviderSessionDirectoryShape {
   readonly upsert: (
     binding: ProviderRuntimeBinding,
   ) => Effect.Effect<void, ProviderSessionDirectoryWriteError>;
+
+  /**
+   * Replaces a binding only when its complete persisted snapshot is still
+   * unchanged. Legacy callers may continue using upsert; continuation paths
+   * use this operation to prevent stale settlement writes.
+   */
+  readonly compareAndSet?: (
+    input: ProviderSessionDirectoryCompareAndSetInput,
+  ) => Effect.Effect<boolean, ProviderSessionDirectoryWriteError>;
+
+  readonly withLease?: <A, E, R>(input: {
+    readonly expected: ProviderRuntimeBindingWithMetadata;
+    readonly effect: Effect.Effect<A, E, R>;
+  }) => Effect.Effect<Option.Option<A>, E | ProviderSessionDirectoryWriteError, R>;
 
   readonly getProvider: (
     threadId: ThreadId,

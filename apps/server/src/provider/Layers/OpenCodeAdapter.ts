@@ -3210,11 +3210,16 @@ export function makeOpenCodeAdapter(
                 ...(context.activeAgent ? { agent: context.activeAgent } : {}),
                 ...(context.activeVariant ? { variant: context.activeVariant } : {}),
                 // OpenCode appends this after its own agent/provider prompts.
-                system: buildRuntimeInstructions({
-                  harness: "OpenCode",
-                  model: `${parsedModel.providerID}/${parsedModel.modelID}`,
-                  conciseOutputProfile,
-                }),
+                system: [
+                  buildRuntimeInstructions({
+                    harness: "OpenCode",
+                    model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+                    conciseOutputProfile,
+                  }),
+                  input.axisContextInstructions,
+                ]
+                  .filter((part): part is string => part !== undefined)
+                  .join("\n\n"),
                 parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
               },
               { signal },

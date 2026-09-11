@@ -14,6 +14,10 @@ import * as Effect from "effect/Effect";
 import Migration0055 from "./Migrations/055_ProjectlessThreads.ts";
 import Migration0057 from "./Migrations/057_ImportStandaloneChats.ts";
 import Migration0056 from "./Migrations/056_AxisContextCleanup.ts";
+import Migration0059 from "./Migrations/059_AxisProjectWork.ts";
+import Migration0060 from "./Migrations/060_AxisLearningProjectScope.ts";
+import Migration0061 from "./Migrations/061_AxisTaskCommands.ts";
+import Migration0062 from "./Migrations/062_AxisOnboardingRuns.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -140,6 +144,10 @@ export const migrationEntries = [
   [56, "AxisContextCleanup", Migration0056],
   [57, "ImportStandaloneChats", Migration0057],
   [58, "AxisChatsProject", Migration0058],
+  [59, "AxisProjectWork", Migration0059],
+  [60, "AxisLearningProjectScope", Migration0060],
+  [61, "AxisTaskCommands", Migration0061],
+  [62, "AxisOnboardingRuns", Migration0062],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

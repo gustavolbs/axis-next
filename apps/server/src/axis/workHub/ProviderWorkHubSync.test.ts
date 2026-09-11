@@ -1,13 +1,23 @@
-import { describe, expect, it } from "vite-plus/test";
-import { AxisWorkHubCollectInput, AxisWorkHubCollectionResult } from "@t3tools/contracts";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
+import {
+  AxisWorkHubCollectInput,
+  AxisWorkHubCollectionResult,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  AXIS_WORK_HUB_READ_ONLY_TOOL_NAMES,
   buildAxisWorkHubCacheSnapshot,
   buildClaudeWorkHubToolArgs,
   buildCollectionPrompt,
+  codexWorkHubMcpOverrides,
+  collectTrelloWorkHubSource,
+  ensureSelectedMcpIsUsable,
 } from "./ProviderWorkHubSync.ts";
-
 const decodeInput = Schema.decodeUnknownSync(AxisWorkHubCollectInput);
 const decodeResult = Schema.decodeUnknownSync(AxisWorkHubCollectionResult);
 const now = Date.parse("2026-09-05T12:00:00.000Z");
@@ -237,6 +247,69 @@ describe("buildAxisWorkHubCacheSnapshot", () => {
   });
 });
 
+describe("collectTrelloWorkHubSource", () => {
+  it.effect("runs the native adapter in the provider collection path", () =>
+    Effect.gen(function* () {
+      const request = decodeInput({
+        sourceId: "trello_source",
+        contextId: "work",
+        provider: { environmentId: "env", instanceId: "codex-trello" },
+        capabilityId: "trello-read",
+        mcpName: "Trello",
+        collectionPolicy: { prompt: "Open cards" },
+        cacheTtlSeconds: 28_800,
+        previousCursor: null,
+      });
+      const snapshot = yield* collectTrelloWorkHubSource({
+        request,
+        options: {
+          driver: ProviderDriverKind.make("codex"),
+          instanceId: ProviderInstanceId.make("codex-trello"),
+          availableMcps: [
+            {
+              name: "Trello",
+              status: "connected",
+              enabled: true,
+            },
+          ],
+        },
+        readCards: (input) =>
+          Effect.succeed({
+            cards: [
+              {
+                id: "card-1",
+                name: "Ship it",
+                list: { name: "Doing" },
+                labels: [{ name: "release" }],
+              },
+              { id: "card-2", name: "Needs triage", status: "Waiting", labels: [] },
+            ],
+            cursor: input.cursor === null ? "next-page" : null,
+          }),
+        nowEpochMs: Date.parse("2026-09-10T12:00:00.000Z"),
+      });
+      expect(snapshot.items.map((item) => [item.nativeId, item.status])).toEqual([
+        ["card-1", "in-progress"],
+        ["card-2", "Waiting"],
+      ]);
+      expect(snapshot.items[0]?.statusMapping).toEqual({
+        kind: "mapped",
+        native: "Doing",
+        value: "in-progress",
+      });
+      expect(snapshot.items[1]?.statusMapping).toEqual({
+        kind: "unmapped",
+        native: "Waiting",
+      });
+      expect(snapshot.items.map((item) => item.id)).toEqual([
+        "trello_source:assigned-work-item:card-1",
+        "trello_source:assigned-work-item:card-2",
+      ]);
+      expect(snapshot.cursor).toBe("next-page");
+    }),
+  );
+});
+
 describe("buildCollectionPrompt", () => {
   const request = decodeInput({
     sourceId: "personal_connector",
@@ -273,15 +346,113 @@ describe("buildCollectionPrompt", () => {
 });
 
 describe("buildClaudeWorkHubToolArgs", () => {
-  it("allows the selected MCP under both scopes without a discovery round-trip", () => {
-    expect(buildClaudeWorkHubToolArgs("Microsoft 365")).toEqual([
+  it("allows only declared read-only operations in the selected local scope", () => {
+    expect(buildClaudeWorkHubToolArgs({ name: "Microsoft 365", scope: "local" })).toEqual([
       "--allowedTools",
-      "Read",
       "ToolSearch",
-      "mcp__Microsoft_365",
-      "mcp__Microsoft_365__*",
-      "mcp__claude_ai_Microsoft_365",
-      "mcp__claude_ai_Microsoft_365__*",
+      "mcp__Microsoft_365__get_cards",
+      "mcp__Microsoft_365__get_card",
+      "mcp__Microsoft_365__get_lists",
+      "mcp__Microsoft_365__get_list",
+      "mcp__Microsoft_365__search_cards",
+      "mcp__Microsoft_365__get_events",
+      "mcp__Microsoft_365__list_events",
+      "mcp__Microsoft_365__search_events",
+      "mcp__Microsoft_365__get_messages",
+      "mcp__Microsoft_365__list_messages",
+      "mcp__Microsoft_365__search_messages",
+      "mcp__Microsoft_365__get_issues",
+      "mcp__Microsoft_365__list_issues",
+      "mcp__Microsoft_365__search_issues",
+      "mcp__Microsoft_365__get_tasks",
+      "mcp__Microsoft_365__list_tasks",
+      "mcp__Microsoft_365__search_tasks",
     ]);
+    expect(buildClaudeWorkHubToolArgs({ name: "Microsoft 365", scope: "local" })).not.toContain(
+      "Read",
+    );
+  });
+
+  it("selects only the exact claude.ai scope", () => {
+    const args = buildClaudeWorkHubToolArgs({ name: "Microsoft 365", scope: "claude.ai" });
+    expect(args).toContain("mcp__claude_ai_Microsoft_365__get_cards");
+    expect(args).not.toContain("mcp__Microsoft_365__get_cards");
+  });
+
+  it("rejects absent or unhealthy MCP inventory entries", () => {
+    const base = { name: "Trello", status: "connected", enabled: true } as const;
+    expect(
+      ensureSelectedMcpIsUsable(
+        {
+          driver: ProviderDriverKind.make("codex"),
+          instanceId: ProviderInstanceId.make("codex"),
+          availableMcps: [],
+        },
+        "Trello",
+      ),
+    ).toContain("not found");
+    expect(
+      ensureSelectedMcpIsUsable(
+        {
+          driver: ProviderDriverKind.make("codex"),
+          instanceId: ProviderInstanceId.make("codex"),
+          availableMcps: [{ ...base, status: "failed" }],
+        },
+        "Trello",
+      ),
+    ).toContain("not authorized");
+    expect(
+      ensureSelectedMcpIsUsable(
+        {
+          driver: ProviderDriverKind.make("codex"),
+          instanceId: ProviderInstanceId.make("codex"),
+          availableMcps: [base],
+        },
+        "Trello",
+      ),
+    ).toBeUndefined();
+    expect(
+      ensureSelectedMcpIsUsable(
+        {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          instanceId: ProviderInstanceId.make("claude"),
+          availableMcps: [
+            { ...base, scope: "local" },
+            { ...base, scope: "claude.ai" },
+          ],
+        },
+        "Trello",
+      ),
+    ).toContain("ambiguous");
+    expect(
+      ensureSelectedMcpIsUsable(
+        {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          instanceId: ProviderInstanceId.make("claude"),
+          availableMcps: [
+            { ...base, name: "Trello Board", scope: "local" },
+            { ...base, name: "Trello_Board", scope: "local" },
+          ],
+        },
+        "Trello Board",
+      ),
+    ).toContain("normalization");
+  });
+
+  it("freezes the read-only operation declaration at runtime", () => {
+    expect(Object.isFrozen(AXIS_WORK_HUB_READ_ONLY_TOOL_NAMES)).toBe(true);
+  });
+
+  it("configures Codex with an exact operation allowlist", () => {
+    const args = codexWorkHubMcpOverrides(
+      [
+        { name: "Trello", status: "configured", enabled: true },
+        { name: "Other", status: "configured", enabled: true },
+      ],
+      "Trello",
+    );
+    expect(args.join(" ")).toContain('mcp_servers."Trello".enabled_tools=["get_cards"');
+    expect(args.join(" ")).not.toContain("enabled_tools=\"*");
+    expect(args).toContain('mcp_servers."Other".enabled=false');
   });
 });

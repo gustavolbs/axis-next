@@ -216,7 +216,7 @@ export const evaluateTokenEfficiencyHermesProposal = (
       id: policy.proposalId,
       contextId: observation.contextId,
       kind: "workflow-recommendation",
-      targetKey: `token-efficiency:${policy.providerInstanceId}`,
+      targetKey: `provider:${policy.providerInstanceId}:step:execute`,
       title: `Evaluate ${policy.engine} compression for ${policy.providerInstanceId}`,
       rationale: [
         `Reviewed A/B evidence for model ${aggregateModel} in context ${observation.contextId}.`,
@@ -225,7 +225,7 @@ export const evaluateTokenEfficiencyHermesProposal = (
       ].join(" "),
       evidenceIds: [policy.evidenceId],
       change: {
-        kind: "token-efficiency-policy",
+        op: "set-token-efficiency-policy",
         providerInstanceId: policy.providerInstanceId,
         model: aggregateModel,
         engine: policy.engine,

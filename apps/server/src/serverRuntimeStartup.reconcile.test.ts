@@ -4,7 +4,6 @@ import {
   type OrchestrationSessionStatus,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderSendTurnInput,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -187,7 +186,7 @@ it.effect.each(["marked update", "opt-in restart"] as const)(
       const fallbackProviderInstanceId = ProviderInstanceId.make("claudeAgent");
       const continuationSent = yield* Deferred.make<void>();
       const continuationCleared = yield* Deferred.make<void>();
-      const sends: ProviderSendTurnInput[] = [];
+      const sends: ProviderService.ProviderSendTurnRequest[] = [];
       const dispatched: OrchestrationCommand[] = [];
       const upserts: ProviderSessionDirectory.ProviderRuntimeBinding[] = [];
       const bindings = new Map<ThreadId, ProviderSessionDirectory.ProviderRuntimeBinding>(
@@ -282,11 +281,25 @@ it.effect.each(["marked update", "opt-in restart"] as const)(
           String(left.threadId).localeCompare(String(right.threadId)),
         ),
         [
-          { threadId: codex.id, continuation: true, interactionMode: "default" },
+          {
+            threadId: codex.id,
+            continuation: true,
+            interactionMode: "default",
+            continuationFence: {
+              providerInstanceId,
+              driverKind: ProviderDriverKind.make("codex"),
+              idempotencyKey: `server-update:${codex.id}:turn-continue-codex`,
+            },
+          },
           {
             threadId: fallback.id,
             input: "Continue where you left off.",
             interactionMode: "default",
+            continuationFence: {
+              providerInstanceId: fallbackProviderInstanceId,
+              driverKind: ProviderDriverKind.make("claudeAgent"),
+              idempotencyKey: `server-update:${fallback.id}:turn-continue-fallback`,
+            },
           },
         ],
       );
@@ -325,6 +338,16 @@ it.effect.each(["marked update", "opt-in restart"] as const)(
             continueAfterServerUpdate: continuationTurnId,
             continueAfterServerUpdatePrepared: true,
             activeTurnId: null,
+            axisContinuationEffect: {
+              key: `server-update:${thread.id}:${continuationTurnId}`,
+              status: "prepared",
+              providerInstanceId:
+                thread.id === codex.id ? providerInstanceId : fallbackProviderInstanceId,
+              driverKind:
+                thread.id === codex.id
+                  ? ProviderDriverKind.make("codex")
+                  : ProviderDriverKind.make("claudeAgent"),
+            },
           },
         );
       }
@@ -358,7 +381,7 @@ it.effect("does not continue archived or deleted marked sessions", () => {
     null,
     updatedAt,
   );
-  const sends: ProviderSendTurnInput[] = [];
+  const sends: ProviderService.ProviderSendTurnRequest[] = [];
   const dispatched: OrchestrationCommand[] = [];
 
   return runReconciliation({
@@ -794,7 +817,7 @@ for (const preparedStatus of [
       const thread = makeThread("thread-interrupted-startup", "running", turnId);
       const activation = yield* Deferred.make<void>();
       const cleared = yield* Deferred.make<void>();
-      const sends: ProviderSendTurnInput[] = [];
+      const sends: ProviderService.ProviderSendTurnRequest[] = [];
       let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
         threadId: thread.id,
         provider: ProviderDriverKind.make("codex"),
@@ -813,7 +836,7 @@ for (const preparedStatus of [
               sessionModelSwitch: "in-session" as const,
               promptlessTurnContinuation: true,
             }),
-          sendTurn: (input: ProviderSendTurnInput) =>
+          sendTurn: (input: ProviderService.ProviderSendTurnRequest) =>
             Effect.sync(() => {
               sends.push(input);
               return { threadId: input.threadId, turnId: TurnId.make("turn-recovered") };
@@ -860,6 +883,12 @@ for (const preparedStatus of [
         activeTurnId: null,
         continueAfterServerUpdate: turnId,
         continueAfterServerUpdatePrepared: true,
+        axisContinuationEffect: {
+          key: `server-update:${thread.id}:${turnId}`,
+          status: "prepared",
+          providerInstanceId,
+          driverKind: "codex",
+        },
       });
 
       if (preparedStatus === "completed after update marking") {
@@ -883,12 +912,27 @@ for (const preparedStatus of [
       yield* runReconciliation(input);
       yield* Deferred.await(cleared);
       assert.deepStrictEqual(sends, [
-        { threadId: thread.id, continuation: true, interactionMode: "default" },
+        {
+          threadId: thread.id,
+          continuation: true,
+          interactionMode: "default",
+          continuationFence: {
+            providerInstanceId,
+            driverKind: ProviderDriverKind.make("codex"),
+            idempotencyKey: `server-update:${thread.id}:${turnId}`,
+          },
+        },
       ]);
       assert.deepStrictEqual(binding.runtimePayload, {
         activeTurnId: null,
         continueAfterServerUpdate: null,
         continueAfterServerUpdatePrepared: null,
+        axisContinuationEffect: {
+          key: `server-update:${thread.id}:${turnId}`,
+          status: "prepared",
+          providerInstanceId,
+          driverKind: "codex",
+        },
       });
     }),
   );
@@ -899,7 +943,7 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
     const turnId = TurnId.make("turn-failed-recovery");
     const thread = makeThread("thread-failed-recovery", "running", turnId);
     const settled = yield* Deferred.make<void>();
-    const sends: ProviderSendTurnInput[] = [];
+    const sends: ProviderService.ProviderSendTurnRequest[] = [];
     const dispatched: OrchestrationCommand[] = [];
     const preparedPayloads: unknown[] = [];
     let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
@@ -952,6 +996,12 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
         activeTurnId: null,
         continueAfterServerUpdate: turnId,
         continueAfterServerUpdatePrepared: true,
+        axisContinuationEffect: {
+          key: `server-update:${thread.id}:${turnId}`,
+          status: "prepared",
+          providerInstanceId,
+          driverKind: "codex",
+        },
       },
     ]);
     assert.deepStrictEqual(
@@ -972,6 +1022,12 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
       activeTurnId: null,
       continueAfterServerUpdate: null,
       continueAfterServerUpdatePrepared: null,
+      axisContinuationEffect: {
+        key: `server-update:${thread.id}:${turnId}`,
+        status: "unknown",
+        providerInstanceId,
+        driverKind: "codex",
+      },
     });
   }),
 );

@@ -1,16 +1,20 @@
 import {
   AxisLearningEvidenceId,
   AxisLearningProposalId,
+  AxisProjectRuleId,
+  AxisProjectProfileSourceId,
   type AxisContextId,
   type AxisLearningActiveVersion,
   type AxisLearningEvidence,
   type AxisLearningProposalDraft,
   type AxisLearningProposalKind,
   type AxisLearningVersion,
+  type AxisLearningScope,
 } from "@t3tools/contracts";
 
 export interface ManualLearningEvidenceInput {
   readonly contextId: AxisContextId;
+  readonly scope?: AxisLearningScope;
   readonly id: string;
   readonly sourceId: string;
   readonly summary: string;
@@ -25,6 +29,7 @@ export function buildManualLearningEvidence(
     id: AxisLearningEvidenceId.make(input.id),
     provenance: {
       contextId: input.contextId,
+      ...(input.scope === undefined ? {} : { scope: input.scope }),
       sourceKind: "user-correction",
       sourceId: input.sourceId.trim(),
       observedAt: input.observedAt,
@@ -38,6 +43,7 @@ export function buildManualLearningEvidence(
 
 export interface ManualLearningProposalInput {
   readonly contextId: AxisContextId;
+  readonly scope?: AxisLearningScope;
   readonly id: string;
   readonly kind: AxisLearningProposalKind;
   readonly targetKey: string;
@@ -53,12 +59,29 @@ export function buildManualLearningProposal(
   return {
     id: AxisLearningProposalId.make(input.id),
     contextId: input.contextId,
+    ...(input.scope === undefined ? {} : { scope: input.scope }),
     kind: input.kind,
     targetKey: input.targetKey.trim(),
     title: input.title.trim(),
     rationale: input.rationale.trim(),
     evidenceIds: [input.evidenceId],
-    change: { format: "instructions", content: input.change.trim() },
+    change: {
+      op: "set-rule",
+      rule: {
+        id: AxisProjectRuleId.make(`manual-${input.id}`),
+        category: "instruction",
+        text: input.change.trim(),
+        origin: "manual",
+        sourceRef: AxisProjectProfileSourceId.make("axis-learning-settings"),
+        sourceRevision: 0,
+        paths: [],
+        strength: "explicit",
+        effect: "preference",
+        restriction: null,
+        defaultValue: null,
+        condition: null,
+      },
+    },
   };
 }
 
