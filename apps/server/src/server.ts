@@ -24,6 +24,9 @@ import * as AxisProjectScope from "./axis/projects/AxisProjectScope.ts";
 import * as AxisEffectiveContext from "./axis/projects/AxisEffectiveContext.ts";
 import * as AxisTaskStore from "./axis/tasks/AxisTaskStore.ts";
 import * as AxisTaskExecution from "./axis/tasks/AxisTaskExecution.ts";
+import * as AxisTaskWorkflow from "./axis/tasks/AxisTaskWorkflow.ts";
+import * as AxisTaskWorkflowStore from "./axis/tasks/AxisTaskWorkflowStore.ts";
+import * as AxisTaskWorkflowService from "./axis/tasks/AxisTaskWorkflowService.ts";
 import * as AxisScratchChatRunner from "./axis/scratch/AxisScratchChatRunner.ts";
 import * as AxisScratchChatMessageLog from "./axis/scratch/AxisScratchChatMessageLog.ts";
 import * as AxisScratchChatStore from "./axis/scratch/AxisScratchChatStore.ts";
@@ -490,6 +493,23 @@ const AxisOnboardingServiceLayerLive = AxisOnboardingService.layer.pipe(
   Layer.provide(AxisTaskExecutionLayerLive),
   Layer.provide(SqlitePersistenceLayerLive),
 );
+const AxisTaskWorkflowLayerLive = AxisTaskWorkflow.layer.pipe(
+  Layer.provide(AxisTaskExecutionLayerLive),
+  Layer.provide(OrchestrationLayerLive),
+  Layer.provide(SqlitePersistenceLayerLive),
+);
+const AxisTaskWorkflowStoreLayerLive = AxisTaskWorkflowStore.layer.pipe(
+  Layer.provide(AxisTaskStoreLayerLive),
+  Layer.provide(SqlitePersistenceLayerLive),
+);
+const AxisTaskWorkflowServiceLayerLive = AxisTaskWorkflowService.layer.pipe(
+  Layer.provide(AxisTaskWorkflowLayerLive),
+  Layer.provide(AxisTaskWorkflowStoreLayerLive),
+  Layer.provide(AxisTaskStoreLayerLive),
+  Layer.provide(AxisProjectScopeLayerLive),
+  Layer.provide(OrchestrationLayerLive),
+  Layer.provide(SqlitePersistenceLayerLive),
+);
 const AxisEffectiveContextLayerLive = AxisEffectiveContext.layer.pipe(
   Layer.provide(AxisProjectProfileStoreLayerLive),
   Layer.provide(AxisLearningStoreLayerLive),
@@ -612,6 +632,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
       AxisOnboardingStoreLayerLive,
       AxisOnboardingServiceLayerLive,
       AxisTaskStoreLayerLive,
+      AxisTaskWorkflowServiceLayerLive,
       AxisScratchChatStoreLayerLive,
       AxisScratchChatMessageLogLayerLive,
       AxisScratchChatRunnerLayerLive,

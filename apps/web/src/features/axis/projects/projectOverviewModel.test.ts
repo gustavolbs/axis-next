@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import type { ProjectGroup } from "../../../logicalProject";
 import type { Project as EnvironmentProject } from "../../../types";
-import { buildProjectOverviewModel } from "./projectOverviewModel";
+import { buildProjectOverviewModel, isAxisWorkflowAvailable } from "./projectOverviewModel";
 
 const project = (environmentId: string, id: string, title: string): EnvironmentProject => ({
   environmentId: EnvironmentIdSchema.make(environmentId),
@@ -41,6 +41,13 @@ const binding = (
 });
 
 describe("project overview model", () => {
+  it("only enables Workflow for environments that explicitly advertise it", () => {
+    expect(isAxisWorkflowAvailable(undefined)).toBe(false);
+    expect(isAxisWorkflowAvailable({})).toBe(false);
+    expect(isAxisWorkflowAvailable({ axisWorkflow: false })).toBe(false);
+    expect(isAxisWorkflowAvailable({ axisWorkflow: true })).toBe(true);
+  });
+
   it("keeps a mixed group executable on the explicitly selected remote member", () => {
     const local = project("local", "same-name", "Site");
     const remote = project("remote", "same-name", "Site");

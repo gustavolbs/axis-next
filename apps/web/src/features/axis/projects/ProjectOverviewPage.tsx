@@ -37,6 +37,7 @@ import { resolveDefaultProviderModelSelection } from "~/providerInstances";
 import { useSettingsProjectGroups } from "~/components/settings/ProjectSettingsPanel";
 import { ProjectOnboardingPanel } from "./ProjectOnboardingPanel";
 import { ProjectPatternsPanel } from "./ProjectPatternsPanel";
+import { ProjectWorkflowView } from "./ProjectWorkflowView";
 import { ProjectIntegrationsPanel } from "./ProjectIntegrationsPanel";
 import { AxisLearningSettings } from "../settings/AxisLearningSettings";
 import type {
@@ -45,7 +46,11 @@ import type {
   ProjectOnboardingQuery,
   ProjectOnboardingRun,
 } from "./projectOnboardingModel";
-import { buildProjectOverviewModel, type AxisProjectOverviewMember } from "./projectOverviewModel";
+import {
+  buildProjectOverviewModel,
+  isAxisWorkflowAvailable,
+  type AxisProjectOverviewMember,
+} from "./projectOverviewModel";
 import type { ProjectOverviewView } from "./projectOverviewRoute";
 
 const connectionState = (phase: string): EnvironmentConnectionState => {
@@ -173,6 +178,9 @@ export function ProjectOverviewPage({
   );
   const selectedEnvironment = environments.find(
     (environment) => environment.environmentId === selectedProject?.environmentId,
+  );
+  const workflowAvailable = isAxisWorkflowAvailable(
+    selectedEnvironment?.serverConfig?.environment.capabilities,
   );
   const catalogQuery = useEnvironmentQuery(
     selectedEnvironment?.serverConfig?.environment.capabilities.axis === true
@@ -530,31 +538,29 @@ export function ProjectOverviewPage({
             >
               Learning
             </Button>
-            {["Workflow"].map((label) => (
-              <Button key={label} size="sm" variant="ghost" disabled>
-                {label} · Unavailable
+            {(["workflow", "integrations"] as const).map((target) => (
+              <Button
+                key={target}
+                size="sm"
+                variant={view === target ? "secondary" : "ghost"}
+                aria-current={view === target ? "page" : undefined}
+                onClick={() =>
+                  void navigate({
+                    search: {
+                      view: target,
+                      ...(selectedProject
+                        ? {
+                            environmentId: selectedProject.environmentId,
+                            projectId: selectedProject.id,
+                          }
+                        : {}),
+                    },
+                  })
+                }
+              >
+                {viewTitle(target)}
               </Button>
             ))}
-            <Button
-              size="sm"
-              variant={view === "integrations" ? "secondary" : "ghost"}
-              aria-current={view === "integrations" ? "page" : undefined}
-              onClick={() =>
-                void navigate({
-                  search: {
-                    view: "integrations",
-                    ...(selectedProject
-                      ? {
-                          environmentId: selectedProject.environmentId,
-                          projectId: selectedProject.id,
-                        }
-                      : {}),
-                  },
-                })
-              }
-            >
-              Integrations
-            </Button>
           </nav>
 
           <SettingsSection
@@ -668,6 +674,25 @@ export function ProjectOverviewPage({
               connectionState={learningConnectionState}
             />
           ) : null}
+          {view === "workflow" && selectedProject !== null && !workflowAvailable ? (
+            <SettingsSection title="Workflow">
+              <SettingsRow
+                title="Workflow requires a backend update"
+                description="Update the selected environment to use Work Hub workflows."
+              />
+            </SettingsSection>
+          ) : null}
+          {view === "workflow" &&
+          workflowAvailable &&
+          selectedScope !== null &&
+          selectedProject !== null ? (
+            <ProjectWorkflowView
+              key={`${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
+              scope={selectedScope}
+              connectionState={onboardingConnectionState}
+              defaultModelSelection={onboardingModelSelection}
+            />
+          ) : null}
           {view === "integrations" && selectedScope !== null && selectedProject !== null ? (
             <ProjectIntegrationsPanel
               key={`${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
@@ -676,20 +701,6 @@ export function ProjectOverviewPage({
               projectLabel={overviewGroup.label}
               connectionState={onboardingConnectionState}
             />
-          ) : null}
-          {view !== "overview" &&
-          view !== "patterns" &&
-          view !== "learning" &&
-          view !== "integrations" ? (
-            <SettingsSection
-              title={viewTitle(view)}
-              description="This project feature is not available yet."
-            >
-              <SettingsRow
-                title="Unavailable"
-                description="Implementation is in progress. No actions are available in this view."
-              />
-            </SettingsSection>
           ) : null}
         </WorkspacePageContainer>
       </div>

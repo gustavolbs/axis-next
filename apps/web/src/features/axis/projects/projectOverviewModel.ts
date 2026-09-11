@@ -3,6 +3,7 @@ import type {
   AxisContextProjectBinding,
   AxisProjectLocator,
   EnvironmentConnectionState,
+  ExecutionEnvironmentCapabilities,
   EnvironmentId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
@@ -37,6 +38,10 @@ export interface AxisProjectOverviewModel {
     readonly project: AxisProjectLocator;
   } | null;
 }
+
+export const isAxisWorkflowAvailable = (
+  capabilities: Pick<ExecutionEnvironmentCapabilities, "axisWorkflow"> | null | undefined,
+): boolean => capabilities?.axisWorkflow === true;
 
 const projectRefMatches = (project: EnvironmentProject, ref: ScopedProjectRef | null): boolean =>
   ref !== null && project.environmentId === ref.environmentId && project.id === ref.projectId;
