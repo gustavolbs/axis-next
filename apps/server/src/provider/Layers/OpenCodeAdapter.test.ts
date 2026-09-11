@@ -40,6 +40,7 @@ import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,
+  openCodeGatewayAgents,
   type OpenCodeRuntimeShape,
 } from "../opencodeRuntime.ts";
 import {
@@ -6217,6 +6218,49 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       if (started._tag === "Some" && started.value.type === "turn.started") {
         NodeAssert.equal(started.value.payload.effort, undefined);
       }
+    }).pipe(Effect.provide(adapterLayer));
+  });
+
+  it.effect("adds the explicitly requested live RouteMux model as a subagent part", () => {
+    const instanceId = ProviderInstanceId.make("routemux_opencode");
+    const adapterLayer = Layer.effect(
+      OpenCodeAdapter,
+      makeOpenCodeAdapter(openCodeAdapterTestSettings, {
+        instanceId,
+        gatewaySubagents: openCodeGatewayAgents([
+          { slug: "deepseek/deepseek-v4-pro-relay", name: "DeepSeek V4 Pro Relay" },
+        ]),
+      }),
+    ).pipe(
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-routemux-subagent-model");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Chame um agent em DeepSeek V4 Pro Relay e diga oi.",
+        modelSelection: createModelSelection(instanceId, "routemux/minimax/minimax-m3"),
+      });
+
+      const prompt = runtimeMock.state.promptCalls.at(-1) as {
+        readonly parts: ReadonlyArray<unknown>;
+      };
+      NodeAssert.deepEqual(prompt.parts, [
+        { type: "text", text: "Chame um agent em DeepSeek V4 Pro Relay e diga oi." },
+        { type: "agent", name: "routemux-deepseek-deepseek-v4-pro-relay" },
+      ]);
     }).pipe(Effect.provide(adapterLayer));
   });
 

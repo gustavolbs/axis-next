@@ -1,6 +1,46 @@
 # Changelog
 
-## [0.10.0] - 2026-09-10
+## [0.12.3] - 2026-09-11
+
+### Changed
+
+- Keep RouteMux subagent selection scoped to locally managed OpenCode servers and document the external-server configuration requirement.
+
+## [0.12.2] - 2026-09-10
+
+### Added
+
+- Allow explicit RouteMux model mentions in OpenCode prompts to run as dynamically configured subagents.
+
+## [0.12.1] - 2026-09-10
+
+### Changed
+
+- RouteMux OpenCode now builds its model catalog only from the live RouteMux listing, filters unrelated OpenCode providers, and does not assign a hardcoded model by agent role.
+
+## [0.12.0] - 2026-09-10
+
+### Added
+
+- Add a RouteMux OpenCode gateway preset that uses OpenAI-compatible Chat Completions, live tool-capable model discovery, and no Claude models.
+
+## [0.11.2] - 2026-09-10
+
+### Added
+
+- Add a RouteMux Codex gateway preset that routes OpenAI Responses-compatible models through the Codex CLI with isolated credentials and live tool-capable model discovery.
+
+## [0.11.1] - 2026-09-10
+
+### Added
+
+- Persist project-scoped learning evidence from a canonical completed or failed WorkHub task attempt via the new `axis.taskFeedback.record` RPC, exposed in `ProjectOverview` and `ProjectWorkflowPanel`.
+
+### Changed
+
+- Route authorization rejects task-feedback requests from environments that are not bound to the targeted project scope, with a dedicated `AxisTaskFeedbackError`.
+
+## [0.11.0] - 2026-09-10
 
 ### Added
 

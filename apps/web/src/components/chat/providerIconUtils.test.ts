@@ -12,6 +12,18 @@ describe("resolveProviderIcon", () => {
     expect(
       resolveProviderIcon({ driverKind: claudeAgent, gateway: ProviderGatewayId.make("routemux") }),
     ).toBe(RouteMuxIcon);
+    expect(
+      resolveProviderIcon({
+        driverKind: ProviderDriverKind.make("codex"),
+        gateway: ProviderGatewayId.make("routemux-codex"),
+      }),
+    ).toBe(RouteMuxIcon);
+    expect(
+      resolveProviderIcon({
+        driverKind: ProviderDriverKind.make("opencode"),
+        gateway: ProviderGatewayId.make("routemux-opencode"),
+      }),
+    ).toBe(RouteMuxIcon);
   });
 
   it("falls back to the driver for a gateway this build does not ship", () => {

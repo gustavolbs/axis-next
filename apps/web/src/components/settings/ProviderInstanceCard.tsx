@@ -452,6 +452,7 @@ export function ProviderInstanceCard({
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const gatewayOption = getProviderGatewayOption(instance.gateway);
+  const allowCustomModels = gatewayOption?.gateway.id !== "routemux-opencode";
   const FallbackIconComponent = gatewayOption?.icon ?? driverOption?.icon;
   const displayName =
     instance.displayName?.trim() ||
@@ -487,7 +488,9 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
   const customModels =
-    instance.driver === "antigravity" ? [] : readConfigCustomModels(instance.config);
+    instance.driver === "antigravity" || !allowCustomModels
+      ? []
+      : readConfigCustomModels(instance.config);
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -911,10 +914,11 @@ export function ProviderInstanceCard({
               driverKind={driverKind}
               models={modelsForDisplay}
               customModels={customModels}
+              allowCustomModels={allowCustomModels}
               hiddenModels={hiddenModels}
               favoriteModels={favoriteModels}
               modelOrder={modelOrder}
-              onChange={updateCustomModels}
+              onChange={allowCustomModels ? updateCustomModels : () => undefined}
               onHiddenModelsChange={onHiddenModelsChange}
               onFavoriteModelsChange={onFavoriteModelsChange}
               onModelOrderChange={onModelOrderChange}

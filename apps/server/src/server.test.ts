@@ -12,6 +12,7 @@ import {
   AxisLearningProposalId,
   AxisLearningSnapshot,
   AxisLearningEvidenceId,
+  AxisLearningEvidence,
   AxisLearningVersionId,
   AxisWorkHubSourceValidationError,
   AxisWorkHubSyncError,
@@ -28,6 +29,9 @@ import {
   AxisProjectProfile,
   AxisWorkflowAdmission,
   AxisTaskWorkflowServiceError,
+  AxisTaskFeedbackError,
+  AxisTaskId,
+  AxisTaskStepId,
   EventId,
   GitCommandError,
   KeybindingRule,
@@ -122,6 +126,7 @@ import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActiv
 import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
 import { AxisLearningEngine } from "./axis/learning/AxisLearningEngine.ts";
 import * as AxisLearningService from "./axis/learning/AxisLearningService.ts";
+import { AxisTaskFeedbackService } from "./axis/learning/AxisTaskFeedbackService.ts";
 import { AxisProjectProfileStore } from "./axis/projects/AxisProjectProfileStore.ts";
 import { AxisProjectContextPreview } from "./axis/projects/AxisProjectContextPreview.ts";
 import { AxisEffectiveContextValidationError } from "./axis/projects/AxisEffectiveContext.ts";
@@ -586,6 +591,7 @@ const buildAppUnderTest = (options?: {
     axisProjectScope?: Partial<AxisProjectScope["Service"]>;
     axisProjectContextPreview?: Partial<AxisProjectContextPreview["Service"]>;
     axisTaskWorkflow?: Partial<AxisTaskWorkflowService["Service"]>;
+    axisTaskFeedback?: Partial<AxisTaskFeedbackService["Service"]>;
     axisScratchChats?: Partial<AxisScratchChatRunner["Service"]>;
     axisWorkHubSourceSync?: Partial<AxisWorkHubSourceSync["Service"]>;
   };
@@ -914,6 +920,9 @@ const buildAppUnderTest = (options?: {
             listLifecycle: () => Effect.succeed([]),
           }),
           Layer.mock(AxisTaskWorkflowService)({ ...options?.layers?.axisTaskWorkflow }),
+          ...(options?.layers?.axisTaskFeedback
+            ? [Layer.mock(AxisTaskFeedbackService)({ ...options.layers.axisTaskFeedback })]
+            : []),
           Layer.mock(AxisScratchChatRunner)({
             list: () => Effect.succeed([] as ReadonlyArray<never>),
             create: () => Effect.die("Scratch chat create is not stubbed in this test"),
@@ -5717,6 +5726,121 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           ),
         );
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes task feedback with a session-owned caller and sanitized failures", () =>
+    Effect.gen(function* () {
+      const environmentId = testEnvironmentDescriptor.environmentId;
+      const scope = {
+        contextId: AxisContextId.make("company"),
+        project: { environmentId, projectId: defaultProjectId },
+      };
+      const input = {
+        scope,
+        taskId: AxisTaskId.make("task-feedback"),
+        threadId: ThreadId.make("thread-feedback"),
+        stepId: AxisTaskStepId.make("step-feedback"),
+        commandId: CommandId.make("command-feedback"),
+      };
+      const catalog = yield* decodeAxisContextCatalogSnapshot({
+        revision: 1,
+        updatedAt: "2026-09-10T00:00:00.000Z",
+        catalog: {
+          contexts: [
+            {
+              id: "company",
+              kind: "company",
+              name: "Company",
+              createdAt: "2026-09-10T00:00:00.000Z",
+              updatedAt: "2026-09-10T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      const evidence: AxisLearningEvidence = {
+        id: AxisLearningEvidenceId.make("evidence-feedback"),
+        provenance: {
+          contextId: scope.contextId,
+          scope,
+          sourceKind: "thread-turn",
+          sourceId: "task:task-feedback",
+          observedAt: "2026-09-10T00:00:00.000Z",
+          fingerprint: "canonical-task-feedback",
+        },
+        summary: "Canonical task feedback.",
+        createdAt: "2026-09-10T00:00:00.000Z",
+        expiresAt: "2026-10-10T00:00:00.000Z",
+      };
+      const record = vi.fn<AxisTaskFeedbackService["Service"]["record"]>((_caller, request) =>
+        request.commandId === CommandId.make("command-failure")
+          ? Effect.fail(
+              new AxisTaskFeedbackError({
+                reason: "observation_failed",
+                message: "Cannot read canonical task execution evidence.",
+              }),
+            )
+          : Effect.succeed(evidence),
+      );
+      yield* buildAppUnderTest({
+        layers: {
+          axisContextCatalog: { get: Effect.succeed(catalog) },
+          axisTaskFeedback: { record },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            assert.deepEqual(yield* client[WS_METHODS.axisTaskFeedbackRecord](input), evidence);
+            assert.deepEqual(record.mock.calls[0]?.[0], {
+              environmentId,
+              contextId: scope.contextId,
+            });
+            assert.deepEqual(record.mock.calls[0]?.[1], input);
+
+            const foreign = yield* client[WS_METHODS.axisTaskFeedbackRecord]({
+              ...input,
+              scope: {
+                ...scope,
+                project: { ...scope.project, environmentId: EnvironmentId.make("foreign") },
+              },
+            }).pipe(Effect.flip);
+            assert.equal(foreign._tag, "AxisTaskFeedbackError");
+            assert.equal(
+              foreign._tag === "AxisTaskFeedbackError" ? foreign.reason : undefined,
+              "scope_denied",
+            );
+            assert.equal(
+              foreign.message,
+              "The selected project does not belong to this environment.",
+            );
+
+            const unauthorized = yield* client[WS_METHODS.axisTaskFeedbackRecord]({
+              ...input,
+              scope: { ...scope, contextId: AxisContextId.make("missing") },
+            }).pipe(Effect.flip);
+            assert.equal(unauthorized._tag, "AxisTaskFeedbackError");
+            assert.equal(
+              unauthorized._tag === "AxisTaskFeedbackError" ? unauthorized.reason : undefined,
+              "scope_denied",
+            );
+            assert.equal(unauthorized.message, "The authenticated caller has no Axis context.");
+
+            const failure = yield* client[WS_METHODS.axisTaskFeedbackRecord]({
+              ...input,
+              commandId: CommandId.make("command-failure"),
+            }).pipe(Effect.flip);
+            assert.equal(failure._tag, "AxisTaskFeedbackError");
+            assert.equal(
+              failure._tag === "AxisTaskFeedbackError" ? failure.reason : undefined,
+              "observation_failed",
+            );
+            assert.equal(failure.message, "Cannot read canonical task execution evidence.");
+            assert.equal(record.mock.calls.length, 2);
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes project context previews with session-owned caller and provider driver", () =>

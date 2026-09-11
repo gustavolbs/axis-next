@@ -47,3 +47,22 @@ restart before T3 Code can see configuration changes.
 
 Existing threads keep their selected model and options even when it disappears
 from the catalog. If OpenCode rejects that model, select an available one and retry.
+
+## RouteMux
+
+Use **RouteMux (OpenCode)** when you want OpenCode to call the OpenAI-compatible
+RouteMux gateway. Enter a RouteMux API key for the instance and refresh its
+provider status. The model picker is populated from the live, tool-capable
+catalog returned for that key; Claude models are omitted.
+
+The model selected in the composer is the coordinator for that turn. To choose
+a different child model, mention its catalog name or exact slug together with
+the word **agent**, **subagent**, **worker**, or **reviewer** in your prompt, for
+example: “Call an agent using DeepSeek V4 Pro Relay and ask it to say hello.”
+For a locally managed OpenCode server, T3 Code creates that child selection from
+the live catalog for the instance; there are no fixed MiniMax, DeepSeek, GLM, GPT,
+or role assignments. If no child model is mentioned, OpenCode's normal agent
+behavior applies and the child inherits the coordinator model when it has no
+explicit configuration. An externally managed OpenCode server must load its own
+agent definitions, so this per-prompt model selection is available after using a
+local server or configuring the corresponding child agents on that server.

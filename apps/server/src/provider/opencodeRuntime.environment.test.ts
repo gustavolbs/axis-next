@@ -15,9 +15,14 @@ import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { describe, expect, it } from "vite-plus/test";
 
+import { getProviderGateway } from "@t3tools/contracts";
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,
+  openCodeGatewayAgents,
+  resolveOpenCodeGatewayAgentsInPrompt,
+  makeOpenCodeGatewayConfig,
+  openCodeGatewayModels,
   OpenCodeRuntimeLive,
   resolveOpenCodeConfigContent,
   resolveOpenCodeServerPassword,
@@ -41,6 +46,121 @@ describe("resolveOpenCodeConfigContent", () => {
       }),
     ).toBe('{"source":"process"}');
     expect(resolveOpenCodeConfigContent(undefined, {})).toBe("{}");
+  });
+});
+
+describe("OpenCode RouteMux config", () => {
+  const gateway = getProviderGateway("routemux-opencode");
+
+  it("filters Claude models and normalizes the gateway prefix", () => {
+    const models = openCodeGatewayModels(
+      [
+        { slug: "routemux/minimax/minimax-m3", name: "MiniMax M3" },
+        { slug: "anthropic/claude-opus-5", name: "Claude Opus 5" },
+        { slug: "deepseek/deepseek-v4-pro-cheap", name: "DeepSeek V4 Pro Cheap" },
+      ],
+      "routemux",
+    );
+
+    expect(models).toEqual([
+      { slug: "deepseek/deepseek-v4-pro-cheap", name: "DeepSeek V4 Pro Cheap" },
+      { slug: "minimax/minimax-m3", name: "MiniMax M3" },
+    ]);
+  });
+
+  it("generates a credential-free provider config from the supplied live catalog", () => {
+    expect(gateway).toBeDefined();
+    const models = [
+      { slug: "minimax/minimax-m3", name: "A user-selected coordinator" },
+      { slug: "deepseek/deepseek-v4-pro-relay", name: "A user-selected reviewer" },
+    ];
+    const config = JSON.parse(makeOpenCodeGatewayConfig({ gateway: gateway!, models })) as {
+      provider: Record<
+        string,
+        {
+          npm: string;
+          options: { baseURL: string; apiKey: string };
+          models: Record<string, { name: string }>;
+        }
+      >;
+      agent: Record<string, { mode: string; model?: string }>;
+    };
+    const provider = config.provider.routemux!;
+
+    expect(provider.npm).toBe("@ai-sdk/openai-compatible");
+    expect(provider.options.baseURL).toBe("https://api.routemux.com/v1");
+    expect(provider.options.apiKey).toBe("{env:ROUTEMUX_API_KEY}");
+    expect(provider.models["minimax/minimax-m3"]).toEqual({
+      name: "A user-selected coordinator",
+    });
+    expect(config.agent.reviewer).toEqual({
+      mode: "subagent",
+    });
+    expect(JSON.stringify(config)).toContain("deepseek-v4-pro-relay");
+    expect(JSON.stringify(config)).not.toContain("deepseek-v4-pro-cheap");
+    expect(config.agent.reviewer?.model).toBeUndefined();
+    expect(config.agent["routemux-deepseek-deepseek-v4-pro-relay"]).toMatchObject({
+      mode: "subagent",
+      model: "routemux/deepseek/deepseek-v4-pro-relay",
+    });
+    expect(JSON.stringify(config)).not.toContain("sk-");
+    expect(JSON.stringify(config).toLowerCase()).not.toContain("claude");
+  });
+
+  it("resolves an explicit model mention to its generated subagent", () => {
+    const agents = openCodeGatewayAgents(
+      [
+        { slug: "minimax/minimax-m3", name: "MiniMax M3" },
+        { slug: "deepseek/deepseek-v4-pro-relay", name: "DeepSeek V4 Pro Relay" },
+      ],
+      "routemux",
+    );
+
+    expect(
+      resolveOpenCodeGatewayAgentsInPrompt({
+        text: "Chame um agent em Deepseek V4 Pro Relay que simplesmente diga oi.",
+        agents,
+      }).map((agent) => agent.slug),
+    ).toEqual(["deepseek/deepseek-v4-pro-relay"]);
+  });
+
+  it("does not turn an ordinary coordinator mention into a child agent", () => {
+    const agents = openCodeGatewayAgents(
+      [{ slug: "minimax/minimax-m3", name: "MiniMax M3" }],
+      "routemux",
+    );
+
+    expect(
+      resolveOpenCodeGatewayAgentsInPrompt({
+        text: "Use MiniMax M3 como coordenador desta tarefa.",
+        agents,
+      }),
+    ).toEqual([]);
+  });
+
+  it("matches the model portion of a slug when the gateway has no display name", () => {
+    const agents = openCodeGatewayAgents(
+      [{ slug: "deepseek/deepseek-v4-pro-relay", name: "deepseek/deepseek-v4-pro-relay" }],
+      "routemux",
+    );
+
+    expect(
+      resolveOpenCodeGatewayAgentsInPrompt({
+        text: "Use DeepSeek V4 Pro Relay as a reviewer agent.",
+        agents,
+      }).map((agent) => agent.slug),
+    ).toEqual(["deepseek/deepseek-v4-pro-relay"]);
+  });
+
+  it("does not invent models or role assignments when RouteMux has no catalog", () => {
+    const config = JSON.parse(makeOpenCodeGatewayConfig({ gateway: gateway!, models: [] })) as {
+      provider: Record<string, { models: Record<string, unknown> }>;
+      agent: Record<string, { mode: string; model?: string }>;
+    };
+
+    expect(config.provider.routemux?.models).toEqual({});
+    expect(config.agent.reviewer).toEqual({ mode: "subagent" });
+    expect(JSON.stringify(config)).not.toMatch(/minimax|deepseek|glm|gpt|"model"\s*:/iu);
   });
 });
 

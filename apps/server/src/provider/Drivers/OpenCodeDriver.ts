@@ -12,11 +12,12 @@
  *
  * @module provider/Drivers/OpenCodeDriver
  */
-import { OpenCodeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { OpenCodeSettings, getProviderGateway, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -35,7 +36,13 @@ import {
 } from "../Layers/OpenCodeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import { OpenCodeRuntime } from "../opencodeRuntime.ts";
+import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import {
+  makeOpenCodeGatewayConfig,
+  openCodeGatewayAgents,
+  openCodeGatewayModels,
+  OpenCodeRuntime,
+} from "../opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -55,6 +62,7 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
+import { makeGatewayModelSource } from "../providerGatewayModels.ts";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
@@ -106,7 +114,59 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+      const inheritedProcessEnv = mergeProviderInstanceEnvironment(environment);
+      const gatewayDefinition = getProviderGateway(gateway);
+      // A RouteMux instance has one authoritative catalog: the models returned
+      // by its key-scoped listing. Do not let OpenCode's generic custom-model
+      // settings reintroduce slugs that RouteMux never advertised.
+      const snapshotConfig =
+        gatewayDefinition?.opencode === undefined
+          ? effectiveConfig
+          : { ...effectiveConfig, customModels: [] };
+      const gatewayProviderId = gatewayDefinition?.opencode?.providerId;
+      const restrictToGatewayCatalog = (draft: ServerProviderDraft): ServerProviderDraft =>
+        gatewayProviderId === undefined
+          ? draft
+          : {
+              ...draft,
+              models: draft.models.filter((model) =>
+                model.slug.startsWith(`${gatewayProviderId}/`),
+              ),
+            };
+      const gatewayModelSource = yield* makeGatewayModelSource({
+        gateway: gatewayDefinition,
+        environment: inheritedProcessEnv,
+        httpClient,
+      });
+      // OpenCode reads its provider and agent map before the local server
+      // starts. Resolve the live catalog once here, with a short bound, then
+      // inject only the generated config into this instance's child env.
+      const gatewayModelsResult =
+        gatewayDefinition?.opencode && gatewayModelSource !== undefined
+          ? yield* gatewayModelSource.read.pipe(Effect.timeoutOption("5 seconds"))
+          : undefined;
+      const liveGatewayModels = gatewayModelsResult
+        ? Option.getOrUndefined(gatewayModelsResult)?.models
+        : undefined;
+      const openCodeGatewayCatalog =
+        gatewayDefinition?.opencode === undefined
+          ? []
+          : openCodeGatewayModels(liveGatewayModels ?? [], gatewayDefinition.opencode.providerId);
+      const openCodeGatewaySubagents =
+        gatewayDefinition?.opencode === undefined || effectiveConfig.serverUrl.trim().length > 0
+          ? []
+          : openCodeGatewayAgents(liveGatewayModels ?? [], gatewayDefinition.opencode.providerId);
+      const processEnv =
+        gatewayDefinition?.opencode === undefined
+          ? inheritedProcessEnv
+          : {
+              ...inheritedProcessEnv,
+              OPENCODE_CONFIG_CONTENT: makeOpenCodeGatewayConfig({
+                gateway: gatewayDefinition,
+                models: openCodeGatewayCatalog,
+              }),
+            };
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -119,7 +179,6 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         gateway,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -135,6 +194,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         instanceId,
         resolveConciseOutputProfile: resolveConciseOutputProfileForInstance,
         environment: processEnv,
+        gatewaySubagents: openCodeGatewaySubagents,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const serverOwner = yield* OpenCodeServerOwner.make({
@@ -150,10 +210,11 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       );
 
       const checkProvider = checkOpenCodeProviderStatus(
-        effectiveConfig,
+        snapshotConfig,
         serverConfig.cwd,
         processEnv,
       ).pipe(
+        Effect.map(restrictToGatewayCatalog),
         Effect.map(stampIdentity),
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         Effect.provideService(OpenCodeRuntime, openCodeRuntime),
@@ -211,7 +272,11 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           checkProviderOnSettingsChange: () => false,
           refreshOnInterval: false,
           initialSnapshot: (settings) =>
-            makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+            makePendingOpenCodeProvider(
+              gatewayDefinition?.opencode === undefined
+                ? settings.provider
+                : { ...settings.provider, customModels: [] },
+            ).pipe(Effect.map(stampIdentity)),
           checkProvider,
           enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
             enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {

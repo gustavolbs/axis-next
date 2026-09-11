@@ -19,6 +19,7 @@ import * as AxisLearningStore from "./axis/learning/AxisLearningStore.ts";
 import * as AxisLearningEngine from "./axis/learning/AxisLearningEngine.ts";
 import * as HermesLearningEngine from "./axis/learning/engines/HermesLearningEngine.ts";
 import * as AxisLearningService from "./axis/learning/AxisLearningService.ts";
+import * as AxisTaskFeedbackService from "./axis/learning/AxisTaskFeedbackService.ts";
 import * as AxisProjectProfileStore from "./axis/projects/AxisProjectProfileStore.ts";
 import * as AxisProjectScope from "./axis/projects/AxisProjectScope.ts";
 import * as AxisEffectiveContext from "./axis/projects/AxisEffectiveContext.ts";
@@ -511,6 +512,14 @@ const AxisTaskWorkflowServiceLayerLive = AxisTaskWorkflowService.layer.pipe(
   Layer.provide(OrchestrationLayerLive),
   Layer.provide(SqlitePersistenceLayerLive),
 );
+const AxisTaskFeedbackServiceLayerLive = AxisTaskFeedbackService.layer.pipe(
+  Layer.provide(AxisLearningStoreLayerLive),
+  Layer.provide(AxisProjectScopeLayerLive),
+  Layer.provide(AxisTaskWorkflowStoreLayerLive),
+  Layer.provide(AxisTaskWorkflowLayerLive),
+  Layer.provide(OrchestrationLayerLive),
+  Layer.provide(SqlitePersistenceLayerLive),
+);
 const AxisEffectiveContextLayerLive = AxisEffectiveContext.layer.pipe(
   Layer.provide(AxisProjectProfileStoreLayerLive),
   Layer.provide(AxisLearningStoreLayerLive),
@@ -638,6 +647,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
       AxisOnboardingServiceLayerLive,
       AxisTaskStoreLayerLive,
       AxisTaskWorkflowServiceLayerLive,
+      AxisTaskFeedbackServiceLayerLive,
       AxisScratchChatStoreLayerLive,
       AxisScratchChatMessageLogLayerLive,
       AxisScratchChatRunnerLayerLive,

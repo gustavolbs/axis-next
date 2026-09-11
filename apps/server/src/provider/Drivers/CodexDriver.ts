@@ -21,7 +21,12 @@
  *
  * @module provider/Drivers/CodexDriver
  */
-import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  CodexSettings,
+  getProviderGateway,
+  providerGatewayCodexLaunchArgs,
+  ProviderDriverKind,
+} from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -51,6 +56,8 @@ import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
+import { gatewayModelsFromListing, makeGatewayModelSource } from "../providerGatewayModels.ts";
+import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
@@ -117,7 +124,16 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const eventLoggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const processEnv = mergeProviderInstanceEnvironment(environment);
-      const homeLayout = yield* resolveCodexHomeLayout(config);
+      const gatewayDefinition = getProviderGateway(gateway);
+      const gatewayLaunchArgs = providerGatewayCodexLaunchArgs(gatewayDefinition);
+      const launchArgs = [config.launchArgs?.trim(), gatewayLaunchArgs]
+        .filter((value): value is string => Boolean(value))
+        .join(" ");
+      const configWithGateway = {
+        ...config,
+        ...(launchArgs ? { launchArgs } : {}),
+      } satisfies CodexSettings;
+      const homeLayout = yield* resolveCodexHomeLayout(configWithGateway);
       const continuationIdentity = codexContinuationIdentity(homeLayout);
       const stampIdentity = withInstanceIdentity({
         instanceId,
@@ -139,7 +155,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ),
       );
       const effectiveConfig = {
-        ...config,
+        ...configWithGateway,
         enabled,
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
@@ -168,6 +184,42 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);
 
+      const gatewayModelSource = yield* makeGatewayModelSource({
+        gateway: gatewayDefinition,
+        environment: processEnv,
+        httpClient,
+      });
+      const gatewayFallbackModels = gatewayModelsFromListing({
+        data: effectiveConfig.customModels.map((entry) =>
+          typeof entry === "string"
+            ? { id: entry }
+            : { id: entry.slug, ...(entry.name ? { name: entry.name } : {}) },
+        ),
+      });
+      const applyGatewayCatalog = (
+        draft: ServerProviderDraft,
+      ): Effect.Effect<ServerProviderDraft> =>
+        gatewayModelSource === undefined
+          ? Effect.succeed(draft)
+          : gatewayModelSource.read.pipe(
+              Effect.map(({ models, reason }) => {
+                const catalog = models ?? gatewayFallbackModels;
+                const firstModel = catalog[0]?.slug;
+                const normalizedModels = catalog.map((model) => {
+                  const { isDefault: _isDefault, ...rest } = model;
+                  return model.slug === firstModel ? { ...rest, isDefault: true } : rest;
+                });
+                const message = reason
+                  ? `${draft.message ? `${draft.message} ` : ""}RouteMux model discovery failed: ${reason}`
+                  : draft.message;
+                return {
+                  ...draft,
+                  models: normalizedModels,
+                  ...(message ? { message } : {}),
+                };
+              }),
+            );
+
       // Build a managed snapshot whose settings never change — mutations come
       // in as instance rebuilds from the registry rather than in-place
       // updates. Pre-provide `ChildProcessSpawner` so the check fits
@@ -180,10 +232,9 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
           Effect.zipWith(
             checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
             modelManifest.current,
-            (draft, manifest) =>
-              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
+            (draft, manifest) => ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND),
             { concurrent: true },
-          ),
+          ).pipe(Effect.flatMap(applyGatewayCatalog), Effect.map(stampIdentity)),
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
@@ -197,9 +248,8 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
           Effect.zipWith(
             makePendingCodexProvider(settings.provider),
             modelManifest.current,
-            (draft, manifest) =>
-              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
-          ),
+            (draft, manifest) => ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND),
+          ).pipe(Effect.flatMap(applyGatewayCatalog), Effect.map(stampIdentity)),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
