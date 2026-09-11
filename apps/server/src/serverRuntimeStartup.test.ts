@@ -1,11 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeUtil from "node:util";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  DEFAULT_MODEL,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  TurnId,
-} from "@t3tools/contracts";
+import { DEFAULT_MODEL, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -59,9 +55,7 @@ it.effect("revalidates the Axis digest before a restart continuation", () =>
       revision: 2,
       catalog: {
         contexts: [],
-        projectBindings: [
-          { contextId: "company", project: { environmentId: "env", projectId } },
-        ],
+        projectBindings: [{ contextId: "company", project: { environmentId: "env", projectId } }],
         providerOwnerships: [],
         providerAccessGrants: [],
         capabilities: [],
@@ -118,9 +112,7 @@ it.effect("blocks an Axis-bound session without a digest but preserves legacy se
       revision: 3,
       catalog: {
         contexts: [],
-        projectBindings: [
-          { contextId: "company", project: { environmentId: "env", projectId } },
-        ],
+        projectBindings: [{ contextId: "company", project: { environmentId: "env", projectId } }],
         providerOwnerships: [],
         providerAccessGrants: [],
         capabilities: [],
@@ -128,7 +120,10 @@ it.effect("blocks an Axis-bound session without a digest but preserves legacy se
       },
       updatedAt: "2026-09-10T00:00:00.000Z",
     };
-    const check = (candidateProjectId: ProjectId | null, projectBindings = catalog.catalog.projectBindings) =>
+    const check = (
+      candidateProjectId: ProjectId | null,
+      projectBindings = catalog.catalog.projectBindings,
+    ) =>
       ServerRuntimeStartup.revalidateAxisContinuationContext({
         projectId: candidateProjectId,
         session: { providerInstanceId, model: "gpt-5" },
@@ -169,9 +164,7 @@ it.effect("rechecks the Axis binding after preparation before sending a continua
         revision: 4,
         catalog: {
           contexts: [],
-          projectBindings: [
-            { contextId: "company", project: { environmentId: "env", projectId } },
-          ],
+          projectBindings: [{ contextId: "company", project: { environmentId: "env", projectId } }],
           providerOwnerships: [],
           providerAccessGrants: [],
           capabilities: [],
@@ -240,9 +233,11 @@ it.effect("rechecks the Axis binding after preparation before sending a continua
       } as never;
       const dispatch = (command: unknown) =>
         Effect.gen(function* () {
-          const session = (command as {
-            readonly session: { readonly status: string; readonly lastError: string | null };
-          }).session;
+          const session = (
+            command as {
+              readonly session: { readonly status: string; readonly lastError: string | null };
+            }
+          ).session;
           dispatched.push({ status: session.status, lastError: session.lastError });
           const status = session.status;
           if (status === "starting") {
@@ -271,7 +266,10 @@ it.effect("rechecks the Axis binding after preparation before sending a continua
           latestSequence: Effect.succeed(0),
         } as never),
         Effect.provideService(AxisContextCatalogStore.AxisContextCatalogStore, {
-          get: Effect.sync(() => ({ ...catalog, catalog: { ...catalog.catalog, projectBindings } })),
+          get: Effect.sync(() => ({
+            ...catalog,
+            catalog: { ...catalog.catalog, projectBindings },
+          })),
         } as never),
         Effect.provideService(AxisEffectiveContext.AxisEffectiveContext, {
           resolve: () => Effect.succeed({ digest: "digest-current" } as never),
@@ -301,124 +299,158 @@ it.effect("rechecks the Axis binding after preparation before sending a continua
   ),
 );
 
-it.effect("does not restore a stale startup snapshot when preparation CAS loses", () =>
-  Effect.gen(function* () {
-    const threadId = ThreadId.make("thread-startup-preparation-cas-lost");
-    const turnId = TurnId.make("turn-startup-preparation-cas-lost");
-    const providerInstanceId = ProviderInstanceId.make("codex");
-    const stale: ProviderSessionDirectory.ProviderRuntimeBinding = {
-      threadId,
-      provider: "codex" as never,
-      providerInstanceId,
-      lastSeenAt: "2026-09-10T12:00:00.000Z",
-      status: "running" as const,
-      resumeCursor: { providerThread: "stale" },
-      runtimePayload: {
-        activeTurnId: turnId,
-        continueAfterServerUpdate: turnId,
-        axisContinuationEffect: {
-          key: `server-update:${threadId}:${turnId}`,
-          status: "prepared",
+for (const replacement of [true, false]) {
+  it.effect(
+    replacement
+      ? "does not restore a stale startup snapshot when preparation CAS loses"
+      : "settles an unchanged orphaned startup snapshot as stopped",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-startup-preparation-cas-lost");
+        const turnId = TurnId.make("turn-startup-preparation-cas-lost");
+        const providerInstanceId = ProviderInstanceId.make("codex");
+        const stale: ProviderSessionDirectory.ProviderRuntimeBinding = {
+          threadId,
+          provider: "codex" as never,
           providerInstanceId,
-          driverKind: "codex",
-        },
-      },
-    };
-    const external: ProviderSessionDirectory.ProviderRuntimeBinding = {
-      ...stale,
-      status: "stopped",
-      runtimePayload: { activeTurnId: "external-turn" },
-    };
-    let binding = stale;
-    let compareAndSetCalls = 0;
-    const upserts: ProviderSessionDirectory.ProviderRuntimeBinding[] = [];
-    const sends: unknown[] = [];
-    const dispatched: Array<{ readonly status: string; readonly lastError: string | null }> = [];
+          lastSeenAt: "2026-09-10T12:00:00.000Z",
+          status: "running" as const,
+          resumeCursor: replacement ? { providerThread: "stale" } : null,
+          runtimePayload: {
+            activeTurnId: turnId,
+            continueAfterServerUpdate: turnId,
+          },
+        };
+        const external: ProviderSessionDirectory.ProviderRuntimeBinding = {
+          ...stale,
+          status: "stopped",
+          runtimePayload: { activeTurnId: "external-turn" },
+        };
+        let binding = stale;
+        let compareAndSetCalls = 0;
+        const upserts: ProviderSessionDirectory.ProviderRuntimeBinding[] = [];
+        const sends: unknown[] = [];
+        const dispatched: Array<{ readonly status: string; readonly lastError: string | null }> =
+          [];
 
-    yield* ServerRuntimeStartup.reconcileProviderSessions.pipe(
-      Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getUserInputActivity: () => Effect.die("unused"),
-        getCommandReadModel: () =>
-          Effect.succeed({
-            threads: [
-              {
-                id: threadId,
-                projectId: null,
-                archivedAt: null,
-                deletedAt: null,
-                interactionMode: "default",
-                session: {
-                  threadId,
-                  status: "running",
-                  providerName: "codex",
-                  providerInstanceId,
-                  runtimeMode: "full-access",
-                  activeTurnId: turnId,
-                  lastError: null,
-                  updatedAt: "2026-09-10T12:00:00.000Z",
+        yield* ServerRuntimeStartup.reconcileProviderSessions.pipe(
+          Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+            getUserInputActivity: () => Effect.die("unused"),
+            getCommandReadModel: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: threadId,
+                    projectId: null,
+                    archivedAt: null,
+                    deletedAt: null,
+                    interactionMode: "default",
+                    session: {
+                      threadId,
+                      status: "running",
+                      providerName: "codex",
+                      providerInstanceId,
+                      runtimeMode: "full-access",
+                      activeTurnId: turnId,
+                      lastError: null,
+                      updatedAt: "2026-09-10T12:00:00.000Z",
+                    },
+                  },
+                ],
+              } as never),
+          } as never),
+          Effect.provideService(ProviderService.ProviderService, {
+            listSessions: () => Effect.succeed([]),
+            getCapabilities: () =>
+              Effect.succeed({
+                sessionModelSwitch: "in-session",
+                promptlessTurnContinuation: true,
+              }),
+            getInstanceInfo: () => Effect.succeed({ driverKind: "codex" } as never),
+            sendTurn: (input: unknown) =>
+              Effect.sync(() => {
+                sends.push(input);
+                return { threadId, turnId: TurnId.make("unexpected") };
+              }),
+            settleContinuation: () => Effect.succeed(false),
+          } as never),
+          Effect.provideService(ProviderSessionDirectory.ProviderSessionDirectory, {
+            getBinding: () => Effect.succeed(Option.some(binding)),
+            upsert: (next: ProviderSessionDirectory.ProviderRuntimeBinding) =>
+              Effect.sync(() => {
+                upserts.push(next);
+                binding = next;
+              }),
+            compareAndSet: ({
+              expected,
+              next,
+            }: ProviderSessionDirectory.ProviderSessionDirectoryCompareAndSetInput) =>
+              Effect.sync(() => {
+                compareAndSetCalls += 1;
+                if (replacement && compareAndSetCalls === 1) binding = external;
+                if (!NodeUtil.isDeepStrictEqual(expected, binding)) return false;
+                binding = next;
+                return true;
+              }),
+            getProvider: () => Effect.die("unused"),
+            listThreadIds: () => Effect.die("unused"),
+            listBindings: () => Effect.succeed([]),
+          } as never),
+          Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
+            readEvents: () => Stream.empty,
+            readThreadEvents: () => Stream.empty,
+            getThreadReplayStats: () => Effect.die("unused"),
+            dispatch: (command: unknown) =>
+              Effect.sync(() => {
+                const session = (
+                  command as {
+                    readonly session: {
+                      readonly status: string;
+                      readonly lastError: string | null;
+                    };
+                  }
+                ).session;
+                dispatched.push({ status: session.status, lastError: session.lastError });
+                return { sequence: 1 };
+              }),
+            streamDomainEvents: Stream.empty,
+            subscribeDomainEvents: Effect.succeed(Stream.empty),
+            latestSequence: Effect.succeed(0),
+          } as never),
+          Effect.provide(Layer.mergeAll(NodeServices.layer, ServerSettings.layerTest())),
+        );
+
+        assert.deepEqual(upserts, []);
+        assert.deepEqual(sends, []);
+        assert.deepEqual(
+          binding,
+          replacement
+            ? external
+            : {
+                ...stale,
+                status: "stopped",
+                runtimePayload: {
+                  activeTurnId: null,
+                  continueAfterServerUpdate: null,
+                  continueAfterServerUpdatePrepared: null,
                 },
               },
-            ],
-          } as never),
-      } as never),
-      Effect.provideService(ProviderService.ProviderService, {
-        listSessions: () => Effect.succeed([]),
-        getCapabilities: () =>
-          Effect.succeed({ sessionModelSwitch: "in-session", promptlessTurnContinuation: true }),
-        getInstanceInfo: () => Effect.succeed({ driverKind: "codex" } as never),
-        sendTurn: (input: unknown) =>
-          Effect.sync(() => {
-            sends.push(input);
-            return { threadId, turnId: TurnId.make("unexpected") };
-          }),
-        settleContinuation: () => Effect.succeed(false),
-      } as never),
-      Effect.provideService(ProviderSessionDirectory.ProviderSessionDirectory, {
-        getBinding: () => Effect.succeed(Option.some(binding)),
-        upsert: (next: ProviderSessionDirectory.ProviderRuntimeBinding) =>
-          Effect.sync(() => upserts.push(next)),
-        compareAndSet: () =>
-          Effect.sync(() => {
-            compareAndSetCalls += 1;
-            binding = external;
-            return false;
-          }),
-        getProvider: () => Effect.die("unused"),
-        listThreadIds: () => Effect.die("unused"),
-        listBindings: () => Effect.succeed([]),
-      } as never),
-      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
-        readEvents: () => Stream.empty,
-        readThreadEvents: () => Stream.empty,
-        getThreadReplayStats: () => Effect.die("unused"),
-        dispatch: (command: unknown) =>
-          Effect.sync(() => {
-            const session = (command as {
-              readonly session: { readonly status: string; readonly lastError: string | null };
-            }).session;
-            dispatched.push({ status: session.status, lastError: session.lastError });
-            return { sequence: 1 };
-          }),
-        streamDomainEvents: Stream.empty,
-        subscribeDomainEvents: Effect.succeed(Stream.empty),
-        latestSequence: Effect.succeed(0),
-      } as never),
-      Effect.provide( Layer.mergeAll(NodeServices.layer, ServerSettings.layerTest())),
-    );
-
-    assert.equal(compareAndSetCalls, 1);
-    assert.deepEqual(upserts, []);
-    assert.deepEqual(sends, []);
-    assert.deepEqual(binding, external);
-    assert.deepEqual(dispatched.map(({ status, lastError }) => ({ status, lastError })), [
-      {
-        status: "error",
-        lastError:
-          "Could not continue this thread because its Axis project context changed or was revoked. Send a new message to continue.",
-      },
-    ]);
-  }),
-);
+        );
+        assert.equal(compareAndSetCalls, replacement ? 2 : 1);
+        assert.deepEqual(
+          dispatched.map(({ status, lastError }) => ({ status, lastError })),
+          [
+            {
+              status: "error",
+              lastError: replacement
+                ? "Could not continue this thread because its Axis project context changed or was revoked. Send a new message to continue."
+                : "Provider session did not survive a server restart. Send a new message to continue.",
+            },
+          ],
+        );
+      }),
+  );
+}
 
 it.effect("automatic pull only updates enabled, behind, clean default-branch checkouts", () =>
   Effect.gen(function* () {

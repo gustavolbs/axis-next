@@ -30,6 +30,54 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 const providerInstanceId = ProviderInstanceId.make("codex");
 const updatedAt = "2026-08-20T12:00:00.000Z";
 
+for (const action of ["mark", "clear"] as const) {
+  it.effect(`preserves a replacement binding when shutdown ${action} loses CAS`, () =>
+    Effect.gen(function* () {
+      const thread = makeThread("shutdown-cas", "running", TurnId.make("turn-old"));
+      const captured = {
+        threadId: thread.id,
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        lastSeenAt: updatedAt,
+        resumeCursor: { id: "old" },
+        runtimePayload: { continueAfterServerUpdate: "old" },
+      };
+      const replacement = {
+        ...captured,
+        resumeCursor: { id: "new" },
+        runtimePayload: { continueAfterServerUpdate: "new" },
+      };
+      let binding = captured;
+      let comparisons = 0;
+      const operation =
+        action === "mark"
+          ? ServerRuntimeStartup.markRunningProviderSessionsForContinuation
+          : ServerRuntimeStartup.clearProviderSessionContinuationMarkers([thread.id]);
+      yield* operation.pipe(
+        Effect.provideService(
+          ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+          queryWithThreads([thread]),
+        ),
+        Effect.provide(
+          Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
+            getBinding: () => Effect.succeed(Option.some(binding)),
+            upsert: () => Effect.die("shutdown must not overwrite a replacement"),
+            compareAndSet: ({ expected }) =>
+              Effect.sync(() => {
+                comparisons += 1;
+                assert.deepEqual(expected, captured);
+                binding = replacement;
+                return false;
+              }),
+          }),
+        ),
+      );
+      assert.equal(comparisons, 1);
+      assert.deepEqual(binding, replacement);
+    }),
+  );
+}
+
 const makeThread = (
   id: string,
   status: OrchestrationSessionStatus,
@@ -146,10 +194,16 @@ it.effect("marks active running sessions that have persisted resume state", () =
               providerInstanceId,
               ...(threadId === active.id ? { resumeCursor: { threadId } } : {}),
               runtimePayload: { activeTurnId: "turn-mark-active" },
+              lastSeenAt: updatedAt,
             }),
           ),
         ),
       upsert: (binding) => Effect.sync(() => upserts.push(binding)),
+      compareAndSet: ({ next }) =>
+        Effect.sync(() => {
+          upserts.push(next);
+          return true;
+        }),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
       listBindings: () => Effect.succeed([]),
@@ -201,6 +255,7 @@ it.effect.each(["marked update", "opt-in restart"] as const)(
             providerInstanceId:
               thread.id === codex.id ? providerInstanceId : fallbackProviderInstanceId,
             status: "running" as const,
+            lastSeenAt: updatedAt,
             resumeCursor: { threadId: thread.id },
             runtimePayload:
               recovery === "marked update"
@@ -243,6 +298,16 @@ it.effect.each(["marked update", "opt-in restart"] as const)(
             Effect.sync(() => {
               const binding = bindings.get(threadId);
               return binding === undefined ? Option.none() : Option.some(binding);
+            }),
+          compareAndSet: ({ expected, next }) =>
+            Effect.gen(function* () {
+              assert.deepEqual(expected, bindings.get(next.threadId));
+              bindings.set(next.threadId, next);
+              upserts.push(next);
+              const payload = next.runtimePayload as { continueAfterServerUpdate?: unknown };
+              if (payload.continueAfterServerUpdate === null)
+                yield* Deferred.succeed(continuationCleared, undefined);
+              return true;
             }),
           upsert: (binding) =>
             Effect.sync(() => {
@@ -366,6 +431,174 @@ it.effect.each(["marked update", "opt-in restart"] as const)(
       );
     }),
 );
+
+for (const status of ["unknown", "accepted"] as const) {
+  for (const marked of [false, true])
+    it.effect(
+      `restart ignores retained ${status} claim from an older turn (${marked ? "marked" : "abrupt"})`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const thread = makeThread(
+              `retained-${status}-${marked}`,
+              "running",
+              TurnId.make("current-turn"),
+            );
+            const cleared = yield* Deferred.make<void>();
+            const sends: ProviderService.ProviderSendTurnRequest[] = [];
+            let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+              threadId: thread.id,
+              provider: ProviderDriverKind.make("codex"),
+              providerInstanceId,
+              status: "running",
+              lastSeenAt: updatedAt,
+              resumeCursor: { threadId: thread.id },
+              runtimePayload: {
+                activeTurnId: "current-turn",
+                ...(marked ? { continueAfterServerUpdate: "current-turn" } : {}),
+                axisContinuationEffect: {
+                  key: `server-update:${thread.id}:old-turn`,
+                  status,
+                  providerInstanceId,
+                  driverKind: "codex",
+                  ...(status === "accepted" ? { turnId: "old-accepted-turn" } : {}),
+                },
+              },
+            };
+            const dispatched: OrchestrationCommand[] = [];
+            yield* runReconciliation({
+              threads: [thread],
+              continueAfterRestart: true,
+              providerService: {
+                ...makeProviderService(),
+                getCapabilities: () =>
+                  Effect.succeed({
+                    sessionModelSwitch: "in-session",
+                    promptlessTurnContinuation: true,
+                  }),
+                settleContinuation: () => Effect.die("must not settle the old claim"),
+                sendTurn: (input) =>
+                  Effect.sync(() => {
+                    sends.push(input);
+                    return {
+                      threadId: input.threadId,
+                      turnId: TurnId.make("resumed-current-turn"),
+                    };
+                  }),
+              },
+              directory: {
+                getBinding: () => Effect.sync(() => Option.some(binding)),
+                compareAndSet: ({ expected, next }) =>
+                  Effect.gen(function* () {
+                    assert.deepEqual(expected, binding);
+                    binding = next;
+                    const payload = next.runtimePayload as { continueAfterServerUpdate?: unknown };
+                    if (payload.continueAfterServerUpdate === null)
+                      yield* Deferred.succeed(cleared, undefined);
+                    return true;
+                  }),
+                upsert: () => Effect.die("restart must CAS"),
+                getProvider: () => Effect.die("unused"),
+                listThreadIds: () => Effect.die("unused"),
+                listBindings: () => Effect.succeed([]),
+              },
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatched.push(command);
+                  return { sequence: dispatched.length };
+                }),
+            });
+            yield* Deferred.await(cleared);
+            assert.equal(sends.length, 1);
+            assert.equal(
+              sends[0]?.continuationFence?.idempotencyKey,
+              `server-update:${thread.id}:current-turn`,
+            );
+            assert.equal(
+              dispatched.some(
+                (command) =>
+                  command.type === "thread.session.set" &&
+                  command.session.activeTurnId === "old-accepted-turn",
+              ),
+              false,
+            );
+            assert.equal(
+              dispatched.some(
+                (command) =>
+                  command.type === "thread.session.set" && command.session.status === "error",
+              ),
+              false,
+            );
+          }),
+        ),
+    );
+}
+
+for (const status of ["unknown", "accepted"] as const)
+  it.effect(`restart honors a ${status} claim for the current generation without resending`, () =>
+    Effect.gen(function* () {
+      const thread = makeThread(`current-effect-${status}`, "running", TurnId.make("source-turn"));
+      const dispatched: OrchestrationCommand[] = [];
+      let settlements = 0;
+      yield* runReconciliation({
+        threads: [thread],
+        continueAfterRestart: true,
+        providerService: {
+          ...makeProviderService(),
+          settleContinuation: (input) =>
+            Effect.sync(() => {
+              settlements++;
+              assert.equal(input.idempotencyKey, `server-update:${thread.id}:source-turn`);
+              assert.equal(input.outcome, status);
+              return true;
+            }),
+          sendTurn: () => Effect.die("current unknown/accepted effect must not be resent"),
+        },
+        directory: {
+          getBinding: () =>
+            Effect.succeed(
+              Option.some({
+                threadId: thread.id,
+                provider: ProviderDriverKind.make("codex"),
+                providerInstanceId,
+                status: "running",
+                lastSeenAt: updatedAt,
+                resumeCursor: { threadId: thread.id },
+                runtimePayload: {
+                  activeTurnId: status === "accepted" ? "accepted-turn" : "source-turn",
+                  continueAfterServerUpdate: status === "accepted" ? null : "source-turn",
+                  continueAfterServerUpdatePrepared: status === "accepted" ? null : true,
+                  axisContinuationEffect: {
+                    key: `server-update:${thread.id}:source-turn`,
+                    status,
+                    providerInstanceId,
+                    driverKind: "codex",
+                    ...(status === "accepted" ? { turnId: "accepted-turn" } : {}),
+                  },
+                },
+              }),
+            ),
+          upsert: () => Effect.die("service owns settlement"),
+          getProvider: () => Effect.die("unused"),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.succeed([]),
+        },
+        dispatch: (command) =>
+          Effect.sync(() => {
+            dispatched.push(command);
+            return { sequence: dispatched.length };
+          }),
+      });
+      assert.equal(settlements, 1);
+      assert.equal(dispatched.length, 1);
+      const command = dispatched[0]!;
+      assert.equal(command.type, "thread.session.set");
+      if (command.type === "thread.session.set") {
+        assert.equal(command.session.status, status === "accepted" ? "running" : "error");
+        assert.equal(command.session.activeTurnId, status === "accepted" ? "accepted-turn" : null);
+      }
+    }),
+  );
 
 it.effect("does not continue archived or deleted marked sessions", () => {
   const archived = makeThread(
@@ -823,6 +1056,7 @@ for (const preparedStatus of [
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId,
         status: "running",
+        lastSeenAt: updatedAt,
         resumeCursor: { threadId: thread.id },
         runtimePayload: { activeTurnId: turnId },
       };
@@ -844,6 +1078,17 @@ for (const preparedStatus of [
         },
         directory: {
           getBinding: () => Effect.sync(() => Option.some(binding)),
+          compareAndSet: ({
+            expected,
+            next,
+          }: ProviderSessionDirectory.ProviderSessionDirectoryCompareAndSetInput) =>
+            Effect.gen(function* () {
+              assert.deepEqual(expected, binding);
+              binding = next;
+              if (binding.status === "starting" && sends.length > 0)
+                yield* Deferred.succeed(cleared, undefined);
+              return true;
+            }),
           upsert: (next: ProviderSessionDirectory.ProviderRuntimeBinding) =>
             Effect.gen(function* () {
               binding = next;

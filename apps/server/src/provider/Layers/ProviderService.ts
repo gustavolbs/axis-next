@@ -41,6 +41,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
@@ -88,15 +89,18 @@ const ProviderSendTurnRequestSchema = Schema.Struct({
 });
 
 const CONTINUATION_EFFECT_PAYLOAD_KEY = "axisContinuationEffect";
+const NORMAL_TURN_EFFECT_PAYLOAD_KEY = "axisNormalTurnEffect";
 
-type ContinuationEffect = {
-  readonly key: string;
-  readonly status: "prepared" | "pending" | "unknown" | "accepted";
-  readonly providerInstanceId: ProviderInstanceId;
-  readonly driverKind: ProviderDriverKind;
-  readonly axisContextDigest?: string | undefined;
-  readonly turnId?: TurnId;
-};
+const ContinuationEffectSchema = Schema.Struct({
+  key: Schema.String.check(Schema.isMinLength(1)),
+  status: Schema.Literals(["prepared", "pending", "unknown", "accepted"]),
+  providerInstanceId: ProviderInstanceId,
+  driverKind: ProviderDriverKind,
+  axisContextDigest: Schema.optional(Schema.String),
+  turnId: Schema.optionalKey(TurnId),
+});
+type ContinuationEffect = typeof ContinuationEffectSchema.Type;
+const decodeContinuationEffect = Schema.decodeUnknownOption(ContinuationEffectSchema);
 
 function readRuntimePayload(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -106,35 +110,31 @@ function readRuntimePayload(value: unknown): Record<string, unknown> {
 
 function readContinuationEffect(value: unknown): ContinuationEffect | undefined {
   const raw = readRuntimePayload(value)[CONTINUATION_EFFECT_PAYLOAD_KEY];
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const effect = raw as Record<string, unknown>;
-  if (
-    typeof effect.key !== "string" ||
-    typeof effect.status !== "string" ||
-    (effect.status !== "prepared" &&
-      effect.status !== "pending" &&
-      effect.status !== "unknown" &&
-      effect.status !== "accepted") ||
-    typeof effect.providerInstanceId !== "string" ||
-    typeof effect.driverKind !== "string"
-  ) {
-    return undefined;
-  }
-  return {
-    key: effect.key,
-    status: effect.status,
-    providerInstanceId: ProviderInstanceId.make(effect.providerInstanceId),
-    driverKind: ProviderDriverKind.make(effect.driverKind),
-    ...(typeof effect.axisContextDigest === "string"
-      ? { axisContextDigest: effect.axisContextDigest }
-      : {}),
-    ...(typeof effect.turnId === "string" ? { turnId: TurnId.make(effect.turnId) } : {}),
-  };
+  return Option.getOrUndefined(decodeContinuationEffect(raw));
 }
 
 function readAxisContextDigest(value: unknown): string | undefined {
   const digest = readRuntimePayload(value).axisContextDigest;
   return typeof digest === "string" && digest.trim().length > 0 ? digest.trim() : undefined;
+}
+
+/** A persisted but unreadable claim may already represent an external effect. */
+function hasUnrecognizedContinuationEffect(value: unknown): boolean {
+  return (
+    readRuntimePayload(value)[CONTINUATION_EFFECT_PAYLOAD_KEY] != null &&
+    readContinuationEffect(value) === undefined
+  );
+}
+
+function matchesContinuationEffectIdentity(
+  effect: ContinuationEffect,
+  fence: ProviderService.ProviderContinuationFence,
+): boolean {
+  return (
+    effect.providerInstanceId === fence.providerInstanceId &&
+    effect.driverKind === fence.driverKind &&
+    effect.axisContextDigest === fence.axisContextDigest
+  );
 }
 
 function continuationEffectPayload(effect: ContinuationEffect): Record<string, unknown> {
@@ -158,6 +158,23 @@ function matchesContinuationBinding(
     binding.provider === fence.driverKind &&
     binding.providerInstanceId === fence.providerInstanceId &&
     readAxisContextDigest(binding.runtimePayload) === fence.axisContextDigest
+  );
+}
+
+function matchesPreparedContinuation(
+  binding: ProviderSessionDirectory.ProviderRuntimeBinding,
+  fence: ProviderService.ProviderContinuationFence,
+): boolean {
+  const payload = readRuntimePayload(binding.runtimePayload);
+  return (
+    matchesContinuationBinding(binding, fence) &&
+    payload[NORMAL_TURN_EFFECT_PAYLOAD_KEY] == null &&
+    (binding.status === "starting" || binding.status === "running") &&
+    payload.activeTurnId === null &&
+    payload.continueAfterServerUpdatePrepared === true &&
+    typeof payload.continueAfterServerUpdate === "string" &&
+    fence.idempotencyKey ===
+      `server-update:${binding.threadId}:${payload.continueAfterServerUpdate}`
   );
 }
 
@@ -451,11 +468,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const tokenEfficiencySessionModels = new Map<string, string>();
   const tokenEfficiencyCompleted = new Set<string>();
   const tokenEfficiencyCompletedOrder: Array<string> = [];
-  const startedContinuationKeys = new Set<string>();
-  // Restart continuations must not be admitted by one fiber while another
-  // fiber replaces their binding. The permit covers the final binding read,
-  // durable effect admission, adapter dispatch, and settlement.
-  const continuationDispatchLease = yield* Semaphore.make(1);
+  // Local serialization is per thread; the persisted claims and CAS below
+  // arbitrate with other service instances/processes without a long SQL lease.
+  const dispatchPermits = new Map<ThreadId, { semaphore: Semaphore.Semaphore; users: number }>();
+  const withThreadDispatch = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const entry = dispatchPermits.get(threadId) ?? {
+          semaphore: Semaphore.makeUnsafe(1),
+          users: 0,
+        };
+        entry.users += 1;
+        dispatchPermits.set(threadId, entry);
+        return entry;
+      }),
+      (entry) => entry.semaphore.withPermit(effect),
+      (entry) =>
+        Effect.sync(() => {
+          entry.users -= 1;
+          if (entry.users === 0) dispatchPermits.delete(threadId);
+        }),
+    );
 
   const compareAndSetContinuationBinding = (
     expected: ProviderSessionDirectory.ProviderRuntimeBinding,
@@ -465,7 +498,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     if (compareAndSet === undefined) {
       return directory.upsert(next).pipe(Effect.as(true));
     }
-    const versionedExpected = expected as ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata;
+    const versionedExpected =
+      expected as ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata;
     if (typeof versionedExpected.lastSeenAt !== "string") return Effect.succeed(false);
     return compareAndSet({ expected: versionedExpected, next });
   };
@@ -475,7 +509,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     effect: Effect.Effect<A, E, R>,
   ) => {
     const withLease = directory.withLease;
-    const versionedExpected = expected as ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata;
+    const versionedExpected =
+      expected as ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata;
     if (withLease === undefined || typeof versionedExpected.lastSeenAt !== "string") {
       return effect.pipe(Effect.map(Option.some));
     }
@@ -1673,14 +1708,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const settleContinuation: ProviderService.ProviderService["Service"]["settleContinuation"] =
     Effect.fn("settleContinuation")(function* (input) {
-      return yield* continuationDispatchLease.withPermit(
+      return yield* withThreadDispatch(
+        input.threadId,
         Effect.gen(function* () {
           const currentOption = yield* directory.getBinding(input.threadId);
           if (Option.isNone(currentOption)) return false;
           const current = currentOption.value;
           if (
             current.provider !== input.driverKind ||
-            current.providerInstanceId !== input.providerInstanceId
+            current.providerInstanceId !== input.providerInstanceId ||
+            readAxisContextDigest(current.runtimePayload) !== input.axisContextDigest
           ) {
             return false;
           }
@@ -1698,15 +1735,49 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ) {
             return false;
           }
-          if (input.outcome === "accepted" && input.turnId === undefined) return false;
-          if (input.outcome === "unknown" && effect.status === "accepted") return false;
+          const payload = readRuntimePayload(current.runtimePayload);
+          if (input.outcome === "accepted") {
+            // Settlement consumes an observed acceptance; it cannot manufacture
+            // one from a prepared/unknown claim or substitute a different turn.
+            if (
+              effect.status !== "accepted" ||
+              input.turnId === undefined ||
+              effect.turnId !== input.turnId
+            )
+              return false;
+            if (
+              current.status === "running" &&
+              payload.activeTurnId === effect.turnId &&
+              payload.continueAfterServerUpdate == null &&
+              payload.continueAfterServerUpdatePrepared == null
+            ) {
+              return true; // Already consumed. Do not rewrite a later snapshot.
+            }
+          } else if (
+            effect.status === "accepted" ||
+            input.turnId !== undefined ||
+            effect.turnId !== undefined
+          )
+            return false;
+
+          const sourceTurnId = payload.continueAfterServerUpdate;
+          if (
+            typeof sourceTurnId !== "string" ||
+            effect.key !== `server-update:${input.threadId}:${sourceTurnId}` ||
+            payload.continueAfterServerUpdatePrepared !== true ||
+            (current.status !== "starting" && current.status !== "running") ||
+            (payload.activeTurnId !== null &&
+              payload.activeTurnId !== sourceTurnId &&
+              !(effect.status === "accepted" && payload.activeTurnId === effect.turnId))
+          ) {
+            return false;
+          }
 
           const nextEffect: ContinuationEffect = {
             ...effect,
             status: input.outcome,
             ...(input.turnId === undefined ? {} : { turnId: input.turnId }),
           };
-          const payload = readRuntimePayload(current.runtimePayload);
           return yield* compareAndSetContinuationBinding(current, {
             ...current,
             status: input.outcome === "accepted" ? "running" : "stopped",
@@ -1822,9 +1893,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* Effect.annotateCurrentSpan({
         "provider.kind": routed.adapter.provider,
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
-        ...(input.axisContextDigest
-          ? { "axis.context.digest": input.axisContextDigest }
-          : {}),
+        ...(input.axisContextDigest ? { "axis.context.digest": input.axisContextDigest } : {}),
       });
       // A turn is the clearest sign a session is still alive. The MCP
       // credential is minted once at session start and cannot be rotated into
@@ -1840,145 +1909,238 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       const analyticsModelSelection =
         input.modelSelection?.instanceId === routed.instanceId ? input.modelSelection : undefined;
+      let settledBindingForPersistence =
+        Option.none<ProviderSessionDirectory.ProviderRuntimeBinding>();
       const dispatchTurn =
         continuationFence === undefined
-          ? routed.adapter.sendTurn(input)
-          : continuationDispatchLease.withPermit(
-              // Once admission is persisted, cancellation cannot turn an
-              // accepted provider call into an eligible automatic retry.
-              Effect.uninterruptible(
-                Effect.gen(function* () {
-                  const currentOption = yield* directory.getBinding(input.threadId);
-                  if (Option.isNone(currentOption)) {
-                    return yield* toValidationError(
-                      "ProviderService.sendTurn",
-                      `Continuation binding for thread '${input.threadId}' disappeared before dispatch.`,
-                    );
-                  }
-                  const current = currentOption.value;
-                  if (!matchesContinuationBinding(current, continuationFence)) {
-                    return yield* toValidationError(
-                      "ProviderService.sendTurn",
-                      `Continuation binding for thread '${input.threadId}' changed before dispatch.`,
-                    );
-                  }
-                  const instanceInfo = yield* registry.getInstanceInfo(
-                    continuationFence.providerInstanceId,
+          ? Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const currentOption = yield* directory.getBinding(input.threadId);
+                if (
+                  Option.isNone(currentOption) ||
+                  directory.compareAndSet === undefined ||
+                  directory.withLease === undefined
+                ) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    "Normal turn dispatch requires a persisted binding with compare-and-set support.",
                   );
-                  if (instanceInfo.driverKind !== continuationFence.driverKind) {
-                    return yield* toValidationError(
-                      "ProviderService.sendTurn",
-                      `Provider instance '${continuationFence.providerInstanceId}' belongs to driver '${instanceInfo.driverKind}', not '${continuationFence.driverKind}'.`,
-                    );
-                  }
-                  const adapter = yield* registry.getByInstance(
-                    continuationFence.providerInstanceId,
+                }
+                const current = currentOption.value;
+                const payload = readRuntimePayload(current.runtimePayload);
+                const continuation = readContinuationEffect(current.runtimePayload);
+                if (
+                  current.provider !== routed.adapter.provider ||
+                  current.providerInstanceId !== routed.instanceId ||
+                  payload[NORMAL_TURN_EFFECT_PAYLOAD_KEY] != null ||
+                  hasUnrecognizedContinuationEffect(current.runtimePayload) ||
+                  (continuation !== undefined &&
+                    (continuation.providerInstanceId !== current.providerInstanceId ||
+                      continuation.driverKind !== current.provider ||
+                      continuation.axisContextDigest !==
+                        readAxisContextDigest(current.runtimePayload))) ||
+                  continuation?.status === "pending" ||
+                  continuation?.status === "unknown" ||
+                  (continuation?.status === "accepted" &&
+                    payload.continueAfterServerUpdatePrepared === true)
+                ) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Thread '${input.threadId}' changed or has an unsettled/unknown provider effect.`,
                   );
-                  if (adapter.provider !== continuationFence.driverKind) {
-                    return yield* toValidationError(
-                      "ProviderService.sendTurn",
-                      `Provider instance '${continuationFence.providerInstanceId}' resolved adapter '${adapter.provider}', not '${continuationFence.driverKind}'.`,
-                    );
-                  }
-                  const existingEffect = readContinuationEffect(current.runtimePayload);
-                  if (
-                    existingEffect !== undefined &&
-                    (existingEffect.key !== continuationFence.idempotencyKey ||
-                      existingEffect.status === "unknown" ||
-                      existingEffect.status === "accepted" ||
-                      startedContinuationKeys.has(continuationFence.idempotencyKey))
-                  ) {
-                    return yield* toValidationError(
-                      "ProviderService.sendTurn",
-                      `Continuation '${continuationFence.idempotencyKey}' is already settled or has an unknown provider effect.`,
-                    );
-                  }
-                  const pendingEffect: ContinuationEffect = {
-                    key: continuationFence.idempotencyKey,
-                    status: "pending",
-                    providerInstanceId: continuationFence.providerInstanceId,
-                    driverKind: continuationFence.driverKind,
-                    ...(continuationFence.axisContextDigest === undefined
-                      ? {}
-                      : { axisContextDigest: continuationFence.axisContextDigest }),
-                  };
-                  const admitted = yield* compareAndSetContinuationBinding(current, {
-                    ...current,
+                }
+                const claim = {
+                  key: `${yield* Random.next}:${yield* Random.next}`,
+                  status: "pending",
+                };
+                const admission = yield* withContinuationLease(
+                  current,
+                  Effect.gen(function* () {
+                    const admitted = yield* compareAndSetContinuationBinding(current, {
+                      ...current,
+                      runtimePayload: {
+                        ...payload,
+                        [NORMAL_TURN_EFFECT_PAYLOAD_KEY]: claim,
+                        [CONTINUATION_EFFECT_PAYLOAD_KEY]: null,
+                        continueAfterServerUpdate: null,
+                        continueAfterServerUpdatePrepared: null,
+                      },
+                    });
+                    if (!admitted)
+                      return Option.none<ProviderSessionDirectory.ProviderRuntimeBinding>();
+                    return yield* directory.getBinding(input.threadId);
+                  }),
+                );
+                const admitted = Option.flatten(admission);
+                if (Option.isNone(admitted)) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Normal turn binding for thread '${input.threadId}' changed before admission.`,
+                  );
+                }
+                settledBindingForPersistence = admitted;
+                // Pending survives a crash or failed settlement. It has no expiry:
+                // an uncertain provider effect cannot safely be automatically retried.
+                const adapterExit = yield* Effect.exit(restore(routed.adapter.sendTurn(input)));
+                if (Exit.isFailure(adapterExit)) {
+                  yield* compareAndSetContinuationBinding(admitted.value, {
+                    ...admitted.value,
                     runtimePayload: {
-                      ...readRuntimePayload(current.runtimePayload),
-                      [CONTINUATION_EFFECT_PAYLOAD_KEY]:
-                        continuationEffectPayload(pendingEffect),
+                      ...readRuntimePayload(admitted.value.runtimePayload),
+                      [NORMAL_TURN_EFFECT_PAYLOAD_KEY]: { ...claim, status: "unknown" },
                     },
                   });
-                  if (!admitted) {
-                    return yield* toValidationError(
-                      "ProviderService.sendTurn",
-                      `Continuation binding for thread '${input.threadId}' changed before admission.`,
-                    );
-                  }
-                  startedContinuationKeys.add(continuationFence.idempotencyKey);
-                  const pendingOption = yield* directory.getBinding(input.threadId);
-                  if (Option.isNone(pendingOption)) {
-                    return yield* toValidationError(
-                      "ProviderService.sendTurn",
-                      `Continuation binding for thread '${input.threadId}' disappeared after admission.`,
-                    );
-                  }
-                  const leased = yield* withContinuationLease(
-                    pendingOption.value,
-                    Effect.gen(function* () {
-                      const latestOption = yield* directory.getBinding(input.threadId);
-                      if (Option.isNone(latestOption)) {
-                        return yield* toValidationError(
-                          "ProviderService.sendTurn",
-                          `Continuation binding for thread '${input.threadId}' disappeared before dispatch.`,
-                        );
-                      }
-                      const latest = latestOption.value;
-                      const latestEffect = readContinuationEffect(latest.runtimePayload);
-                      if (
-                        !matchesContinuationBinding(latest, continuationFence) ||
-                        latestEffect?.key !== continuationFence.idempotencyKey
-                      ) {
-                        return yield* toValidationError(
-                          "ProviderService.sendTurn",
-                          `Continuation binding for thread '${input.threadId}' changed before dispatch.`,
-                        );
-                      }
-                      const adapterExit = yield* Effect.exit(adapter.sendTurn(input));
-                      const settledEffect: ContinuationEffect = {
-                        ...pendingEffect,
-                        status: Exit.isSuccess(adapterExit) ? "accepted" : "unknown",
-                        ...(Exit.isSuccess(adapterExit)
-                          ? { turnId: adapterExit.value.turnId }
-                          : {}),
-                      };
-                      const settled = yield* compareAndSetContinuationBinding(latest, {
-                        ...latest,
-                        runtimePayload: {
-                          ...readRuntimePayload(latest.runtimePayload),
-                          [CONTINUATION_EFFECT_PAYLOAD_KEY]:
-                            continuationEffectPayload(settledEffect),
-                        },
-                      });
-                      if (!settled) {
-                        return yield* toValidationError(
-                          "ProviderService.sendTurn",
-                          `Continuation binding for thread '${input.threadId}' changed while settling provider effect.`,
-                        );
-                      }
-                      return adapterExit;
-                    }),
+                }
+                return yield* adapterExit;
+              }),
+            )
+          : // Once admission is persisted, cancellation cannot turn an
+            // accepted provider call into an eligible automatic retry.
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                const currentOption = yield* directory.getBinding(input.threadId);
+                if (Option.isNone(currentOption)) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Continuation binding for thread '${input.threadId}' disappeared before dispatch.`,
                   );
-                  if (Option.isNone(leased)) {
-                    return yield* toValidationError(
-                      "ProviderService.sendTurn",
-                      `Continuation binding for thread '${input.threadId}' changed before dispatch.`,
-                    );
-                  }
-                  return yield* leased.value;
-                }),
-              ),
+                }
+                const current = currentOption.value;
+                if (!matchesPreparedContinuation(current, continuationFence)) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Continuation binding for thread '${input.threadId}' changed before dispatch.`,
+                  );
+                }
+                const instanceInfo = yield* registry.getInstanceInfo(
+                  continuationFence.providerInstanceId,
+                );
+                if (instanceInfo.driverKind !== continuationFence.driverKind) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Provider instance '${continuationFence.providerInstanceId}' belongs to driver '${instanceInfo.driverKind}', not '${continuationFence.driverKind}'.`,
+                  );
+                }
+                const adapter = yield* registry.getByInstance(continuationFence.providerInstanceId);
+                if (adapter.provider !== continuationFence.driverKind) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Provider instance '${continuationFence.providerInstanceId}' resolved adapter '${adapter.provider}', not '${continuationFence.driverKind}'.`,
+                  );
+                }
+                const existingEffect = readContinuationEffect(current.runtimePayload);
+                if (
+                  hasUnrecognizedContinuationEffect(current.runtimePayload) ||
+                  (existingEffect !== undefined &&
+                    (existingEffect.key !== continuationFence.idempotencyKey ||
+                      existingEffect.status !== "prepared" ||
+                      !matchesContinuationEffectIdentity(existingEffect, continuationFence)))
+                ) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Continuation '${continuationFence.idempotencyKey}' is already settled or has an unknown provider effect.`,
+                  );
+                }
+                const pendingEffect: ContinuationEffect = {
+                  key: continuationFence.idempotencyKey,
+                  status: "pending",
+                  providerInstanceId: continuationFence.providerInstanceId,
+                  driverKind: continuationFence.driverKind,
+                  ...(continuationFence.axisContextDigest === undefined
+                    ? {}
+                    : { axisContextDigest: continuationFence.axisContextDigest }),
+                };
+                const admitted = yield* compareAndSetContinuationBinding(current, {
+                  ...current,
+                  runtimePayload: {
+                    ...readRuntimePayload(current.runtimePayload),
+                    [CONTINUATION_EFFECT_PAYLOAD_KEY]: continuationEffectPayload(pendingEffect),
+                  },
+                });
+                if (!admitted) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Continuation binding for thread '${input.threadId}' changed before admission.`,
+                  );
+                }
+                const pendingOption = yield* directory.getBinding(input.threadId);
+                if (Option.isNone(pendingOption)) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Continuation binding for thread '${input.threadId}' disappeared after admission.`,
+                  );
+                }
+                const admittedSnapshot = yield* withContinuationLease(
+                  pendingOption.value,
+                  Effect.gen(function* () {
+                    const latestOption = yield* directory.getBinding(input.threadId);
+                    if (Option.isNone(latestOption)) {
+                      return yield* toValidationError(
+                        "ProviderService.sendTurn",
+                        `Continuation binding for thread '${input.threadId}' disappeared before dispatch.`,
+                      );
+                    }
+                    const latest = latestOption.value;
+                    const latestEffect = readContinuationEffect(latest.runtimePayload);
+                    if (
+                      !matchesPreparedContinuation(latest, continuationFence) ||
+                      latestEffect?.key !== continuationFence.idempotencyKey ||
+                      latestEffect.status !== "pending" ||
+                      !matchesContinuationEffectIdentity(latestEffect, continuationFence)
+                    ) {
+                      return yield* toValidationError(
+                        "ProviderService.sendTurn",
+                        `Continuation binding for thread '${input.threadId}' changed before dispatch.`,
+                      );
+                    }
+                    return latest;
+                  }),
+                );
+                if (Option.isNone(admittedSnapshot)) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Continuation binding for thread '${input.threadId}' changed before dispatch.`,
+                  );
+                }
+                // The pending effect is the durable admission claim. Never
+                // hold a SQLite transaction while waiting for a provider.
+                const adapterExit = yield* Effect.exit(adapter.sendTurn(input));
+                const leased = yield* withContinuationLease(
+                  admittedSnapshot.value,
+                  Effect.gen(function* () {
+                    const latest = admittedSnapshot.value;
+                    const settledEffect: ContinuationEffect = {
+                      ...pendingEffect,
+                      status: Exit.isSuccess(adapterExit) ? "accepted" : "unknown",
+                      ...(Exit.isSuccess(adapterExit) ? { turnId: adapterExit.value.turnId } : {}),
+                    };
+                    const settled = yield* compareAndSetContinuationBinding(latest, {
+                      ...latest,
+                      runtimePayload: {
+                        ...readRuntimePayload(latest.runtimePayload),
+                        [CONTINUATION_EFFECT_PAYLOAD_KEY]: continuationEffectPayload(settledEffect),
+                      },
+                    });
+                    if (!settled) {
+                      return yield* toValidationError(
+                        "ProviderService.sendTurn",
+                        `Continuation binding for thread '${input.threadId}' changed while settling provider effect.`,
+                      );
+                    }
+                    // Capture the persisted version before releasing the lease.
+                    // A later read could adopt another writer's session as ours.
+                    settledBindingForPersistence = yield* directory.getBinding(input.threadId);
+                    return adapterExit;
+                  }),
+                );
+                if (Option.isNone(leased)) {
+                  return yield* toValidationError(
+                    "ProviderService.sendTurn",
+                    `Continuation binding for thread '${input.threadId}' changed before dispatch.`,
+                  );
+                }
+                return yield* leased.value;
+              }),
             );
       const turn = yield* Effect.acquireUseRelease(
         beginTurnAnalytics({
@@ -2007,24 +2169,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             requestId: turnMetadata.requestId,
           }),
       );
-      const latestBindingForPersistence =
-        continuationFence === undefined
-          ? Option.none<ProviderSessionDirectory.ProviderRuntimeBinding>()
-          : yield* directory.getBinding(input.threadId);
+      const latestBindingForPersistence = settledBindingForPersistence;
       if (
         continuationFence === undefined ||
         (Option.isSome(latestBindingForPersistence) &&
           matchesContinuationBinding(latestBindingForPersistence.value, continuationFence))
       ) {
-        const persistenceBase =
-          Option.isSome(latestBindingForPersistence)
-            ? latestBindingForPersistence.value
-            : {
-                threadId: input.threadId,
-                provider: routed.adapter.provider,
-                providerInstanceId: routed.instanceId,
-                runtimePayload: null,
-              };
+        const persistenceBase = Option.isSome(latestBindingForPersistence)
+          ? latestBindingForPersistence.value
+          : {
+              threadId: input.threadId,
+              provider: routed.adapter.provider,
+              providerInstanceId: routed.instanceId,
+              runtimePayload: null,
+            };
         const persistedBinding = {
           ...persistenceBase,
           provider: routed.adapter.provider,
@@ -2033,34 +2191,36 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
           runtimePayload: {
             ...readRuntimePayload(persistenceBase.runtimePayload),
-            ...(input.modelSelection !== undefined
-              ? { modelSelection: input.modelSelection }
-              : {}),
-            ...(input.axisContextDigest
-              ? { axisContextDigest: input.axisContextDigest }
-              : {}),
+            ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+            ...(input.axisContextDigest ? { axisContextDigest: input.axisContextDigest } : {}),
             activeTurnId: turn.turnId,
             // Admission and marker consumption must survive the same restart.
             continueAfterServerUpdate: null,
             continueAfterServerUpdatePrepared: null,
+            ...(continuationFence === undefined ? { [NORMAL_TURN_EFFECT_PAYLOAD_KEY]: null } : {}),
             lastRuntimeEvent: "provider.sendTurn",
             lastRuntimeEventAt: yield* nowIso,
           },
         } satisfies ProviderSessionDirectory.ProviderRuntimeBinding;
-        if (continuationFence === undefined) {
-          yield* directory.upsert(persistedBinding);
-        } else if (
+        if (
           Option.isSome(latestBindingForPersistence) &&
-          matchesContinuationBinding(latestBindingForPersistence.value, continuationFence)
+          (continuationFence === undefined ||
+            matchesContinuationBinding(latestBindingForPersistence.value, continuationFence))
         ) {
           const persisted = yield* compareAndSetContinuationBinding(
             latestBindingForPersistence.value,
             persistedBinding,
           );
           if (!persisted) {
-            yield* Effect.logWarning("provider turn persistence lost its continuation binding CAS", {
+            if (continuationFence === undefined) {
+              return yield* toValidationError(
+                "ProviderService.sendTurn",
+                `Normal turn for thread '${input.threadId}' may have been accepted but settlement lost CAS; automatic retry is blocked.`,
+              );
+            }
+            yield* Effect.logWarning("provider turn persistence lost its binding CAS", {
               threadId: input.threadId,
-              idempotencyKey: continuationFence.idempotencyKey,
+              idempotencyKey: continuationFence?.idempotencyKey,
             });
           }
         }
@@ -2078,6 +2238,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       return turn;
     }).pipe(
+      (effect) => withThreadDispatch(input.threadId, effect),
       withMetrics({
         counter: providerTurnsTotal,
         timer: providerTurnDuration,
