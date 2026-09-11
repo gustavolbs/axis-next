@@ -1,11 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off - diff digest binds review to the exact patch in scope.
 import * as NodeCrypto from "node:crypto";
 import {
+  AxisContextId,
   AxisContextProjectScope,
   AxisSkillId,
   AxisTaskStepId,
   CheckpointRef,
   CommandId,
+  EnvironmentId,
   type OrchestrationCheckpointFile,
   ThreadId,
   TurnId,
@@ -135,28 +137,27 @@ export interface AxisReviewEvidenceRequest {
   readonly verdict: AxisReviewVerdict;
   readonly summary: string;
   readonly reason?: string | null;
-  readonly findings?: ReadonlyArray<AxisReviewFinding["Type"]>;
+  readonly findings?: ReadonlyArray<AxisReviewFinding>;
   readonly ruleSourcesUsed?: ReadonlyArray<string>;
 }
 
-export interface AxisReviewEvidenceService {
-  readonly capture: (
-    caller: { readonly environmentId: string; readonly contextId: string },
-    request: AxisReviewEvidenceRequest,
-  ) => Effect.Effect<AxisReviewEvidence, AxisReviewEvidenceError>;
-  readonly verifyCurrentDigest: (
-    caller: { readonly environmentId: string; readonly contextId: string },
-    evidence: AxisReviewEvidence,
-  ) => Effect.Effect<boolean, AxisReviewEvidenceError>;
-  readonly listForScope: (
-    caller: { readonly environmentId: string; readonly contextId: string },
-    scope: AxisContextProjectScope,
-  ) => Effect.Effect<ReadonlyArray<AxisReviewEvidence>, AxisReviewEvidenceError>;
-}
-
-export class AxisReviewEvidenceService extends Context.Service<AxisReviewEvidenceService>()(
-  "t3/axis/tasks/AxisReviewEvidence",
-) {}
+export class AxisReviewEvidenceService extends Context.Service<
+  AxisReviewEvidenceService,
+  {
+    readonly capture: (
+      caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
+      request: AxisReviewEvidenceRequest,
+    ) => Effect.Effect<AxisReviewEvidence, AxisReviewEvidenceError>;
+    readonly verifyCurrentDigest: (
+      caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
+      evidence: AxisReviewEvidence,
+    ) => Effect.Effect<boolean, AxisReviewEvidenceError>;
+    readonly listForScope: (
+      caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
+      scope: AxisContextProjectScope,
+    ) => Effect.Effect<ReadonlyArray<AxisReviewEvidence>, AxisReviewEvidenceError>;
+  }
+>()("t3/axis/tasks/AxisReviewEvidence/AxisReviewEvidenceService") {}
 
 const digestFor = (input: {
   readonly fromCheckpointRef: CheckpointRef | null;
@@ -175,7 +176,7 @@ const digestFor = (input: {
         headOid: input.headOid,
         baseRefName: input.baseRefName,
         headRefName: input.headRefName,
-        files: input.files.map((file) => [file.path, file.kind, file.insertions, file.deletions]),
+        files: input.files.map((file) => [file.path, file.kind, file.additions, file.deletions]),
         diff: input.diff,
       }),
       "utf8",
@@ -192,7 +193,7 @@ export const make = Effect.gen(function* () {
   const reviews = new Map<string, AxisReviewEvidence>();
 
   const authorize = (
-    caller: { readonly environmentId: string; readonly contextId: string },
+    caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
     scope: AxisContextProjectScope,
     operation: "read" | "write",
   ) =>
@@ -238,7 +239,7 @@ export const make = Effect.gen(function* () {
       });
     });
 
-  const capture: AxisReviewEvidenceService["capture"] = (caller, raw) =>
+  const capture: AxisReviewEvidenceService["Service"]["capture"] = (caller, raw) =>
     Effect.gen(function* () {
       const request = yield* Schema.decodeUnknownEffect(
         Schema.Struct({
@@ -316,7 +317,7 @@ export const make = Effect.gen(function* () {
         });
       }
       const capturedAt = DateTime.formatIso(yield* DateTime.now);
-      const evidence = Schema.decodeUnknownSync(AxisReviewEvidence)({
+      const evidence = yield* Schema.decodeUnknownEffect(AxisReviewEvidence)({
         scope: request.scope,
         stepId: request.stepId,
         skillId: request.skillId,
@@ -340,7 +341,7 @@ export const make = Effect.gen(function* () {
         headRefName: resolvedContext?.headRefName ?? null,
         files: diffResult.files.map((file) => ({
           path: file.path,
-          insertions: file.insertions,
+          insertions: file.additions,
           deletions: file.deletions,
           kind: file.kind,
         })),
@@ -350,12 +351,20 @@ export const make = Effect.gen(function* () {
         reason: request.reason ?? null,
         ruleSourcesUsed: request.ruleSourcesUsed ?? [],
         capturedAt,
-      });
+      }).pipe(
+        Effect.mapError(
+          () =>
+            new AxisReviewEvidenceError({
+              reason: "invalid_input",
+              message: "Captured review evidence did not validate.",
+            }),
+        ),
+      );
       reviews.set(reviewKey(request.scope, request.commandId, request.turnId), evidence);
       return evidence;
     });
 
-  const verifyCurrentDigest: AxisReviewEvidenceService["verifyCurrentDigest"] = (
+  const verifyCurrentDigest: AxisReviewEvidenceService["Service"]["verifyCurrentDigest"] = (
     caller,
     evidence,
   ) =>
@@ -396,7 +405,10 @@ export const make = Effect.gen(function* () {
         });
       }
       const current = digestFor({
-        fromCheckpointRef: evidence.fromCheckpointRef,
+        fromCheckpointRef:
+          evidence.fromCheckpointRef === null
+            ? null
+            : CheckpointRef.make(evidence.fromCheckpointRef),
         toCheckpointRef: context.value.toCheckpointRef,
         headOid: evidence.headOid,
         baseRefName: evidence.baseRefName,
@@ -407,7 +419,7 @@ export const make = Effect.gen(function* () {
       return current === evidence.diffDigest;
     });
 
-  const listForScope: AxisReviewEvidenceService["listForScope"] = (caller, scope) =>
+  const listForScope: AxisReviewEvidenceService["Service"]["listForScope"] = (caller, scope) =>
     Effect.gen(function* () {
       yield* authorize(caller, scope, "read");
       return [...reviews.values()].filter(
@@ -418,7 +430,11 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  return { capture, verifyCurrentDigest, listForScope } satisfies AxisReviewEvidenceService;
+  return {
+    capture,
+    verifyCurrentDigest,
+    listForScope,
+  } satisfies AxisReviewEvidenceService["Service"];
 });
 
 export const layer = Layer.effect(AxisReviewEvidenceService, make);

@@ -14,6 +14,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
 const ID_MAX = 256;
@@ -99,12 +100,13 @@ export interface AxisTrelloWriteAdapter {
   ) => Effect.Effect<{ readonly cardId: string }, AxisTrelloError>;
 }
 
-export class AxisTrelloWriteAdapterService extends Context.Service<AxisTrelloWriteAdapter>()(
-  "t3/axis/tasks/AxisTrelloWriteAdapter",
-) {}
+export class AxisTrelloWriteAdapterService extends Context.Service<
+  AxisTrelloWriteAdapterService,
+  AxisTrelloWriteAdapter
+>()("t3/axis/tasks/AxisTrelloWriteAdapter/AxisTrelloWriteAdapterService") {}
 
 const assertTrelloSource = (
-  source: AxisTaskSource["Type"] | undefined,
+  source: AxisTaskSource | undefined,
   identity: AxisTrelloBindingIdentity,
 ): Effect.Effect<AxisTrelloCardId, AxisTrelloError> => {
   if (source === undefined || source.kind !== "trello") {
@@ -139,15 +141,15 @@ export const makeAxisTrelloWriteAdapterNoop = (): AxisTrelloWriteAdapter => ({
   moveCard: (_identity, input) =>
     Effect.succeed({ cardId: input.cardId, listId: input.targetListId }),
   addComment: (_identity, input) =>
-    Effect.succeed({
+    Effect.map(Random.next, (n) => ({
       cardId: input.cardId,
-      commentId: `trello-comment-stub:${input.cardId}:${Math.random().toString(36).slice(2, 10)}`,
-    }),
+      commentId: `trello-comment-stub:${input.cardId}:${n.toString(36).slice(2, 10)}`,
+    })),
   archiveCard: (_identity, cardId) => Effect.succeed({ cardId }),
 });
 
 export const withTrelloConfirmation = (
-  source: AxisTaskSource["Type"] | undefined,
+  source: AxisTaskSource | undefined,
   identity: AxisTrelloBindingIdentity,
   commandId: CommandId,
   inner: AxisTrelloWriteAdapter,

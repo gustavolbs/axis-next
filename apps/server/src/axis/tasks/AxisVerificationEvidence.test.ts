@@ -1,6 +1,9 @@
+// @effect-diagnostics globalErrorInEffectFailure:off - test fixtures fail prepared layers with plain errors.
 import { assert, it } from "@effect/vitest";
 import {
+  AxisContextId,
   AxisContextProjectScope,
+  EnvironmentId,
   AxisSkillId,
   AxisTaskStepId,
   CommandId,
@@ -20,7 +23,10 @@ const scope = Schema.decodeUnknownSync(AxisContextProjectScope)({
   contextId: "company",
   project: { environmentId: "env", projectId: "project" },
 });
-const caller = { environmentId: "env", contextId: "company" };
+const caller = {
+  environmentId: EnvironmentId.make("env"),
+  contextId: AxisContextId.make("company"),
+};
 
 const authorizedScope = Layer.succeed(AxisProjectScope, {
   resolveProject: () => Effect.void,

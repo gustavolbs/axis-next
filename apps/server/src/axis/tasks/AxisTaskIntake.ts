@@ -2,13 +2,16 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  AxisContextId,
   AxisContextProjectScope,
   AxisTaskAcceptanceCriterion,
   AxisTaskExtension,
   AxisTaskId,
   AxisTaskStepId,
   AxisTaskStep,
+  AxisWorkHubSourceId,
   CommandId,
+  EnvironmentId,
   ThreadId,
   type AxisWorkHubCachedItem,
 } from "@t3tools/contracts";
@@ -96,22 +99,21 @@ export class AxisTaskIntakeError extends Schema.TaggedErrorClass<AxisTaskIntakeE
 ) {}
 
 export interface AxisTaskIntakeResult {
-  readonly task: AxisTaskExtension["Type"];
-  readonly source: AxisTaskIntakeSource["Type"];
+  readonly task: AxisTaskExtension;
+  readonly source: AxisTaskIntakeSource;
   readonly fingerprint: string;
   readonly workHubItem: AxisWorkHubCachedItem | null;
 }
 
-export interface AxisTaskIntakeService {
-  readonly intake: (
-    caller: { readonly environmentId: string; readonly contextId: string },
-    request: AxisTaskIntakeRequest,
-  ) => Effect.Effect<AxisTaskIntakeResult, AxisTaskIntakeError>;
-}
-
-export class AxisTaskIntakeService extends Context.Service<AxisTaskIntakeService>()(
-  "t3/axis/tasks/AxisTaskIntake",
-) {}
+export class AxisTaskIntakeService extends Context.Service<
+  AxisTaskIntakeService,
+  {
+    readonly intake: (
+      caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
+      request: AxisTaskIntakeRequest,
+    ) => Effect.Effect<AxisTaskIntakeResult, AxisTaskIntakeError>;
+  }
+>()("t3/axis/tasks/AxisTaskIntake/AxisTaskIntakeService") {}
 
 const fingerprintFor = (input: {
   scope: AxisContextProjectScope;
@@ -140,7 +142,7 @@ const fingerprintFor = (input: {
 const deriveSource = (
   source: AxisTaskIntakeSource,
   workHubItem: AxisWorkHubCachedItem | null,
-): AxisTaskExtension["Type"]["source"] => {
+): AxisTaskExtension["source"] => {
   if (source.kind === "local-text") {
     return {
       kind: "local",
@@ -179,7 +181,7 @@ export const make = Effect.gen(function* () {
   const cache = yield* AxisWorkHubCacheStore;
 
   const authorize = (
-    caller: { readonly environmentId: string; readonly contextId: string },
+    caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
     target: AxisContextProjectScope,
     operation: "read" | "write",
   ) =>
@@ -199,7 +201,7 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  const intake: AxisTaskIntakeService["intake"] = (caller, raw) =>
+  const intake: AxisTaskIntakeService["Service"]["intake"] = (caller, raw) =>
     Effect.gen(function* () {
       const request = yield* Schema.decodeUnknownEffect(
         Schema.Struct({
@@ -238,7 +240,7 @@ export const make = Effect.gen(function* () {
 
       let workHubItem: AxisWorkHubCachedItem | null = null;
       if (request.source.kind === "work-hub-item") {
-        const snapshot = yield* cache.get(request.source.sourceId).pipe(
+        const snapshot = yield* cache.get(AxisWorkHubSourceId.make(request.source.sourceId)).pipe(
           Effect.mapError(
             () =>
               new AxisTaskIntakeError({
@@ -289,12 +291,12 @@ export const make = Effect.gen(function* () {
           text: criterion.text,
         }),
       );
-      const steps: AxisTaskStep["Type"][] = request.steps.map((step) =>
+      const steps: AxisTaskStep[] = request.steps.map((step) =>
         Schema.decodeUnknownSync(AxisTaskStep)({
           id: AxisTaskStepId.make(step.id),
           skillId: Schema.decodeSync(Schema.String.pipe(Schema.brand("AxisSkillId")))(
             step.skillId,
-          ) as unknown as AxisTaskStep["Type"]["skillId"],
+          ) as unknown as AxisTaskStep["skillId"],
           status: "not-executed" as const,
           turnId: null,
           commandId: null,
@@ -304,7 +306,7 @@ export const make = Effect.gen(function* () {
         }),
       );
       const taskSource = deriveSource(request.source, workHubItem);
-      const task = Schema.decodeUnknownSync(AxisTaskExtension)({
+      const task = yield* Schema.decodeUnknownEffect(AxisTaskExtension)({
         id: taskId,
         scope: request.scope,
         threadId: request.threadId,
@@ -317,7 +319,15 @@ export const make = Effect.gen(function* () {
         revision: 0,
         createdAt: now,
         updatedAt: now,
-      });
+      }).pipe(
+        Effect.mapError(
+          () =>
+            new AxisTaskIntakeError({
+              reason: "invalid_input",
+              message: "Constructed task did not validate.",
+            }),
+        ),
+      );
       const created = yield* taskStore.create(task, request.commandId).pipe(
         Effect.mapError((cause) => {
           if (cause._tag === "AxisTaskValidationError") {
@@ -352,7 +362,7 @@ export const make = Effect.gen(function* () {
       } satisfies AxisTaskIntakeResult;
     });
 
-  return { intake } satisfies AxisTaskIntakeService;
+  return { intake } satisfies AxisTaskIntakeService["Service"];
 });
 
 export const layer = Layer.effect(AxisTaskIntakeService, make);

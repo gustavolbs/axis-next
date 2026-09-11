@@ -1,14 +1,19 @@
+// @effect-diagnostics globalErrorInEffectFailure:off
 import { assert, it } from "@effect/vitest";
 import {
+  AxisContextId,
   AxisContextProjectScope,
+  AxisTaskConflictError,
   AxisTaskId,
   AxisTaskSource,
   AxisWorkHubCachedItem,
   AxisWorkHubSourceId,
   CommandId,
+  EnvironmentId,
   ProviderInstanceId,
   ThreadId,
   type AxisWorkHubCacheSnapshot,
+  type AxisWorkHubSourceStatus,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -25,28 +30,31 @@ const scope = Schema.decodeUnknownSync(AxisContextProjectScope)({
   contextId: "company",
   project: { environmentId: "env", projectId: "project" },
 });
-const caller = { environmentId: "env", contextId: "company" };
+const caller = {
+  environmentId: EnvironmentId.make("env"),
+  contextId: AxisContextId.make("company"),
+};
 
 const now = "2026-09-11T10:00:00.000Z";
 
-const fakeTaskStore = (existing?: { id: AxisTaskId["Type"]; threadId: ThreadId["Type"] }) =>
-  Layer.succeed(AxisTaskStore, {
+const fakeTaskStore = (_existing?: { id: AxisTaskId; threadId: ThreadId }) => {
+  const service: AxisTaskStore["Service"] = {
     get: () => Effect.succeed(Option.none()),
     list: () => Effect.succeed([]),
-    create: (task, commandId) =>
+    create: (task, _commandId) =>
       Effect.succeed({
         ...task,
         id: task.id,
         revision: 0,
       }),
     update: (mutation) => Effect.succeed(mutation.task),
-    pause: (input) => Effect.fail({ _tag: "AxisTaskConflictError", taskId: input.taskId } as never),
-    reopen: (input) =>
-      Effect.fail({ _tag: "AxisTaskConflictError", taskId: input.taskId } as never),
-    unlinkSource: (input) =>
-      Effect.fail({ _tag: "AxisTaskConflictError", taskId: input.taskId } as never),
+    pause: (_input) => Effect.fail(new AxisTaskConflictError({ taskId: _input.taskId })),
+    reopen: (_input) => Effect.fail(new AxisTaskConflictError({ taskId: _input.taskId })),
+    unlinkSource: (_input) => Effect.fail(new AxisTaskConflictError({ taskId: _input.taskId })),
     listLifecycle: () => Effect.succeed([]),
-  } as unknown as AxisTaskStore["Service"]);
+  };
+  return Layer.succeed(AxisTaskStore, service);
+};
 
 const emptyCacheStore = Layer.succeed(AxisWorkHubCacheStore, {
   get: () => Effect.succeed(null),
@@ -57,7 +65,7 @@ const emptyCacheStore = Layer.succeed(AxisWorkHubCacheStore, {
   remove: () => Effect.void,
 } as unknown as AxisWorkHubCacheStore["Service"]);
 
-const jiraItem = (): AxisWorkHubCachedItem["Type"] =>
+const jiraItem = (): AxisWorkHubCachedItem =>
   Schema.decodeUnknownSync(AxisWorkHubCachedItem)({
     id: "wh-item-1",
     sourceId: AxisWorkHubSourceId.make("jira-source"),
@@ -94,18 +102,21 @@ const jiraItem = (): AxisWorkHubCachedItem["Type"] =>
     updatedAt: now,
   });
 
-const jiraSnapshot = (): AxisWorkHubCacheSnapshot["Type"] => ({
+const jiraSnapshot = (): AxisWorkHubCacheSnapshot => ({
   sourceId: AxisWorkHubSourceId.make("jira-source"),
-  contextId: "company",
-  provider: { environmentId: "env", instanceId: ProviderInstanceId.make("codex") },
+  contextId: AxisContextId.make("company"),
+  provider: {
+    environmentId: EnvironmentId.make("env"),
+    instanceId: ProviderInstanceId.make("codex"),
+  },
   capabilityId: "jira" as never,
   items: [jiraItem()],
   cursor: null,
   refreshedAt: now,
-  expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1_000).toISOString(),
+  expiresAt: "2026-09-11T14:00:00.000Z",
 });
 
-const buildCacheStore = (snapshot: AxisWorkHubCacheSnapshot["Type"] | null) =>
+const buildCacheStore = (snapshot: AxisWorkHubCacheSnapshot | null) =>
   Layer.succeed(AxisWorkHubCacheStore, {
     get: () => Effect.succeed(snapshot),
     list: () => Effect.succeed(snapshot === null ? [] : [snapshot]),
@@ -115,18 +126,20 @@ const buildCacheStore = (snapshot: AxisWorkHubCacheSnapshot["Type"] | null) =>
     remove: () => Effect.void,
   } as unknown as AxisWorkHubCacheStore["Service"]);
 
-const buildMissingSnapshotCacheStore = () =>
-  Layer.succeed(AxisWorkHubCacheStore, {
+const buildMissingSnapshotCacheStore = () => {
+  const service: AxisWorkHubCacheStore["Service"] = {
     get: (sourceId) =>
       sourceId === AxisWorkHubSourceId.make("missing-source")
         ? Effect.succeed(null)
         : Effect.succeed(jiraSnapshot()),
-    list: () => Effect.succeed([]),
-    listStatuses: () => Effect.succeed([]),
+    list: Effect.succeed<ReadonlyArray<AxisWorkHubCacheSnapshot>>([]),
+    listStatuses: Effect.succeed<ReadonlyArray<AxisWorkHubSourceStatus>>([]),
     replace: () => Effect.void,
     recordFailure: () => Effect.void,
     remove: () => Effect.void,
-  } as unknown as AxisWorkHubCacheStore["Service"]);
+  };
+  return Layer.succeed(AxisWorkHubCacheStore, service);
+};
 
 const authorizedScope = Layer.succeed(AxisProjectScope, {
   resolveProject: () => Effect.void,

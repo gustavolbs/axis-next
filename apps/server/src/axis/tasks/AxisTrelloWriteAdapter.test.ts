@@ -35,7 +35,7 @@ const identity = {
   mcpName: "trello-mcp",
 };
 
-const trelloSource = (overrides: Partial<AxisTaskSource["Type"] & { kind: "trello" }> = {}) => ({
+const trelloSource = (overrides: Partial<AxisTaskSource & { kind: "trello" }> = {}) => ({
   kind: "trello" as const,
   cardId: overrides.cardId ?? "card-1",
   ...(overrides.url === undefined ? {} : { url: overrides.url }),
@@ -95,7 +95,7 @@ it.effect("rejects a non-Trello task source", () =>
   Effect.gen(function* () {
     const inner = makeAxisTrelloWriteAdapterNoop();
     const confirmed = withTrelloConfirmation(
-      { kind: "local", label: "manual" } as unknown as AxisTaskSource["Type"],
+      { kind: "local", label: "manual" } as unknown as AxisTaskSource,
       identity,
       CommandId.make("command-trello"),
       inner,

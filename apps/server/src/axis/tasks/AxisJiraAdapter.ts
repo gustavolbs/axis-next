@@ -12,6 +12,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
 const CONFIRMATION_NOTE_MAX = 2_000;
@@ -91,12 +92,13 @@ export interface AxisJiraAdapter {
   >;
 }
 
-export class AxisJiraAdapterService extends Context.Service<AxisJiraAdapter>()(
-  "t3/axis/tasks/AxisJiraAdapter",
-) {}
+export class AxisJiraAdapterService extends Context.Service<
+  AxisJiraAdapterService,
+  AxisJiraAdapter
+>()("t3/axis/tasks/AxisJiraAdapter/AxisJiraAdapterService") {}
 
 const assertJiraSource = (
-  source: AxisTaskSource["Type"] | undefined,
+  source: AxisTaskSource | undefined,
   identity: AxisJiraBindingIdentity,
 ): Effect.Effect<AxisJiraNativeIssueKey, AxisJiraError> => {
   if (source === undefined || source.kind !== "jira") {
@@ -129,8 +131,9 @@ const assertJiraSource = (
 
 export const makeAxisJiraAdapterNoop = (): AxisJiraAdapter => ({
   postComment: (_identity, input) =>
-    Effect.succeed({
-      commentId: `jira-comment-stub:${input.issueKey}:${Math.random().toString(36).slice(2, 10)}`,
+    Effect.gen(function* () {
+      const suffix = (yield* Random.next).toString(36).slice(2, 10);
+      return { commentId: `jira-comment-stub:${input.issueKey}:${suffix}` };
     }),
   transitionIssue: (_identity, input) =>
     Effect.succeed({
@@ -143,7 +146,7 @@ export const makeAxisJiraAdapterNoop = (): AxisJiraAdapter => ({
  * scope alignment. The adapter itself never owns transport; the binding is
  * supplied at composition time. */
 export const withJiraConfirmation = (
-  source: AxisTaskSource["Type"] | undefined,
+  source: AxisTaskSource | undefined,
   identity: AxisJiraBindingIdentity,
   commandId: CommandId,
   inner: AxisJiraAdapter,

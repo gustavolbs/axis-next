@@ -32,7 +32,7 @@ const identity = {
   provider,
 };
 
-const jiraSource = (overrides: Partial<AxisTaskSource["Type"] & { kind: "jira" }> = {}) => ({
+const jiraSource = (overrides: Partial<AxisTaskSource & { kind: "jira" }> = {}) => ({
   kind: "jira" as const,
   issueKey: overrides.issueKey ?? "AX-42",
   ...(overrides.url === undefined ? {} : { url: overrides.url }),
@@ -92,7 +92,7 @@ it.layer(noopLayer)("AxisJiraAdapter confirmation", (it) => {
     Effect.gen(function* () {
       const inner = makeAxisJiraAdapterNoop();
       const confirmed = withJiraConfirmation(
-        { kind: "local", label: "manual" } as unknown as AxisTaskSource["Type"],
+        { kind: "local", label: "manual" } as unknown as AxisTaskSource,
         identity,
         CommandId.make("command-jira"),
         inner,

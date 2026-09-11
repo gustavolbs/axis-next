@@ -43,7 +43,7 @@ export function formatScheduledActivitySchedule(schedule: ScheduledActivitySched
 
 export function validateScheduledActivityForm(input: {
   readonly name: string;
-  readonly actionKind: "workHubSync" | "agentTurn";
+  readonly actionKind: "workHubSync" | "agentTurn" | "learningAnalysis";
   readonly sourceIds: ReadonlyArray<string>;
   readonly projectId: string;
   readonly providerInstanceId: string;
@@ -59,6 +59,9 @@ export function validateScheduledActivityForm(input: {
   readonly timezone: string;
 }): string | null {
   if (input.name.trim().length === 0) return "Enter a name for this activity.";
+  if (input.actionKind === "learningAnalysis") {
+    return "Learning analyses are scheduled by the server and cannot be edited from here.";
+  }
   if (input.actionKind === "workHubSync") {
     if (input.sourceIds.length === 0) return "Select at least one Work Hub source.";
   } else {

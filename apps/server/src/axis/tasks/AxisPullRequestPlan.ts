@@ -142,15 +142,14 @@ export interface AxisPullRequestPlanRequest {
   readonly sourceOverride?: string | null;
 }
 
-export interface AxisPullRequestPlanService {
-  readonly prepare: (
-    request: AxisPullRequestPlanRequest,
-  ) => Effect.Effect<AxisPullRequestPlan, AxisPullRequestPlanError>;
-}
-
-export class AxisPullRequestPlanService extends Context.Service<AxisPullRequestPlanService>()(
-  "t3/axis/tasks/AxisPullRequestPlan",
-) {}
+export class AxisPullRequestPlanService extends Context.Service<
+  AxisPullRequestPlanService,
+  {
+    readonly prepare: (
+      request: AxisPullRequestPlanRequest,
+    ) => Effect.Effect<AxisPullRequestPlan, AxisPullRequestPlanError>;
+  }
+>()("t3/axis/tasks/AxisPullRequestPlan/AxisPullRequestPlanService") {}
 
 const RULE_CATEGORY_TO_CHECK: Readonly<Record<string, string>> = {
   tool: "Run the project's tooling check.",
@@ -221,9 +220,9 @@ const resolveSourceAndDestination = (
 const pickApplicableRules = (
   rules: ReadonlyArray<AxisProjectRule>,
   touchedPaths: ReadonlyArray<string>,
-): ReadonlyArray<AxisPullRequestRuleRef["Type"]> => {
+): ReadonlyArray<AxisPullRequestRuleRef> => {
   const pathSet = new Set(touchedPaths.map((path) => path.trim()));
-  const matches: AxisPullRequestRuleRef["Type"][] = [];
+  const matches: AxisPullRequestRuleRef[] = [];
   for (const rule of rules) {
     if (rule.paths.length === 0) {
       matches.push({
@@ -256,7 +255,7 @@ const renderTemplate = (
     branchPolicy: AxisPullRequestBranchPolicy;
     source: string;
     destination: string;
-    applicableRules: ReadonlyArray<AxisPullRequestRuleRef["Type"]>;
+    applicableRules: ReadonlyArray<AxisPullRequestRuleRef>;
     blockers: ReadonlyArray<string>;
     requiredChecks: ReadonlyArray<{ command: string; reason: string }>;
   },
@@ -287,7 +286,8 @@ const renderTemplate = (
 export const make = Effect.gen(function* () {
   const profiles = yield* AxisProjectProfileStore;
 
-  const prepare: AxisPullRequestPlanService["prepare"] = (raw) =>
+  // @effect-diagnostics preferSchemaOverJson:off - plan digest hashes the proposal inputs.
+  const prepare: AxisPullRequestPlanService["Service"]["prepare"] = (raw) =>
     Effect.gen(function* () {
       const request = yield* Schema.decodeUnknownEffect(
         Schema.Struct({
@@ -370,7 +370,7 @@ export const make = Effect.gen(function* () {
         blockers: blockerTexts,
         requiredChecks,
       });
-      const plan = Schema.decodeUnknownSync(AxisPullRequestPlan)({
+      const plan = yield* Schema.decodeUnknownEffect(AxisPullRequestPlan)({
         scope: request.scope,
         commandId: request.commandId,
         projectKey: request.projectKey,
@@ -400,11 +400,19 @@ export const make = Effect.gen(function* () {
         applicableRules: applicable,
         requiredChecks,
         blockers: blockerTexts,
-      });
+      }).pipe(
+        Effect.mapError(
+          () =>
+            new AxisPullRequestPlanError({
+              reason: "invalid_input",
+              message: "Pull request plan did not validate.",
+            }),
+        ),
+      );
       return plan;
     });
 
-  return { prepare } satisfies AxisPullRequestPlanService;
+  return { prepare } satisfies AxisPullRequestPlanService["Service"];
 });
 
 export const layer = Layer.effect(AxisPullRequestPlanService, make);

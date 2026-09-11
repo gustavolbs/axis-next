@@ -1,8 +1,10 @@
 import {
+  AxisContextId,
   AxisContextProjectScope,
   AxisSkillId,
   AxisTaskStepId,
   CommandId,
+  EnvironmentId,
   TurnId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -87,7 +89,7 @@ export const AxisVerificationEvidence = Schema.Struct({
   command: Schema.NullOr(AxisVerificationCommand),
   coveredFiles: Schema.Array(
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(FILE_PATH_MAX)),
-  ).pipe(Schema.withDecodingDefault((): unknown => [])),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   observedAt: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
 });
 export type AxisVerificationEvidence = typeof AxisVerificationEvidence.Type;
@@ -165,11 +167,11 @@ export interface AxisVerificationRecordInput {
 
 export interface AxisVerificationReporter {
   readonly record: (
-    caller: { readonly environmentId: string; readonly contextId: string },
+    caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
     input: AxisVerificationRecordInput,
   ) => Effect.Effect<AxisVerificationEvidence, AxisVerificationStoreError>;
   readonly markNotApplicable: (
-    caller: { readonly environmentId: string; readonly contextId: string },
+    caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
     input: Omit<AxisVerificationRecordInput, "command" | "kind"> & {
       readonly kind?: AxisVerificationKind;
       readonly reason: string;
@@ -182,9 +184,41 @@ export interface AxisVerificationReporter {
   ) => Effect.Effect<AxisVerificationCoverage, AxisVerificationStoreError>;
 }
 
-export class AxisVerificationReporterService extends Context.Service<AxisVerificationReporterService>()(
-  "t3/axis/tasks/AxisVerificationReporter",
-) {}
+export class AxisVerificationReporterService extends Context.Service<
+  AxisVerificationReporterService,
+  AxisVerificationReporter
+>()("t3/axis/tasks/AxisVerificationEvidence/AxisVerificationReporterService") {}
+
+const buildEvidence = (
+  input: AxisVerificationRecordInput,
+  status: AxisVerificationStatus,
+  command: AxisVerificationCommand | null,
+) => {
+  const fingerprint = fingerprintFor({
+    scope: input.scope,
+    stepId: input.stepId,
+    skillId: input.skillId,
+    commandId: input.commandId,
+    kind: input.kind,
+    command,
+  });
+  const reason = (input.reason?.trim() ?? noteFor(command, status)).slice(0, REASON_MAX);
+  return Schema.decodeUnknownSync(AxisVerificationEvidence)({
+    scope: input.scope,
+    stepId: input.stepId,
+    skillId: input.skillId,
+    commandId: input.commandId,
+    turnId: input.turnId,
+    kind: input.kind,
+    status,
+    fingerprint,
+    summary: input.summary,
+    reason,
+    command,
+    coveredFiles: [...(input.coveredFiles ?? [])],
+    observedAt: input.observedAt,
+  });
+};
 
 export const make = Effect.gen(function* () {
   const scope = yield* AxisProjectScope;
@@ -201,7 +235,7 @@ export const make = Effect.gen(function* () {
     `${scope.contextId}|${scope.project.environmentId}|${scope.project.projectId}|${stepId}|${fingerprint}`;
 
   const authorize = (
-    caller: { readonly environmentId: string; readonly contextId: string },
+    caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
     target: AxisContextProjectScope,
     operation: "read" | "write",
   ) =>
@@ -219,37 +253,6 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-
-  const buildEvidence = (
-    input: AxisVerificationRecordInput,
-    status: AxisVerificationStatus,
-    command: AxisVerificationCommand | null,
-  ) => {
-    const fingerprint = fingerprintFor({
-      scope: input.scope,
-      stepId: input.stepId,
-      skillId: input.skillId,
-      commandId: input.commandId,
-      kind: input.kind,
-      command,
-    });
-    const reason = (input.reason?.trim() ?? noteFor(command, status)).slice(0, REASON_MAX);
-    return Schema.decodeUnknownSync(AxisVerificationEvidence)({
-      scope: input.scope,
-      stepId: input.stepId,
-      skillId: input.skillId,
-      commandId: input.commandId,
-      turnId: input.turnId,
-      kind: input.kind,
-      status,
-      fingerprint,
-      summary: input.summary,
-      reason,
-      command,
-      coveredFiles: [...(input.coveredFiles ?? [])],
-      observedAt: input.observedAt,
-    });
-  };
 
   const record: AxisVerificationReporter["record"] = (caller, raw) =>
     Effect.gen(function* () {

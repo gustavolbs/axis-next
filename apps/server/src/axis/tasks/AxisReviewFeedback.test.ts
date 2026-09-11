@@ -1,5 +1,11 @@
+// @effect-diagnostics globalErrorInEffectFailure:off - test fixtures fail prepared layers with plain errors.
 import { assert, it } from "@effect/vitest";
-import { AxisContextProjectScope, AxisProjectLocator } from "@t3tools/contracts";
+import {
+  AxisContextId,
+  AxisContextProjectScope,
+  EnvironmentId,
+  AxisProjectLocator,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -19,7 +25,10 @@ const otherContextScope = Schema.decodeUnknownSync(AxisContextProjectScope)({
   contextId: "personal",
   project: { environmentId: "env", projectId: "project" },
 });
-const caller = { environmentId: "env", contextId: "company" };
+const caller = {
+  environmentId: EnvironmentId.make("env"),
+  contextId: AxisContextId.make("company"),
+};
 
 const authorizedScope = Layer.succeed(AxisProjectScope, {
   resolveProject: () => Effect.void,
@@ -158,7 +167,7 @@ it.layer(buildLayer())("AxisReviewFeedback", (it) => {
       assert.equal(derived.contextId, "company");
       assert.deepEqual(
         derived.project,
-        Schema.decodeUnknownSync(AxisProjectLocator)(otherProjectScope.project),
+        yield* Schema.decodeUnknownEffect(AxisProjectLocator)(otherProjectScope.project),
       );
     }),
   );

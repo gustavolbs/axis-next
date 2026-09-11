@@ -1,6 +1,9 @@
+// @effect-diagnostics globalErrorInEffectFailure:off - test fixtures fail prepared layers with plain errors.
 import { assert, it } from "@effect/vitest";
 import {
+  AxisContextId,
   AxisContextProjectScope,
+  EnvironmentId,
   AxisSkillId,
   AxisTaskStepId,
   CheckpointRef,
@@ -28,7 +31,10 @@ const scope = Schema.decodeUnknownSync(AxisContextProjectScope)({
   contextId: "company",
   project: { environmentId: "env", projectId: "project" },
 });
-const caller = { environmentId: "env", contextId: "company" };
+const caller = {
+  environmentId: EnvironmentId.make("env"),
+  contextId: AxisContextId.make("company"),
+};
 
 interface FakeCheckpointInput {
   readonly diff: string;
@@ -131,7 +137,7 @@ it.layer(
       files: [
         {
           path: "apps/server/src/parser.ts",
-          insertions: 1,
+          additions: 1,
           deletions: 0,
           kind: "modified",
         },
@@ -204,7 +210,7 @@ it.layer(
     Effect.gen(function* () {
       const service = yield* AxisReviewEvidenceService;
       const evidence = yield* service.capture(caller, baseRequest);
-      const altered = Schema.decodeUnknownSync(AxisReviewEvidence)({
+      const altered = yield* Schema.decodeUnknownEffect(AxisReviewEvidence)({
         ...evidence,
         diffDigest: "sha256:altered",
       });

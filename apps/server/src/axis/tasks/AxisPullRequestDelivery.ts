@@ -1,12 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off - delivery digest ties publication to the live diff.
 import * as NodeCrypto from "node:crypto";
 import {
+  AxisContextId,
   AxisContextProjectScope,
   CommandId,
+  EnvironmentId,
   type GitPreparePullRequestThreadInput,
   type GitPreparePullRequestThreadResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -77,16 +80,15 @@ export interface AxisPullRequestDeliveryInput {
   readonly authorizationNote?: string;
 }
 
-export interface AxisPullRequestDeliveryService {
-  readonly deliver: (
-    caller: { readonly environmentId: string; readonly contextId: string },
-    input: AxisPullRequestDeliveryInput,
-  ) => Effect.Effect<AxisPullRequestPublication, AxisPullRequestDeliveryError>;
-}
-
-export class AxisPullRequestDeliveryService extends Context.Service<AxisPullRequestDeliveryService>()(
-  "t3/axis/tasks/AxisPullRequestDelivery",
-) {}
+export class AxisPullRequestDeliveryService extends Context.Service<
+  AxisPullRequestDeliveryService,
+  {
+    readonly deliver: (
+      caller: { readonly environmentId: string; readonly contextId: string },
+      input: AxisPullRequestDeliveryInput,
+    ) => Effect.Effect<AxisPullRequestPublication, AxisPullRequestDeliveryError>;
+  }
+>()("t3/axis/tasks/AxisPullRequestDelivery/AxisPullRequestDeliveryService") {}
 
 const threadIdFor = (commandId: CommandId) =>
   Schema.decodeSync(Schema.String.pipe(Schema.brand("ThreadId")))(
@@ -108,7 +110,7 @@ export const make = Effect.gen(function* () {
   const publications = new Map<string, AxisPullRequestPublication>();
 
   const authorize = (
-    caller: { readonly environmentId: string; readonly contextId: string },
+    caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
     target: AxisContextProjectScope,
     operation: "read" | "write",
   ) =>
@@ -141,7 +143,7 @@ export const make = Effect.gen(function* () {
       });
     });
 
-  const deliver: AxisPullRequestDeliveryService["deliver"] = (caller, raw) =>
+  const deliver: AxisPullRequestDeliveryService["Service"]["deliver"] = (caller, raw) =>
     Effect.gen(function* () {
       const input = yield* Schema.decodeUnknownEffect(
         Schema.Struct({
@@ -160,21 +162,26 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-      yield* authorize(caller, input.plan.scope, "write");
+      const plan = input.plan as AxisPullRequestPlan;
+      const authorizedCaller = {
+        environmentId: EnvironmentId.make(caller.environmentId),
+        contextId: AxisContextId.make(caller.contextId),
+      };
+      yield* authorize(authorizedCaller, plan.scope, "write");
       const expectedDigest = digestFor({
-        commandId: input.plan.commandId,
+        commandId: plan.commandId,
         currentDiffDigest: input.currentDiffDigest,
-        source: input.plan.source,
-        destination: input.plan.destination,
-        branch: input.plan.branch,
+        source: plan.source,
+        destination: plan.destination,
+        branch: plan.branch,
       });
-      if (input.planDigest !== input.plan.diffDigest || expectedDigest !== input.plan.diffDigest) {
+      if (input.planDigest !== plan.diffDigest || expectedDigest !== plan.diffDigest) {
         return yield* new AxisPullRequestDeliveryError({
           reason: "plan_mismatch",
           message: "Plan digest does not match the current diff digest.",
         });
       }
-      const previous = yield* resolveExisting(input.plan.commandId, input.plan.diffDigest).pipe(
+      const previous = yield* resolveExisting(plan.commandId, plan.diffDigest).pipe(
         Effect.orElseSucceed(() => null),
       );
       if (previous !== null && previous.state === "submitted" && previous.url !== null) {
@@ -184,9 +191,9 @@ export const make = Effect.gen(function* () {
       const result = yield* git
         .preparePullRequestThread({
           cwd: input.cwd,
-          reference: `axis:${input.plan.commandId}`,
+          reference: `axis:${plan.commandId}`,
           mode: "worktree",
-          threadId: threadIdFor(input.plan.commandId),
+          threadId: threadIdFor(plan.commandId),
         } satisfies GitPreparePullRequestThreadInput)
         .pipe(
           Effect.mapError(
@@ -204,11 +211,11 @@ export const make = Effect.gen(function* () {
             "The pull request head could not be checked out; reconcile manually before reissuing.",
         });
       }
-      const deliveredAt = new Date().toISOString();
-      const publication = Schema.decodeUnknownSync(AxisPullRequestPublication)({
-        scope: input.plan.scope,
-        commandId: input.plan.commandId,
-        planDigest: input.plan.diffDigest,
+      const deliveredAt = DateTime.formatIso(yield* DateTime.now);
+      const publication = yield* Schema.decodeUnknownEffect(AxisPullRequestPublication)({
+        scope: plan.scope,
+        commandId: plan.commandId,
+        planDigest: plan.diffDigest,
         state: "submitted" as const,
         url: result.pullRequest.url,
         baseBranch: result.pullRequest.baseBranch,
@@ -217,12 +224,20 @@ export const make = Effect.gen(function* () {
         isOnPullRequestHead: result.isOnPullRequestHead,
         note: input.authorizationNote ?? null,
         deliveredAt,
-      });
-      publications.set(input.plan.commandId, publication);
+      }).pipe(
+        Effect.mapError(
+          () =>
+            new AxisPullRequestDeliveryError({
+              reason: "publish_failed",
+              message: "Publication payload did not validate.",
+            }),
+        ),
+      );
+      publications.set(plan.commandId, publication);
       return publication;
     });
 
-  return { deliver } satisfies AxisPullRequestDeliveryService;
+  return { deliver } satisfies AxisPullRequestDeliveryService["Service"];
 });
 
 export const layer = Layer.effect(AxisPullRequestDeliveryService, make);

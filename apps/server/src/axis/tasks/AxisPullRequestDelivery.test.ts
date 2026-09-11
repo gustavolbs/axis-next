@@ -1,3 +1,4 @@
+// @effect-diagnostics globalErrorInEffectFailure:off - test fixtures fail prepared layers with plain errors.
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "node:crypto";
 import { AxisContextProjectScope, CommandId } from "@t3tools/contracts";
@@ -28,9 +29,7 @@ const expectedDigestFor = (input: {
 }) =>
   `sha256:${NodeCrypto.createHash("sha256").update(JSON.stringify(input), "utf8").digest("hex")}`;
 
-const basePlan = (
-  overrides: Partial<AxisPullRequestPlan["Type"]> = {},
-): AxisPullRequestPlan["Type"] => {
+const basePlan = (overrides: Partial<AxisPullRequestPlan> = {}): AxisPullRequestPlan => {
   const commandId = CommandId.make("command-publish");
   const currentDiffDigest = "sha256:current";
   const source = "develop";

@@ -70,7 +70,7 @@ type EditorState = {
   readonly activity: AxisScheduledActivity | null;
   readonly name: string;
   readonly contextId: AxisContextId;
-  readonly actionKind: "workHubSync" | "agentTurn";
+  readonly actionKind: "workHubSync" | "agentTurn" | "learningAnalysis";
   readonly sourceIds: ReadonlyArray<AxisWorkHubSourceId>;
   readonly projectId: string;
   readonly providerInstanceId: string;
@@ -893,6 +893,12 @@ export function WorkHubScheduledActivities({
                         {sourceLabel(catalog, sourceId)}
                       </Badge>
                     ))
+                  ) : activity.action.kind === "learningAnalysis" ? (
+                    <>
+                      <Badge variant="outline">Learning analysis</Badge>
+                      <Badge variant="outline">{activity.action.project.projectId}</Badge>
+                      <Badge variant="outline">{activity.action.evidenceIds.length} evidence</Badge>
+                    </>
                   ) : (
                     <>
                       <Badge variant="outline">Agent Thread</Badge>

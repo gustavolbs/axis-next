@@ -8,6 +8,7 @@ import {
   AxisLearningProvenance,
   AxisLearningScope,
   AxisProjectLocator,
+  EnvironmentId,
   IsoDateTime,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -123,28 +124,27 @@ export class AxisReviewFeedbackError extends Schema.TaggedErrorClass<AxisReviewF
 ) {}
 
 export interface AxisReviewFeedbackResult {
-  readonly evidence: ReadonlyArray<AxisLearningEvidence["Type"]>;
+  readonly evidence: ReadonlyArray<AxisLearningEvidence>;
   readonly fingerprint: string;
-  readonly scope: AxisLearningScope["Type"];
+  readonly scope: AxisLearningScope;
 }
 
-export interface AxisReviewFeedbackService {
-  readonly recordFeedback: (
-    caller: { readonly environmentId: string; readonly contextId: string },
-    input: AxisReviewFeedbackInput,
-  ) => Effect.Effect<AxisReviewFeedbackResult, AxisReviewFeedbackError>;
-  readonly scopeFor: (scope: AxisContextProjectScope) => AxisLearningScope["Type"];
-  readonly fingerprintFor: (
-    pullRequestId: string,
-    sourceKind: AxisReviewFeedbackSource,
-    decision: AxisReviewFeedbackDecision,
-    commentIds: ReadonlyArray<string>,
-  ) => string;
-}
-
-export class AxisReviewFeedbackService extends Context.Service<AxisReviewFeedbackService>()(
-  "t3/axis/tasks/AxisReviewFeedback",
-) {}
+export class AxisReviewFeedbackService extends Context.Service<
+  AxisReviewFeedbackService,
+  {
+    readonly recordFeedback: (
+      caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
+      input: AxisReviewFeedbackInput,
+    ) => Effect.Effect<AxisReviewFeedbackResult, AxisReviewFeedbackError>;
+    readonly scopeFor: (scope: AxisContextProjectScope) => AxisLearningScope;
+    readonly fingerprintFor: (
+      pullRequestId: string,
+      sourceKind: AxisReviewFeedbackSource,
+      decision: AxisReviewFeedbackDecision,
+      commentIds: ReadonlyArray<string>,
+    ) => string;
+  }
+>()("t3/axis/tasks/AxisReviewFeedback/AxisReviewFeedbackService") {}
 
 const decisionToRetention = (decision: AxisReviewFeedbackDecision): number => {
   switch (decision) {
@@ -163,11 +163,11 @@ export const make = Effect.gen(function* () {
   const projectScope = yield* AxisProjectScope;
   const evidenceByFingerprint = new Map<
     string,
-    { evidence: AxisLearningEvidence["Type"]; scope: AxisLearningScope["Type"] }
+    { evidence: AxisLearningEvidence; scope: AxisLearningScope }
   >();
 
   const authorize = (
-    caller: { readonly environmentId: string; readonly contextId: string },
+    caller: { readonly environmentId: EnvironmentId; readonly contextId: AxisContextId },
     target: AxisContextProjectScope,
     operation: "read" | "write",
   ) =>
@@ -187,12 +187,12 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  const scopeFor: AxisReviewFeedbackService["scopeFor"] = (target) => ({
+  const scopeFor: AxisReviewFeedbackService["Service"]["scopeFor"] = (target) => ({
     contextId: AxisContextId.make(target.contextId),
     project: Schema.decodeUnknownSync(AxisProjectLocator)(target.project),
   });
 
-  const fingerprintFor: AxisReviewFeedbackService["fingerprintFor"] = (
+  const fingerprintFor: AxisReviewFeedbackService["Service"]["fingerprintFor"] = (
     pullRequestId,
     sourceKind,
     decision,
@@ -210,7 +210,7 @@ export const make = Effect.gen(function* () {
       )
       .digest("hex")}`;
 
-  const recordFeedback: AxisReviewFeedbackService["recordFeedback"] = (caller, raw) =>
+  const recordFeedback: AxisReviewFeedbackService["Service"]["recordFeedback"] = (caller, raw) =>
     Effect.gen(function* () {
       const input = yield* Schema.decodeUnknownEffect(AxisReviewFeedbackInput)(raw).pipe(
         Effect.mapError(
@@ -250,20 +250,57 @@ export const make = Effect.gen(function* () {
           scope: existing.scope,
         } satisfies AxisReviewFeedbackResult;
       }
-      const now = DateTime.formatIso(yield* DateTime.now);
+      const nowDateTime = yield* DateTime.now;
+      const now = DateTime.formatIso(nowDateTime);
       const retentionSeconds = decisionToRetention(input.decision);
-      const expiresAtDate = new Date(Date.now() + retentionSeconds * 1_000);
-      const expiresAtIso = expiresAtDate.toISOString();
-      const baseProvenance = Schema.decodeUnknownSync(AxisLearningProvenance)({
+      const expiresAtIso = DateTime.formatIso(
+        DateTime.add(nowDateTime, { seconds: retentionSeconds }),
+      );
+      const observedAt = yield* Schema.decodeEffect(IsoDateTime)(input.observedAt).pipe(
+        Effect.mapError(
+          () =>
+            new AxisReviewFeedbackError({
+              reason: "invalid_input",
+              message: "Observed timestamp did not validate.",
+            }),
+        ),
+      );
+      const baseProvenance = yield* Schema.decodeUnknownEffect(AxisLearningProvenance)({
         contextId: input.scope.contextId,
         scope: learningScope,
         sourceKind: "user-correction",
         sourceId: `pr:${input.pullRequestId}`,
-        observedAt: Schema.decodeSync(IsoDateTime)(input.observedAt),
+        observedAt,
         fingerprint,
         ...(input.threadId !== null ? { cursor: input.threadId } : {}),
-      });
-      const evidenceList: AxisLearningEvidence["Type"][] = [];
+      }).pipe(
+        Effect.mapError(
+          () =>
+            new AxisReviewFeedbackError({
+              reason: "invalid_input",
+              message: "Learning provenance did not validate.",
+            }),
+        ),
+      );
+      const createdAtIso = yield* Schema.decodeEffect(IsoDateTime)(now).pipe(
+        Effect.mapError(
+          () =>
+            new AxisReviewFeedbackError({
+              reason: "invalid_input",
+              message: "Command timestamp did not validate.",
+            }),
+        ),
+      );
+      const expiresAt = yield* Schema.decodeEffect(IsoDateTime)(expiresAtIso).pipe(
+        Effect.mapError(
+          () =>
+            new AxisReviewFeedbackError({
+              reason: "invalid_input",
+              message: "Retention timestamp did not validate.",
+            }),
+        ),
+      );
+      const evidenceList: AxisLearningEvidence[] = [];
       for (const comment of input.comments) {
         const commentFingerprint = fingerprintFor(
           `${input.pullRequestId}:${comment.id}`,
@@ -276,23 +313,39 @@ export const make = Effect.gen(function* () {
           sourceId: `pr-comment:${input.pullRequestId}:${comment.id}`,
           fingerprint: commentFingerprint,
         };
-        const evidence = Schema.decodeUnknownSync(AxisLearningEvidence)({
+        const evidence = yield* Schema.decodeUnknownEffect(AxisLearningEvidence)({
           id: AxisLearningEvidenceId.make(`pr-feedback-${input.pullRequestId}-${comment.id}`),
           provenance,
           summary: comment.body.slice(0, 2_000),
-          createdAt: Schema.decodeSync(IsoDateTime)(now),
-          expiresAt: Schema.decodeSync(IsoDateTime)(expiresAtIso),
-        });
+          createdAt: createdAtIso,
+          expiresAt,
+        }).pipe(
+          Effect.mapError(
+            () =>
+              new AxisReviewFeedbackError({
+                reason: "invalid_input",
+                message: "Learning evidence did not validate.",
+              }),
+          ),
+        );
         evidenceList.push(evidence);
       }
       if (input.comments.length === 0) {
-        const evidence = Schema.decodeUnknownSync(AxisLearningEvidence)({
+        const evidence = yield* Schema.decodeUnknownEffect(AxisLearningEvidence)({
           id: AxisLearningEvidenceId.make(`pr-feedback-${input.pullRequestId}`),
           provenance: baseProvenance,
           summary: `PR ${input.pullRequestId} decision: ${input.decision}.`,
-          createdAt: Schema.decodeSync(IsoDateTime)(now),
-          expiresAt: Schema.decodeSync(IsoDateTime)(expiresAtIso),
-        });
+          createdAt: createdAtIso,
+          expiresAt,
+        }).pipe(
+          Effect.mapError(
+            () =>
+              new AxisReviewFeedbackError({
+                reason: "invalid_input",
+                message: "Learning evidence did not validate.",
+              }),
+          ),
+        );
         evidenceList.push(evidence);
       }
       const canonical = evidenceList[0] ?? null;
@@ -317,7 +370,7 @@ export const make = Effect.gen(function* () {
     recordFeedback,
     scopeFor,
     fingerprintFor,
-  } satisfies AxisReviewFeedbackService;
+  } satisfies AxisReviewFeedbackService["Service"];
 });
 
 export const layer = Layer.effect(AxisReviewFeedbackService, make);
