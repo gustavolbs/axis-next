@@ -15,6 +15,7 @@ import {
   AxisProviderInstanceLocator,
   AxisWorkHubSourceId,
 } from "./axisContext.ts";
+import { AxisLearningEvidenceId } from "./axisLearning.ts";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   ProviderInteractionMode,
@@ -69,6 +70,17 @@ export const AxisScheduledActivityAction = Schema.Union([
       Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
     ),
   }),
+  Schema.Struct({
+    kind: Schema.Literal("learningAnalysis"),
+    project: AxisProjectLocator,
+    evidenceIds: Schema.Array(AxisLearningEvidenceId).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(32),
+    ),
+    deadlineMs: PositiveInt.check(Schema.isLessThanOrEqualTo(120_000)).pipe(
+      Schema.withDecodingDefault(Effect.succeed(45_000)),
+    ),
+  }),
 ]);
 export type AxisScheduledActivityAction = typeof AxisScheduledActivityAction.Type;
 
@@ -94,6 +106,10 @@ export const AxisScheduledActivity = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   lastRunMessage: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Server-owned digest of the last selected Learning evidence processed successfully. */
+  learningCursor: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(128))).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   createdAt: IsoDateTime,

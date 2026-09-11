@@ -544,6 +544,7 @@ const AxisScheduledActivityRunnerLayerLive = AxisScheduledActivityRunner.layer.p
   Layer.provide(AxisWorkHubSourceSyncLayerLive),
   Layer.provide(ProviderInstanceRegistryHydrationLive),
   Layer.provide(ServerEnvironmentLayerLive),
+  Layer.provide(AxisLearningServiceLayerLive),
   // Scheduled agent turns dispatch into the same memoized orchestration
   // layer used by the provider runtime, preserving the canonical T3
   // Thread/Turn lifecycle instead of creating an Axis execution path.
