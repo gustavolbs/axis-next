@@ -480,12 +480,19 @@ export const planAxisProjectDataDelete = (
       const learningError = validateLearningSnapshot(dataset.learning, authorization.scope);
       if (learningError !== undefined) return Effect.fail(learningError);
       const learning = filteredLearning(dataset.learning, authorization.scope);
-      const retainedProposalIds = new Set([
+      const ownedProposalIds = new Set(learning.proposals.map((item) => item.id));
+      const referencedProposalIds = new Set([
         ...learning.versions.map((item) => item.proposalId),
         ...learning.lifecycle.flatMap((item) =>
           item.proposalId === null ? [] : [item.proposalId],
         ),
       ]);
+      // Only retain proposals this project owns. Foreign-key references to
+      // proposals owned by other projects are not the responsibility of this
+      // project's delete plan.
+      const retainedProposalIds = new Set(
+        [...referencedProposalIds].filter((id) => ownedProposalIds.has(id)),
+      );
       return Effect.succeed(
         cloneAndFreeze({
           scope: authorization.scope,

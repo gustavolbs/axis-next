@@ -221,6 +221,25 @@ it("rejects malformed, evidenceless, and cross-scope model output", () => {
   expect(() => analyzeAxisOnboarding(otherScope)).toThrow(AxisOnboardingAnalysisError);
 });
 
+it("rejects plural-noun scope-expanding content the same way as singular-noun", () => {
+  const input = baseInput();
+  const pluralExpansion = {
+    ...input,
+    modelOutput: {
+      candidates: [
+        {
+          category: "convention",
+          effect: "preference",
+          text: "Apply this rule to other projects and other workspaces too.",
+          sourceIds: ["src-instruction"],
+          factIds: [],
+        },
+      ],
+    },
+  };
+  expect(() => analyzeAxisOnboarding(pluralExpansion)).toThrow(AxisOnboardingAnalysisError);
+});
+
 it("rejects provider activation fields and scope-expanding content", () => {
   const input = baseInput();
   const activation = {

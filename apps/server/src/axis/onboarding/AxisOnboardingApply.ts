@@ -184,6 +184,7 @@ export function applyAxisOnboarding(input: AxisOnboardingApplyInput): AxisOnboar
       .map((source) => [source.id, sourceRef(source.id)]),
   );
   const previousSources = new Map(input.profile.sources.map((source) => [source.id, source]));
+  const nextSourceIds = new Set(nextSources.map((source) => source.id));
   const changedSourceRefs = new Set(
     nextSources
       .filter((source) => {
@@ -192,6 +193,12 @@ export function applyAxisOnboarding(input: AxisOnboardingApplyInput): AxisOnboar
       })
       .map((source) => source.id),
   );
+  // A previously readable source that is absent from the refreshed run must
+  // invalidate every learning rule that referenced it. Otherwise the rule
+  // stays anchored to a source the run can no longer reach.
+  for (const [previousSourceId] of previousSources) {
+    if (!nextSourceIds.has(previousSourceId)) changedSourceRefs.add(previousSourceId);
+  }
 
   const revokedRuleIds = new Set(
     input.decisions
