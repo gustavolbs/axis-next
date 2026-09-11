@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.4] - 2026-09-11
+
+### Fixed
+
+- Add focused coverage for project-scoped profile uniqueness, Learning revision preservation, and server scope validation.
+
 ## [0.12.3] - 2026-09-11
 
 ### Changed
