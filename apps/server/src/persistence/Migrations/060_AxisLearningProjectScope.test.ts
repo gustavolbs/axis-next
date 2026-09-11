@@ -165,6 +165,21 @@ layer("060_AxisLearningProjectScope", (it) => {
         { scope_key: laptop, version_id: null, revision: 7 },
       ]);
 
+      yield* sql`
+        UPDATE axis_learning_active_versions
+        SET version_id = NULL, revision = 8, updated_at = ${now}
+        WHERE context_id = 'personal' AND scope_key = ${laptop} AND target_key = 'workflow:test'
+      `;
+      const deactivated = yield* sql<{
+        readonly version_id: string | null;
+        readonly revision: number;
+      }>`
+        SELECT version_id, revision
+        FROM axis_learning_active_versions
+        WHERE context_id = 'personal' AND scope_key = ${laptop} AND target_key = 'workflow:test'
+      `;
+      assert.deepEqual(deactivated, [{ version_id: null, revision: 8 }]);
+
       const duplicateExit = yield* Effect.exit(
         sql`
           INSERT INTO axis_learning_evidence

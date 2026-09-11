@@ -71,6 +71,30 @@ describe("AxisScheduledActivity", () => {
     }
   });
 
+  it("decodes a bounded project Learning analysis", () => {
+    const draft = decodeDraft({
+      id: "weekly_learning",
+      name: "Weekly learning",
+      contextId: "personal",
+      action: {
+        kind: "learningAnalysis",
+        project: { environmentId: "env", projectId: "project_a" },
+        evidenceIds: ["evidence_1", "evidence_2"],
+      },
+      schedule: {
+        kind: "interval",
+        everyMinutes: 480,
+        anchorAt: "2026-09-05T08:00:00.000Z",
+      },
+    });
+
+    expect(draft.action.kind).toBe("learningAnalysis");
+    if (draft.action.kind === "learningAnalysis") {
+      expect(draft.action.evidenceIds).toEqual(["evidence_1", "evidence_2"]);
+      expect(draft.action.deadlineMs).toBe(45_000);
+    }
+  });
+
   it("decodes partial run history with per-source outcomes", () => {
     const run = decodeRun({
       id: "run_1",

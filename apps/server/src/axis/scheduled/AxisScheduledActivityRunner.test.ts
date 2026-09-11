@@ -17,6 +17,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { AxisContextCatalogStore } from "../contexts/AxisContextCatalogStore.ts";
+import { AxisLearningService } from "../learning/AxisLearningService.ts";
 import { AxisWorkHubCacheStore } from "../workHub/AxisWorkHubCacheStore.ts";
 import { layer as sourceSyncLayer } from "../workHub/AxisWorkHubSourceSync.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -193,6 +194,28 @@ const activityStore = storeLayer.pipe(Layer.provide(persistence));
 const dispatchedCommands: OrchestrationCommand[] = [];
 let rejectTurnStart = false;
 let scheduledThreadShell: unknown = null;
+let learningAvailable = true;
+const requestImprovements = vi.fn<AxisLearningService["Service"]["requestImprovements"]>((input) =>
+  Effect.succeed(
+    learningAvailable
+      ? {
+          id: `run-${input.commandId}`,
+          status: "no-change" as const,
+          commandId: input.commandId,
+          engine: { availability: "available" as const, engineId: "test-engine" },
+          proposals: [],
+          reason: "No bounded improvement was found.",
+        }
+      : {
+          id: `run-${input.commandId}`,
+          status: "unavailable" as const,
+          commandId: input.commandId,
+          engine: { availability: "offline" as const, message: "Engine offline." },
+          proposals: [],
+          reason: "Engine offline.",
+        },
+  ),
+);
 const dependencies = Layer.mergeAll(
   Layer.mock(AxisContextCatalogStore)({ get: Effect.succeed(catalog) }),
   Layer.mock(AxisWorkHubCacheStore)({
@@ -217,6 +240,7 @@ const dependencies = Layer.mergeAll(
   Layer.mock(ServerEnvironment)({
     getEnvironmentId: Effect.succeed(EnvironmentId.make("env")),
   }),
+  Layer.mock(AxisLearningService)({ requestImprovements }),
   Layer.mock(OrchestrationEngineService)({
     dispatch: (command) => {
       dispatchedCommands.push(command);
@@ -506,6 +530,89 @@ layer("AxisScheduledActivityRunner", (it) => {
         ["thread.create", "thread.turn.start", "thread.delete"],
       );
       rejectTurnStart = false;
+    }),
+  );
+
+  it.effect("advances a Learning cursor and skips unchanged selected evidence", () =>
+    Effect.gen(function* () {
+      learningAvailable = true;
+      requestImprovements.mockClear();
+      const service = yield* AxisScheduledActivityRunner;
+      const created = yield* service.create(
+        decodeDraft({
+          id: "weekly_learning",
+          name: "Weekly Learning",
+          contextId: "personal",
+          action: {
+            kind: "learningAnalysis",
+            project: { environmentId: "env", projectId: "personal_project" },
+            evidenceIds: ["evidence_1"],
+          },
+          schedule: {
+            kind: "interval",
+            everyMinutes: 480,
+            anchorAt: "2026-09-05T08:00:00.000Z",
+          },
+        }),
+      );
+
+      const first = yield* service.runNow(created.id);
+      const second = yield* service.runNow(created.id);
+
+      assert.equal(first.status, "succeeded");
+      assert.equal(second.status, "succeeded");
+      assert.match(second.message ?? "", /No newly selected/);
+      assert.equal(requestImprovements.mock.calls.length, 1);
+      assert.equal(
+        (yield* service.list)
+          .find(({ id }) => id === created.id)
+          ?.learningCursor?.startsWith("sha256:"),
+        true,
+      );
+    }),
+  );
+
+  it.effect("isolates an offline Learning engine from other scheduled activities", () =>
+    Effect.gen(function* () {
+      learningAvailable = false;
+      const service = yield* AxisScheduledActivityRunner;
+      const learningActivity = yield* service.create(
+        decodeDraft({
+          id: "offline_learning",
+          name: "Offline Learning",
+          contextId: "personal",
+          action: {
+            kind: "learningAnalysis",
+            project: { environmentId: "env", projectId: "personal_project" },
+            evidenceIds: ["evidence_offline"],
+          },
+          schedule: {
+            kind: "interval",
+            everyMinutes: 480,
+            anchorAt: "2026-09-05T08:00:00.000Z",
+          },
+        }),
+      );
+      const syncActivity = yield* service.create(
+        decodeDraft({
+          id: "sync_after_offline_learning",
+          name: "Sync after offline Learning",
+          contextId: "personal",
+          action: { kind: "workHubSync", sourceIds: ["calendar_source"] },
+          schedule: {
+            kind: "interval",
+            everyMinutes: 480,
+            anchorAt: "2026-09-05T08:00:00.000Z",
+          },
+        }),
+      );
+
+      assert.equal((yield* service.runNow(learningActivity.id)).status, "failed");
+      assert.equal((yield* service.runNow(syncActivity.id)).status, "succeeded");
+      assert.isNull(
+        (yield* service.list).find(({ id }) => id === learningActivity.id)?.learningCursor,
+      );
+      learningAvailable = true;
     }),
   );
 

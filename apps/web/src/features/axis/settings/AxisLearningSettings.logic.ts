@@ -96,6 +96,34 @@ export function buildManualLearningProposal(
   };
 }
 
+export interface LearningScopeGroupDescription {
+  readonly label: string;
+  readonly description: string;
+}
+
+/**
+ * Labels the two groups a context's Learning records fall into: one bucket
+ * per project, and a single company/provider bucket for records that predate
+ * per-project scoping (or were never given one). The legacy bucket is never
+ * duplicated per project — it is exactly the scope-less records.
+ */
+export function describeLearningScopeGroup(
+  project: { readonly environmentId: string; readonly projectId: string } | null,
+  projectLabel?: string,
+): LearningScopeGroupDescription {
+  if (project === null) {
+    return {
+      label: "Company (legacy, no project)",
+      description:
+        "Records from before per-project Learning, or explicitly recorded without a project. Not duplicated across projects.",
+    };
+  }
+  return {
+    label: projectLabel ?? `${project.projectId} · ${project.environmentId}`,
+    description: `Records scoped to this project only.`,
+  };
+}
+
 export type LearningVersionAction = "active" | "activate" | "rollback";
 
 export function learningVersionAction(

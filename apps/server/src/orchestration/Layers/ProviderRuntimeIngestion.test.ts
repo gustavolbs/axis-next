@@ -54,6 +54,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import { AgentRunRegistryLive, AgentRunRegistryService } from "../Services/AgentRunRegistry.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -291,6 +292,7 @@ describe("ProviderRuntimeIngestion", () => {
       // engine, and the snapshot query (reader).
       Layer.provideMerge(ThreadBackgroundLiveness.layer),
       Layer.provideMerge(ThreadPlanProgress.layer),
+      Layer.provideMerge(AgentRunRegistryLive),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
@@ -305,6 +307,7 @@ describe("ProviderRuntimeIngestion", () => {
     const engine = await testRuntime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await testRuntime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const ingestion = await testRuntime.runPromise(Effect.service(ProviderRuntimeIngestionService));
+    const agentRunRegistry = await testRuntime.runPromise(Effect.service(AgentRunRegistryService));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await testRuntime.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => testRuntime.runPromise(ingestion.drain);
@@ -376,9 +379,119 @@ describe("ProviderRuntimeIngestion", () => {
       emitAndDrain,
       sqlCount: sqlCounter.count,
       setProviderSession: provider.setSession,
+      listAgentRuns: () => testRuntime.runPromise(agentRunRegistry.list()),
       drain,
     };
   }
+
+  it("keeps a provider execution id when thread.started wins the domain-event race", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+
+    await harness.emitAndDrain([
+      {
+        type: "thread.started",
+        eventId: asEventId("evt-thread-started-before-turn-request"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        payload: { providerThreadId: "ses_race_main" },
+      },
+    ]);
+
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-race-turn-start"),
+      threadId,
+      message: {
+        messageId: asMessageId("message-race-turn-start"),
+        role: "user",
+        text: "Run the provider race test.",
+        attachments: [],
+      },
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: "2026-01-01T00:00:02.000Z",
+    });
+    await harness.drain();
+
+    const runs = await harness.listAgentRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      providerExecutionId: "ses_race_main",
+      provider: "codex",
+      model: "gpt-5-codex",
+      role: "main",
+      status: "started",
+    });
+    expect(runs[0]?.agentRunId).toMatch(/^agent-/);
+
+    await harness.emitAndDrain([
+      {
+        type: "turn.started",
+        eventId: asEventId("evt-first-race-turn-started"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        turnId: asTurnId("turn-race-first"),
+        createdAt: "2026-01-01T00:00:03.000Z",
+      },
+      {
+        type: "turn.completed",
+        eventId: asEventId("evt-first-race-turn-completed"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        turnId: asTurnId("turn-race-first"),
+        createdAt: "2026-01-01T00:00:04.000Z",
+        payload: { state: "completed" },
+      },
+      {
+        type: "thread.started",
+        eventId: asEventId("evt-thread-restarted-before-second-turn"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:00:04.500Z",
+        payload: { providerThreadId: "ses_race_restarted" },
+      },
+    ]);
+
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-race-second-turn-start"),
+      threadId,
+      message: {
+        messageId: asMessageId("message-race-second-turn-start"),
+        role: "user",
+        text: "Run the provider race test again.",
+        attachments: [],
+      },
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: "2026-01-01T00:00:05.000Z",
+    });
+    await harness.drain();
+
+    const runsAfterSecondDispatch = await harness.listAgentRuns();
+    expect(runsAfterSecondDispatch).toHaveLength(2);
+    expect(runsAfterSecondDispatch[0]).toMatchObject({
+      providerExecutionId: "ses_race_main",
+      status: "completed",
+    });
+    expect(runsAfterSecondDispatch[1]).toMatchObject({
+      providerExecutionId: "ses_race_restarted",
+      provider: "codex",
+      role: "main",
+      status: "started",
+    });
+    expect(runsAfterSecondDispatch[1]?.agentRunId).not.toBe(runsAfterSecondDispatch[0]?.agentRunId);
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();

@@ -2,7 +2,15 @@ import { describe, expect, expectTypeOf, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  AgentRunId,
+  AgentRunIdentity,
+  AgentRunRecord,
+  AgentRunRole,
+  AgentRunStatus,
   classifyTaskAgentKind,
+  isPlaceholderProviderExecutionId,
+  ProviderExecutionId,
+  providerExecutionIdFrom,
   ProviderRuntimeEvent,
   type ProviderRuntimeEventType,
 } from "./providerRuntime.ts";
@@ -279,5 +287,125 @@ describe("classifyTaskAgentKind", () => {
     expect(classifyTaskAgentKind({ taskType: undefined, agentId: "owner" })).toBe("background");
     // Nested agent: outlives its parent, stays in the roster.
     expect(classifyTaskAgentKind({ taskType: "local_agent", agentId: "owner" })).toBe("agent");
+  });
+});
+
+describe("AgentRunIdentity contract", () => {
+  const decodeIdentity = Schema.decodeUnknownSync(AgentRunIdentity);
+  const decodeRecord = Schema.decodeUnknownSync(AgentRunRecord);
+
+  it("decodes a record with a server-minted agentRunId and a real provider execution id", () => {
+    const value = decodeIdentity({
+      agentRunId: AgentRunId.make("agent-1"),
+      providerExecutionId: ProviderExecutionId.make("ses_real_123"),
+      provider: "opencode",
+      model: "minimax/minimax-m3",
+      role: "main",
+    });
+    expect(value.providerExecutionId).toBe("ses_real_123");
+    expect(value.role).toBe("main");
+    expect(value.parentRunId).toBeUndefined();
+  });
+
+  it("keeps providerExecutionId optional and absent when the provider gave no id", () => {
+    const value = decodeIdentity({
+      agentRunId: AgentRunId.make("agent-2"),
+      provider: "opencode",
+      model: "zhipu/glm-5.3-flash",
+      role: "worker",
+    });
+    expect(value.providerExecutionId).toBeUndefined();
+    expect("providerExecutionId" in value).toBe(false);
+  });
+
+  it("refuses placeholder strings as provider execution ids", () => {
+    expect(isPlaceholderProviderExecutionId("ses_real_123")).toBe(false);
+    expect(isPlaceholderProviderExecutionId("")).toBe(true);
+    expect(isPlaceholderProviderExecutionId("placeholder")).toBe(true);
+    expect(isPlaceholderProviderExecutionId("unknown")).toBe(true);
+    expect(isPlaceholderProviderExecutionId("synthetic")).toBe(true);
+    expect(isPlaceholderProviderExecutionId("<id>")).toBe(true);
+    expect(isPlaceholderProviderExecutionId("<execution_id>")).toBe(true);
+    expect(isPlaceholderProviderExecutionId("<run_id>")).toBe(true);
+    expect(isPlaceholderProviderExecutionId("<model>")).toBe(true);
+    expect(isPlaceholderProviderExecutionId("null")).toBe(true);
+    expect(isPlaceholderProviderExecutionId(undefined)).toBe(false);
+    expect(isPlaceholderProviderExecutionId(42)).toBe(false);
+  });
+
+  it("providerExecutionIdFrom returns null for placeholders and accepts real ids", () => {
+    expect(providerExecutionIdFrom("ses_real_123")).toBe("ses_real_123");
+    expect(providerExecutionIdFrom("<id>")).toBeNull();
+    expect(providerExecutionIdFrom("placeholder")).toBeNull();
+    expect(providerExecutionIdFrom(undefined)).toBeNull();
+    expect(providerExecutionIdFrom(42)).toBeNull();
+  });
+
+  it("distinguishes worker and reviewer roles structurally", () => {
+    const worker = decodeIdentity({
+      agentRunId: AgentRunId.make("agent-worker"),
+      provider: "opencode",
+      model: "zhipu/glm-5.3-flash",
+      role: "worker",
+    });
+    const reviewer = decodeIdentity({
+      agentRunId: AgentRunId.make("agent-reviewer"),
+      provider: "opencode",
+      model: "deepseek/deepseek-v4-pro-cheap",
+      role: "reviewer",
+    });
+    expect(worker.role).toBe("worker");
+    expect(reviewer.role).toBe("reviewer");
+    expect(worker.agentRunId).not.toBe(reviewer.agentRunId);
+  });
+
+  it("tracks parent linkage through parentRunId", () => {
+    const value = decodeIdentity({
+      agentRunId: AgentRunId.make("agent-child"),
+      parentRunId: AgentRunId.make("agent-parent"),
+      provider: "opencode",
+      role: "subagent",
+    });
+    expect(value.parentRunId).toBe("agent-parent");
+  });
+
+  it("covers every terminal status in AgentRunStatus", () => {
+    expect(AgentRunStatus.literals).toEqual(["started", "completed", "failed", "cancelled"]);
+  });
+
+  it("covers every role in AgentRunRole", () => {
+    expect(AgentRunRole.literals).toEqual(["main", "worker", "reviewer", "subagent", "unknown"]);
+  });
+
+  it("decodes an AgentRunRecord with terminal status and endedAt", () => {
+    const value = decodeRecord({
+      agentRunId: AgentRunId.make("agent-3"),
+      providerExecutionId: ProviderExecutionId.make("ses_real_3"),
+      provider: "opencode",
+      model: "minimax/minimax-m3",
+      role: "main",
+      status: "completed",
+      createdAt: "2026-09-11T00:00:00.000Z",
+      endedAt: "2026-09-11T00:01:00.000Z",
+    });
+    expect(value.status).toBe("completed");
+    expect(value.endedAt).toBe("2026-09-11T00:01:00.000Z");
+  });
+
+  it("preserves the agentRunId across a started → completed transition", () => {
+    const started = decodeRecord({
+      agentRunId: AgentRunId.make("agent-4"),
+      provider: "opencode",
+      role: "worker",
+      status: "started",
+      createdAt: "2026-09-11T00:00:00.000Z",
+    });
+    const completed = decodeRecord({
+      ...started,
+      status: "completed",
+      endedAt: "2026-09-11T00:01:00.000Z",
+    });
+    expect(completed.agentRunId).toBe(started.agentRunId);
+    expect(completed.status).toBe("completed");
   });
 });

@@ -28,6 +28,7 @@ import * as Schedule from "effect/Schedule";
 import * as Option from "effect/Option";
 
 import { AxisContextCatalogStore } from "../contexts/AxisContextCatalogStore.ts";
+import { AxisLearningService } from "../learning/AxisLearningService.ts";
 import { AxisWorkHubSourceSync } from "../workHub/AxisWorkHubSourceSync.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
@@ -85,7 +86,7 @@ function validateDraft(
         return `Work Hub source '${sourceId}' belongs to another environment. Create its schedule on that environment.`;
       }
     }
-  } else {
+  } else if (action.kind === "agentTurn") {
     if (
       action.project.environmentId !== localEnvironmentId ||
       action.provider.environmentId !== localEnvironmentId
@@ -108,6 +109,22 @@ function validateDraft(
     );
     if (!providerAccessible) {
       return "The selected provider is not available to this Axis context.";
+    }
+  } else {
+    if (action.project.environmentId !== localEnvironmentId) {
+      return "Scheduled Learning analysis must use a Project from this environment.";
+    }
+    const projectBoundToContext = catalog.projectBindings.some(
+      (binding) =>
+        binding.contextId === draft.contextId &&
+        binding.project.environmentId === action.project.environmentId &&
+        binding.project.projectId === action.project.projectId,
+    );
+    if (!projectBoundToContext) {
+      return "The selected Project is not bound to this Axis context.";
+    }
+    if (new Set(action.evidenceIds).size !== action.evidenceIds.length) {
+      return "A Learning analysis cannot select the same evidence more than once.";
     }
   }
   if (draft.schedule.kind === "weekly") {
@@ -147,6 +164,7 @@ export const make = Effect.gen(function* () {
   const store = yield* AxisScheduledActivityStore;
   const catalogStore = yield* AxisContextCatalogStore;
   const workHubSourceSync = yield* AxisWorkHubSourceSync;
+  const learning = yield* AxisLearningService;
   const providers = yield* ProviderInstanceRegistry;
   const serverEnvironment = yield* ServerEnvironment;
   const orchestration = yield* OrchestrationEngineService;
@@ -191,12 +209,20 @@ export const make = Effect.gen(function* () {
           message: "The scheduled activity has an invalid timezone or schedule.",
         }),
     });
+    const preservesLearningCursor =
+      draft.action.kind === "learningAnalysis" &&
+      previous?.action.kind === "learningAnalysis" &&
+      draft.action.project.environmentId === previous.action.project.environmentId &&
+      draft.action.project.projectId === previous.action.project.projectId &&
+      [...draft.action.evidenceIds].sort().join("\n") ===
+        [...previous.action.evidenceIds].sort().join("\n");
     return {
       ...draft,
       nextRunAt,
       lastRunAt: previous?.lastRunAt ?? null,
       lastRunStatus: previous?.lastRunStatus ?? null,
       lastRunMessage: previous?.lastRunMessage ?? null,
+      learningCursor: preservesLearningCursor ? previous.learningCursor : null,
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     } satisfies AxisScheduledActivity;
@@ -345,6 +371,59 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const learningEvidenceCursor = (
+    activity: AxisScheduledActivity & { readonly action: { readonly kind: "learningAnalysis" } },
+  ) =>
+    `sha256:${NodeCrypto.createHash("sha256")
+      .update(JSON.stringify([...activity.action.evidenceIds].sort()), "utf8")
+      .digest("hex")}`;
+
+  const runLearningAnalysis = Effect.fn("AxisScheduledActivityRunner.runLearningAnalysis")(
+    function* (
+      activity: AxisScheduledActivity & { readonly action: { readonly kind: "learningAnalysis" } },
+    ) {
+      const catalog = (yield* catalogStore.get.pipe(
+        Effect.mapError(scheduledPersistenceError("read context catalog for Learning analysis")),
+      )).catalog;
+      const issue = validateDraft(activity, catalog, localEnvironmentId);
+      if (issue) return yield* new AxisScheduledActivityValidationError({ message: issue });
+      const cursor = learningEvidenceCursor(activity);
+      if (activity.learningCursor === cursor) {
+        return {
+          status: "succeeded" as const,
+          message: "No newly selected Learning evidence; the previous analysis remains current.",
+          cursor,
+        };
+      }
+      const commandId = CommandId.make(
+        `axis-scheduled-learning-${NodeCrypto.createHash("sha256")
+          .update(`${activity.id}:${cursor}`, "utf8")
+          .digest("hex")}`,
+      );
+      const result = yield* learning.requestImprovements({
+        scope: { contextId: activity.contextId, project: activity.action.project },
+        evidenceIds: activity.action.evidenceIds,
+        commandId,
+        deadlineMs: activity.action.deadlineMs,
+      });
+      if (result.status === "unavailable") {
+        return {
+          status: "failed" as const,
+          message: result.reason ?? "The Learning engine is unavailable.",
+          cursor: activity.learningCursor,
+        };
+      }
+      return {
+        status: "succeeded" as const,
+        message:
+          result.status === "proposals"
+            ? `${result.proposals.length} Learning proposal${result.proposals.length === 1 ? "" : "s"} created for review.`
+            : (result.reason ?? "Learning analysis completed without a proposed change."),
+        cursor,
+      };
+    },
+  );
+
   const runActivity = Effect.fn("AxisScheduledActivityRunner.runActivity")(function* (
     id: AxisScheduledActivityId,
     trigger: "manual" | "scheduled",
@@ -424,6 +503,47 @@ export const make = Effect.gen(function* () {
           lastRunStatus: outcome.status,
           lastRunMessage: outcome.message,
           updatedAt: observedAt,
+        });
+        return completed;
+      }
+      if (activity.action.kind === "learningAnalysis") {
+        const outcome = yield* runLearningAnalysis(
+          activity as AxisScheduledActivity & {
+            readonly action: { readonly kind: "learningAnalysis" };
+          },
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.succeed({
+              status: "failed" as const,
+              message:
+                typeof error === "object" && error !== null && "message" in error
+                  ? String(error.message)
+                  : "The scheduled Learning analysis failed.",
+              cursor: activity.learningCursor,
+            }),
+          ),
+        );
+        const finishedAt = yield* isoNow;
+        const completed: AxisScheduledActivityRun = {
+          ...running,
+          status: outcome.status,
+          finishedAt,
+          message: outcome.message,
+        };
+        yield* store.saveRun(completed);
+        const finishedMs = Date.parse(finishedAt);
+        const nextRunAt =
+          trigger === "manual" && Date.parse(activity.nextRunAt) > finishedMs
+            ? activity.nextRunAt
+            : nextAxisScheduledActivityRunAt(activity.schedule, finishedMs);
+        yield* store.update({
+          ...activity,
+          nextRunAt,
+          lastRunAt: finishedAt,
+          lastRunStatus: outcome.status,
+          lastRunMessage: outcome.message,
+          learningCursor: outcome.cursor,
+          updatedAt: finishedAt,
         });
         return completed;
       }

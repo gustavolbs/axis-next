@@ -159,6 +159,49 @@ it("invalidates only the learning rule whose source digest changed", () => {
   expect(refreshed.profile.rules).toHaveLength(0);
 });
 
+it("invalidates learning rules whose source becomes unreadable on refresh", () => {
+  const first = applyAxisOnboarding({
+    profile,
+    run,
+    decisions: [
+      decodeDecision({
+        id: "decision-1",
+        candidateRuleId: "candidate-tests",
+        decision: "accept",
+        note: null,
+      }),
+    ],
+    expectedProfileRevision: 2,
+    decidedAt: "2026-09-10T12:30:00.000Z",
+  }).profile;
+  expect(first.rules).toHaveLength(1);
+
+  // Source turned unreadable in the refresh.
+  const refreshed = applyAxisOnboarding({
+    profile: first,
+    run: decodeRun({
+      ...run,
+      candidateRules: [],
+      sources: [
+        {
+          id: "source-readme",
+          path: "README.md",
+          kind: "instruction",
+          status: "failed",
+          error: "permission denied",
+        },
+      ],
+      digests: [],
+    }),
+    decisions: [],
+    expectedProfileRevision: first.revision,
+    decidedAt: "2026-09-10T13:30:00.000Z",
+  });
+
+  expect(refreshed.invalidatedRuleIds).toContain(first.rules[0]!.id);
+  expect(refreshed.profile.rules).toHaveLength(0);
+});
+
 const decisionFor = (decision: AxisOnboardingDecision["decision"]) =>
   decodeDecision({ id: "decision-1", candidateRuleId: "candidate-tests", decision, note: null });
 

@@ -2193,6 +2193,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             ...readRuntimePayload(persistenceBase.runtimePayload),
             ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
             ...(input.axisContextDigest ? { axisContextDigest: input.axisContextDigest } : {}),
+            ...(input.axisLearningVersionIds === undefined
+              ? {}
+              : { axisLearningVersionIds: input.axisLearningVersionIds }),
             activeTurnId: turn.turnId,
             // Admission and marker consumption must survive the same restart.
             continueAfterServerUpdate: null,

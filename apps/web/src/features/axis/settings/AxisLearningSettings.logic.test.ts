@@ -15,6 +15,7 @@ import {
 import {
   buildManualLearningEvidence,
   buildManualLearningProposal,
+  describeLearningScopeGroup,
   learningVersionAction,
   learningAnalysisEvidenceIds,
 } from "./AxisLearningSettings.logic";
@@ -168,5 +169,23 @@ describe("Axis Learning settings logic", () => {
         [first, second],
       ),
     ).toBe("rollback");
+  });
+
+  it("labels the legacy group once, never per project", () => {
+    const legacy = describeLearningScopeGroup(null);
+    expect(legacy.label).toBe("Company (legacy, no project)");
+
+    const projectA = describeLearningScopeGroup({ environmentId: "laptop", projectId: "a" });
+    const projectB = describeLearningScopeGroup({ environmentId: "laptop", projectId: "b" });
+    expect(projectA.label).not.toBe(projectB.label);
+    expect(projectA.label).not.toBe(legacy.label);
+  });
+
+  it("prefers a friendly project label when one is supplied", () => {
+    const described = describeLearningScopeGroup(
+      { environmentId: "laptop", projectId: "axis" },
+      "Axis Next",
+    );
+    expect(described.label).toBe("Axis Next");
   });
 });

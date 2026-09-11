@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.12.7] - 2026-09-11
+
+### Fixed
+
+- Preserve a real provider execution id when `thread.started` arrives before
+  the domain turn-start event, and resolve the recorded provider from the
+  selected instance or session instead of hardcoding OpenCode.
+- Document the remaining boundary: internal OpenCode worker/reviewer
+  sessions are not yet registered as child runs by the Axis ingestion path,
+  and the current registry is process-local.
+
+## [0.12.6] - 2026-09-11
+
+### Added
+
+- Server-owned agent identity: `AgentRunId` (minted by the router at
+  dispatch) and `ProviderExecutionId` (the real OpenCode session id when
+  the provider surfaces one) wired through a new `AgentRunRegistry`
+  service in `apps/server/src/orchestration/Services/AgentRunRegistry.ts`.
+  The runtime ingestion layer mints a `main` run on
+  `thread.turn-start-requested`, attaches the real provider id when
+  `thread.started` carries a non-placeholder `providerThreadId`, and
+  marks the run `completed` / `cancelled` on terminal turn events.
+- Placeholder rejection helpers (`isPlaceholderProviderExecutionId`,
+  `providerExecutionIdFrom`) so probe responses like `<id>`, `<model>`,
+  `placeholder`, `unknown`, `synthetic` and empty strings never promote
+  themselves to a `ProviderExecutionId`.
+- Focused tests covering the full invariant set:
+  server-minted id, real provider id acceptance, placeholder rejection,
+  sticky terminal status across cancel / retry / compaction, worker vs
+  reviewer distinction, late `providerExecutionId` patches, and
+  per-thread run lookup. 10 new contract tests, 15 new registry tests,
+  14 new ingestion-hook tests.
+
+### Fixed
+
+- Repair the `projectOverviewIntegration.test.ts` fixture to match the
+  current `AxisContextCatalog` schema (`providerOwnerships`,
+  `providerAccessGrants`, `kind`, `createdAt`, `updatedAt` on
+  `AxisContext`).
+
+## [0.12.5] - 2026-09-11
+
+### Added
+
+- Integrate the parallel RouteMux worker slice: testable Jira and Trello write adapters, scoped task intake, PR plan + delivery, review evidence + feedback, verification evidence, and Hermes-driven learning evidence plumbing through the scheduler X12 path.
+- Integrate the parallel Codex slice: pin Hermes (`NousResearch/hermes-agent` 0.21.1 with source digests), persist and reconcile versioned Learning outcomes, materialize effective Axis instructions for both Codex and Claude, and surface the X12 scheduled activity runner.
+- Integrate the parallel web slice: per-project Learning review panel (U06), label legacy vs per-project Learning groups in Settings (U07), Escape-to-back on the project Overview shell (U02), and the project Learning panel mount in the Overview (I03).
+- Cover project Overview scope resolution end-to-end (controlled-transport / out-of-order / conflict cases).
+
+### Fixed
+
+- Align the new task/workflow Context.Service declarations with the `Context.Service<Self, Interface>()(...)` Self-type + deterministic-key contract that the Effect language service requires.
+- Replace `Schema["Type"]` lookups, `Math.random()`, `new Date()`, untagged `new Error()`, and `Schema.decodeUnknownSync` inside Effect generators with the typed Effect equivalents.
+- Teach the Work Hub scheduled activity editor to render the server-managed `learningAnalysis` action without fabricating it from the UI.
+
+## [0.12.4] - 2026-09-11
+
+### Fixed
+
+- Add focused coverage for project-scoped profile uniqueness, Learning revision preservation, and server scope validation.
+
 ## [0.12.3] - 2026-09-11
 
 ### Changed

@@ -1,4 +1,6 @@
 import {
+  AgentRunId,
+  AgentRunStatus,
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
@@ -10,6 +12,8 @@ import {
   classifyTaskAgentKind,
   EventId,
   isToolLifecycleItemType,
+  ProviderDriverKind,
+  ProviderExecutionId,
   ThreadId,
   type ThreadTokenUsageSnapshot,
   TurnId,
@@ -18,6 +22,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  providerExecutionIdFrom,
   RuntimeRequestId,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -38,6 +43,7 @@ import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionT
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { AgentRunRegistryLive, AgentRunRegistryService } from "../Services/AgentRunRegistry.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
 import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -957,6 +963,7 @@ const make = Effect.gen(function* () {
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+  const agentRunRegistry = yield* AgentRunRegistryService;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
@@ -989,6 +996,21 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
 
+  // Most-recent agentRunId per thread, so a `thread.started` (which carries
+  // the real providerThreadId) and terminal turn events can patch the
+  // server-owned record without forcing the runtime adapter to know about
+  // the registry.
+  const activeAgentRunIdByThreadId = new Map<ThreadId, AgentRunId>();
+  // Provider startup and domain events are delivered by separate streams.
+  // Keep the current real provider id when thread.started wins that race so
+  // the later turn-start-requested event can attach the same session. A
+  // provider session can span turns, but a restart may replace its id.
+  const providerExecutionIdByThreadId = yield* Cache.make<ThreadId, ProviderExecutionId>({
+    capacity: 10_000,
+    timeToLive: Duration.minutes(120),
+    lookup: () => Effect.die(new Error("provider execution id must be written by ingestion")),
+  });
+
   // Task names arrive on task.started/task.progress but not on task.completed,
   // so remember them per task to title the completion activity.
   const taskDescriptionByTaskKey = yield* Cache.make<string, string>({
@@ -999,6 +1021,77 @@ const make = Effect.gen(function* () {
 
   const rememberTaskDescription = (threadId: ThreadId, taskId: string, description: string) =>
     Cache.set(taskDescriptionByTaskKey, providerTaskKey(threadId, taskId), description);
+
+  const rememberAgentRunForThread = (threadId: ThreadId, agentRunId: AgentRunId) =>
+    Effect.sync(() => {
+      activeAgentRunIdByThreadId.set(threadId, agentRunId);
+    });
+
+  const lookupAgentRunForThread = (threadId: ThreadId) =>
+    Effect.sync(() => activeAgentRunIdByThreadId.get(threadId) ?? null);
+
+  const rememberProviderExecutionIdForThread = (
+    threadId: ThreadId,
+    providerExecutionId: ProviderExecutionId,
+  ) => Cache.set(providerExecutionIdByThreadId, threadId, providerExecutionId);
+
+  const lookupProviderExecutionIdForThread = (threadId: ThreadId) =>
+    Cache.getOption(providerExecutionIdByThreadId, threadId).pipe(
+      Effect.map(Option.getOrUndefined),
+    );
+
+  const patchAgentRunProviderExecutionId = (
+    agentRunId: AgentRunId,
+    providerExecutionId: ProviderExecutionId,
+    threadId: ThreadId,
+  ) =>
+    agentRunRegistry.patch({ agentRunId, providerExecutionId }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("agent run provider execution id patch failed", {
+          threadId,
+          agentRunId,
+          providerExecutionId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
+  // Apply a status change to the most recent agent run for a thread, if any
+  // is tracked. Returns null when no run is tracked so callers can decide
+  // whether to log or swallow the outcome.
+  const patchAgentRunStatus = (
+    threadId: ThreadId,
+    status: AgentRunStatus,
+  ): Effect.Effect<AgentRunId | null> =>
+    Effect.gen(function* () {
+      const agentRunId = yield* lookupAgentRunForThread(threadId);
+      if (agentRunId === null) return null;
+      yield* agentRunRegistry.patch({ agentRunId, status }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("agent run status patch failed", {
+            threadId,
+            agentRunId,
+            status,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+      return agentRunId;
+    });
+
+  const attachProviderExecutionId = (
+    threadId: ThreadId,
+    providerThreadId: string,
+  ): Effect.Effect<AgentRunId | null> =>
+    Effect.gen(function* () {
+      const providerExecutionId = providerExecutionIdFrom(providerThreadId);
+      if (providerExecutionId === null) return null;
+      yield* rememberProviderExecutionIdForThread(threadId, providerExecutionId);
+      const agentRunId = yield* lookupAgentRunForThread(threadId);
+      if (agentRunId === null) return null;
+      yield* patchAgentRunProviderExecutionId(agentRunId, providerExecutionId, threadId);
+      return agentRunId;
+    });
 
   // Entries are left in place after completion so replayed or duplicate
   // terminal events stay titled; TTL, capacity, and the session-exit sweep
@@ -1582,6 +1675,22 @@ const make = Effect.gen(function* () {
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
       const isTerminalTurn = event.type === "turn.completed" || event.type === "turn.aborted";
+
+      // Server-owned agent-run bookkeeping. The router mints a record at
+      // turn-start-requested (processDomainEvent) and patches it as the
+      // provider surfaces a real providerThreadId and a terminal status.
+      // Compaction events are intentionally ignored: the registry outlives
+      // session-exit sweeps so a reconnect can still patch the existing
+      // record.
+      if (event.type === "thread.started" && event.payload.providerThreadId !== undefined) {
+        yield* attachProviderExecutionId(thread.id, event.payload.providerThreadId);
+      }
+      if (isTerminalTurn) {
+        const terminalStatus: AgentRunStatus =
+          event.type === "turn.completed" ? "completed" : "cancelled";
+        yield* patchAgentRunStatus(thread.id, terminalStatus);
+      }
+
       const isCompactedThreadState =
         event.type === "thread.state.changed" && event.payload.state === "compacted";
       const pendingTurnStart =
@@ -2185,7 +2294,46 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.asVoid);
     });
 
-  const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
+  const processDomainEvent = (event: TurnStartRequestedDomainEvent) =>
+    Effect.gen(function* () {
+      const threadId = event.payload.threadId;
+      const thread = yield* resolveThreadRuntimeContext(threadId);
+      const configuredProvider = event.payload.modelSelection?.instanceId
+        ? yield* providerService.getInstanceInfo(event.payload.modelSelection.instanceId).pipe(
+            Effect.map((info) => info.driverKind),
+            Effect.catchCause(() => Effect.succeed(undefined)),
+          )
+        : undefined;
+      const providerName = configuredProvider ?? thread?.session?.providerName ?? undefined;
+      if (!providerName) {
+        yield* Effect.logWarning("agent run registration skipped without a provider binding", {
+          threadId,
+          model: event.payload.modelSelection?.model,
+          providerInstanceId: event.payload.modelSelection?.instanceId,
+        });
+        return null;
+      }
+      const provider = ProviderDriverKind.make(providerName);
+      const model = event.payload.modelSelection?.model;
+      const providerExecutionId = yield* lookupProviderExecutionIdForThread(threadId);
+      const started = yield* agentRunRegistry.register({
+        provider,
+        ...(model !== undefined ? { model } : {}),
+        role: "main",
+      });
+      yield* rememberAgentRunForThread(threadId, started.agentRunId);
+      if (providerExecutionId !== undefined) {
+        // A providerThreadId identifies the provider session, which can span
+        // multiple T3 turns. Mint the per-dispatch run first, then attach the
+        // session id so a later turn cannot reuse a terminal run.
+        yield* patchAgentRunProviderExecutionId(started.agentRunId, providerExecutionId, threadId);
+      }
+      yield* Effect.annotateCurrentSpan({
+        "axis.agent.runId": started.agentRunId,
+        "axis.agent.role": started.role,
+      });
+      return started;
+    });
 
   const processInput = (input: RuntimeIngestionInput) =>
     input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);
@@ -2233,4 +2381,4 @@ const make = Effect.gen(function* () {
 export const ProviderRuntimeIngestionLive = Layer.effect(
   ProviderRuntimeIngestionService,
   make,
-).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+).pipe(Layer.provide(Layer.merge(ProjectionTurnRepositoryLive, AgentRunRegistryLive)));

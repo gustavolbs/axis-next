@@ -1293,3 +1293,105 @@ export type ProviderRuntimeEvent = ProviderRuntimeEventV2;
 
 export const ProviderRuntimeTurnStatus = RuntimeTurnState;
 export type ProviderRuntimeTurnStatus = RuntimeTurnState;
+
+/**
+ * Server-owned identity for every dispatched agent run.
+ *
+ * The router mints `AgentRunId` at dispatch time so identity survives
+ * adapter restarts, compaction, and reconnects. `ProviderExecutionId`
+ * carries the real provider-side identifier (for example an OpenCode
+ * `ses_…` session id) only when the provider supplies one; the absence
+ * of the field is meaningful and must not be back filled by the router.
+ *
+ * `AgentRunRole` distinguishes the coordinator (main) from worker and
+ * reviewer dispatches so the runtime can assert that author and reviewer
+ * never share a run.
+ */
+export const AgentRunId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).pipe(
+  Schema.brand("AgentRunId"),
+);
+export type AgentRunId = typeof AgentRunId.Type;
+
+export const ProviderExecutionId = TrimmedNonEmptyString.check(Schema.isMaxLength(256)).pipe(
+  Schema.brand("ProviderExecutionId"),
+);
+export type ProviderExecutionId = typeof ProviderExecutionId.Type;
+
+export const AgentRunRole = Schema.Literals(["main", "worker", "reviewer", "subagent", "unknown"]);
+export type AgentRunRole = typeof AgentRunRole.Type;
+
+export const AgentRunStatus = Schema.Literals(["started", "completed", "failed", "cancelled"]);
+export type AgentRunStatus = typeof AgentRunStatus.Type;
+
+export const AgentRunIdentity = Schema.Struct({
+  agentRunId: AgentRunId,
+  providerExecutionId: Schema.optional(ProviderExecutionId),
+  parentRunId: Schema.optional(AgentRunId),
+  provider: ProviderDriverKind,
+  model: Schema.optional(TrimmedNonEmptyString),
+  role: AgentRunRole,
+});
+export type AgentRunIdentity = typeof AgentRunIdentity.Type;
+
+export const AgentRunRecord = Schema.Struct({
+  agentRunId: AgentRunId,
+  providerExecutionId: Schema.optional(ProviderExecutionId),
+  parentRunId: Schema.optional(AgentRunId),
+  provider: ProviderDriverKind,
+  model: Schema.optional(TrimmedNonEmptyString),
+  role: AgentRunRole,
+  status: AgentRunStatus,
+  createdAt: IsoDateTime,
+  endedAt: Schema.optional(IsoDateTime),
+});
+export type AgentRunRecord = typeof AgentRunRecord.Type;
+
+/**
+ * Recognise literal placeholders that downstream probes return when they
+ * fail to surface a real execution id (e.g. `<id>`, `<model>`,
+ * `unknown`, `synthetic`). These strings must never be promoted to a
+ * `ProviderExecutionId`.
+ */
+export function isPlaceholderProviderExecutionId(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return true;
+  const placeholders = new Set([
+    "placeholder",
+    "unknown",
+    "synthetic",
+    "<id>",
+    "<model>",
+    "<execution_id>",
+    "<run_id>",
+    "none",
+    "null",
+    "nil",
+  ]);
+  if (placeholders.has(trimmed.toLowerCase())) return true;
+  if (/^<[^>]+>$/.test(trimmed)) return true;
+  return false;
+}
+
+/**
+ * Build a `ProviderExecutionId` only from a real, non-placeholder string.
+ * Returns null when the candidate is empty, missing, or matches a known
+ * placeholder pattern; the router must keep the field absent in that case.
+ */
+export function providerExecutionIdFrom(value: unknown): ProviderExecutionId | null {
+  if (typeof value !== "string") return null;
+  if (isPlaceholderProviderExecutionId(value)) return null;
+  try {
+    return Schema.decodeUnknownSync(ProviderExecutionId)(value);
+  } catch {
+    return null;
+  }
+}
+
+export const AgentRunIdentityFields = {
+  agentRunId: Schema.optional(AgentRunId),
+  providerExecutionId: Schema.optional(ProviderExecutionId),
+  parentRunId: Schema.optional(AgentRunId),
+  agentRunRole: Schema.optional(AgentRunRole),
+};
+export type AgentRunIdentityFields = typeof AgentRunIdentityFields;

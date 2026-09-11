@@ -4757,7 +4757,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           .filter((part): part is string => part !== undefined && part.length > 0)
           .join("\n\n"),
       },
-      settingSources: input.axisChat === true ? [] : [...CLAUDE_SETTING_SOURCES],
+      settingSources:
+        input.axisChat === true || options.axisContextInstructions !== undefined
+          ? []
+          : [...CLAUDE_SETTING_SOURCES],
       ...(input.axisChat === true
         ? {
             tools: ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "AskUserQuestion"],

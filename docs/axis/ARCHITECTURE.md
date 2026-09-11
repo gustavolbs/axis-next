@@ -193,6 +193,19 @@ move between those presentations without converting or copying the underlying co
 multi-agent coordination remains above the individual T3 Threads; it does not introduce an
 `AxisChat`, `AxisCoworkSession`, or another turn engine.
 
+Agent identity follows the same boundary. The server-owned `AgentRunRegistry` assigns an
+`agentRunId` to the main T3 turn and records a provider execution id only when the provider emits a
+real one. Provider startup and domain events are separate streams, so ingestion preserves that id
+when `thread.started` arrives before `thread.turn-start-requested`; placeholders are never treated
+as identities. The registry has worker and reviewer roles, but the current OpenCode ingestion path
+does not yet discover or register internal child sessions as runs. A direct OpenCode smoke therefore
+proves provider sessions only, not complete Axis coordinator/worker/reviewer lifecycle correlation.
+Completing that bridge requires server-owned child dispatch, parent linkage, child lifecycle events,
+and a durable/readable run projection. The current registry is also process-local, so restart recovery
+and historical run retention need that same durable projection. Until these pieces exist,
+worker/reviewer identity and post-restart history must remain explicit pending capabilities rather than
+inferred or fabricated ids.
+
 ### Remote and mobile
 
 Axis remote and mobile experiences use T3's authenticated RPC and environment connection runtime.

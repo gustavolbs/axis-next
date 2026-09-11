@@ -241,10 +241,19 @@ function validateConfig(config: AxisTrelloSourceConfig): AxisTrelloSourceError |
       `Trello maxCards must be an integer between 1 and ${MAX_CARDS_PER_READ}.`,
     );
   }
+  const seenNormalizedKeys = new Set<string>();
   for (const [nativeStatus, mappedStatus] of Object.entries(config.statusMap)) {
     if (nativeStatus.trim().length === 0 || !isAxisTrelloMappedStatus(mappedStatus)) {
       return sourceError("configuration", "Trello statusMap contains an invalid entry.");
     }
+    const normalizedKey = nativeStatus.trim().toLocaleLowerCase();
+    if (seenNormalizedKeys.has(normalizedKey)) {
+      return sourceError(
+        "configuration",
+        `Trello statusMap contains duplicate entries that differ only by case or whitespace: '${nativeStatus}'.`,
+      );
+    }
+    seenNormalizedKeys.add(normalizedKey);
   }
   return undefined;
 }
