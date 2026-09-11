@@ -411,8 +411,7 @@ export function ProjectWorkflowPanel({
                           >
                             Start
                           </Button>
-                        ) : null}
-                        {canRetry ? (
+                        ) : canRetry ? (
                           <Button
                             size="xs"
                             variant="outline"
@@ -440,8 +439,7 @@ export function ProjectWorkflowPanel({
                           >
                             Retry
                           </Button>
-                        ) : null}
-                        {canCancel ? (
+                        ) : canCancel ? (
                           <Button
                             size="xs"
                             variant="outline"
