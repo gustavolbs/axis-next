@@ -62,6 +62,17 @@ it.effect("isolates profiles and task extensions by physical project scope", () 
         { environment_id: "laptop", project_id: "project-a", scope_key: firstScope },
       ]);
 
+      const duplicateProfile = yield* Effect.exit(sql`
+        INSERT INTO axis_project_profiles (
+          context_id, environment_id, project_id, scope_key, revision,
+          profile_json, created_at, updated_at
+        ) VALUES (
+          'company_a', 'laptop', 'project-a', ${firstScope}, 1,
+          '{"title":"Duplicate"}', ${now}, ${now}
+        )
+      `);
+      assert.equal(duplicateProfile._tag, "Failure");
+
       const taskColumns = yield* sql<{ readonly name: string }>`
         SELECT name FROM pragma_table_info('axis_task_extensions') ORDER BY cid
       `;
