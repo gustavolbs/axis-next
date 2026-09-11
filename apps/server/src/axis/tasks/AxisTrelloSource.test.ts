@@ -336,6 +336,39 @@ describe("AxisTrelloSource", () => {
     });
   });
 
+  it.effect("does not silently accept case-only duplicate statusMap keys", () =>
+    Effect.gen(function* () {
+      const readCards = vi.fn<AxisTrelloMcpBinding["readCards"]>(() =>
+        Effect.succeed({
+          cards: [{ id: "card-1", name: "Card", status: "Done", labels: [] }],
+          cursor: null,
+        }),
+      );
+      const failure = yield* readAxisTrelloSource({
+        config: { ...config, statusMap: { Done: "done", done: "backlog" } },
+        binding: binding(readCards),
+      }).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(AxisTrelloSourceError);
+      expect(failure.code).toBe("configuration");
+      expect(failure.message).toMatch(/duplicate/i);
+      expect(readCards).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("rejects whitespace-only-equivalent statusMap keys", () =>
+    Effect.gen(function* () {
+      const readCards = vi.fn<AxisTrelloMcpBinding["readCards"]>(() =>
+        Effect.succeed({ cards: [], cursor: null }),
+      );
+      const failure = yield* readAxisTrelloSource({
+        config: { ...config, statusMap: { "Done ": "done", Done: "backlog" } },
+        binding: binding(readCards),
+      }).pipe(Effect.flip);
+      expect(failure.code).toBe("configuration");
+      expect(readCards).not.toHaveBeenCalled();
+    }),
+  );
+
   it.effect("does not mix snapshots from different source configurations", () => {
     const source = makeAxisTrelloSource();
     const readCards = () => Effect.succeed({ cards: [], cursor: "cursor" });
