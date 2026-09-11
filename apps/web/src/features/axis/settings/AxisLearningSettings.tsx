@@ -50,6 +50,7 @@ import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayo
 import {
   buildManualLearningEvidence,
   buildManualLearningProposal,
+  describeLearningScopeGroup,
   learningVersionAction,
   learningAnalysisEvidenceIds,
 } from "./AxisLearningSettings.logic";
@@ -213,6 +214,7 @@ function AxisLearningScopeSettings({
   });
 
   const snapshot = query.data;
+  const scopeGroup = describeLearningScopeGroup(learningScope?.project ?? null, projectLabel);
   const analysisEvidenceIds = useMemo(
     () => learningAnalysisEvidenceIds(snapshot?.evidence ?? []),
     [snapshot],
@@ -470,7 +472,7 @@ function AxisLearningScopeSettings({
       description={
         fixedScope
           ? `Review evidence and proposed improvements for ${projectLabel ?? fixedScope.project.projectId}. Nothing activates automatically.`
-          : "Review evidence and proposed improvements per context. Nothing activates automatically."
+          : `${scopeGroup.description} Nothing activates automatically.`
       }
       variant="plain"
       className="space-y-5"
@@ -507,11 +509,11 @@ function AxisLearningScopeSettings({
                   selectProject(value === "context-only" ? null : (value ?? null))
                 }
               >
-                <SelectTrigger size="xs" className="w-48" aria-label="Learning project">
-                  <SelectValue placeholder="Context only" />
+                <SelectTrigger size="xs" className="w-56" aria-label="Learning group">
+                  <SelectValue placeholder="Company (legacy, no project)" />
                 </SelectTrigger>
                 <SelectPopup>
-                  <SelectItem value="context-only">Context only</SelectItem>
+                  <SelectItem value="context-only">Company (legacy, no project)</SelectItem>
                   {contextProjects.map((binding) => {
                     const key = `${binding.project.environmentId}:${binding.project.projectId}`;
                     return (
