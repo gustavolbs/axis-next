@@ -216,7 +216,7 @@ export const recordAxisVerificationEvidence = (
     const sql = yield* SqlClient.SqlClient;
     const coveredFiles = normalizeCoveredFiles(input.evidence.coveredFiles);
     const coveredFilesJson = JSON.stringify(coveredFiles);
-    const createdAtDate = yield* DateTime.now;
+    const createdAtDate = DateTime.nowUnsafe();
     const createdAt = DateTime.formatIso(createdAtDate);
     const rows = yield* sql<EvidenceRow>`
       INSERT INTO axis_verification_evidence (

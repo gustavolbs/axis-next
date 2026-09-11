@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -78,16 +80,18 @@ layer("AxisVerificationEvidence", (it) => {
       assert.notEqual(fetched, null);
       assert.equal(fetched?.createdAt, first.createdAt);
 
-      const divergent = yield* recordAxisVerificationEvidence({
-        scope,
-        taskId,
-        stepId,
-        commandId,
-        evidence: { ...baseEvidence, summary: "Different summary" },
-      }).pipe(Effect.flip);
-      assert.equal(divergent._tag, "AxisVerificationEvidenceError");
-      if (divergent instanceof AxisVerificationEvidenceError) {
-        assert.equal(divergent.reason, "duplicate");
+      const divergentError = yield* Effect.flip(
+        recordAxisVerificationEvidence({
+          scope,
+          taskId,
+          stepId,
+          commandId,
+          evidence: { ...baseEvidence, summary: "Different summary" },
+        }),
+      );
+      assert.equal(divergentError._tag, "AxisVerificationEvidenceError");
+      if (divergentError instanceof AxisVerificationEvidenceError) {
+        assert.equal(divergentError.reason, "duplicate");
       }
 
       const staleCount = yield* invalidateStaleAxisVerificationEvidence({
@@ -123,28 +127,32 @@ layer("AxisVerificationEvidence", (it) => {
     Effect.gen(function* () {
       yield* runMigrations({ toMigrationInclusive: 66 });
 
-      const emptyCommand = yield* recordAxisVerificationEvidence({
-        scope,
-        taskId,
-        stepId,
-        commandId: CommandId.make("cmd-2"),
-        evidence: { ...baseEvidence, command: "   " },
-      }).pipe(Effect.flip);
-      assert.equal(emptyCommand._tag, "AxisVerificationEvidenceError");
-      if (emptyCommand instanceof AxisVerificationEvidenceError) {
-        assert.equal(emptyCommand.reason, "command_missing");
+      const emptyCommandError = yield* Effect.flip(
+        recordAxisVerificationEvidence({
+          scope,
+          taskId,
+          stepId,
+          commandId: CommandId.make("cmd-2"),
+          evidence: { ...baseEvidence, command: "   " },
+        }),
+      );
+      assert.equal(emptyCommandError._tag, "AxisVerificationEvidenceError");
+      if (emptyCommandError instanceof AxisVerificationEvidenceError) {
+        assert.equal(emptyCommandError.reason, "command_missing");
       }
 
-      const missingFiles = yield* recordAxisVerificationEvidence({
-        scope,
-        taskId,
-        stepId,
-        commandId: CommandId.make("cmd-3"),
-        evidence: { ...baseEvidence, coveredFiles: [] },
-      }).pipe(Effect.flip);
-      assert.equal(missingFiles._tag, "AxisVerificationEvidenceError");
-      if (missingFiles instanceof AxisVerificationEvidenceError) {
-        assert.equal(missingFiles.reason, "invalid_input");
+      const missingFilesError = yield* Effect.flip(
+        recordAxisVerificationEvidence({
+          scope,
+          taskId,
+          stepId,
+          commandId: CommandId.make("cmd-3"),
+          evidence: { ...baseEvidence, coveredFiles: [] },
+        }),
+      );
+      assert.equal(missingFilesError._tag, "AxisVerificationEvidenceError");
+      if (missingFilesError instanceof AxisVerificationEvidenceError) {
+        assert.equal(missingFilesError.reason, "invalid_input");
       }
 
       const notApplicable = yield* recordAxisVerificationEvidence({
