@@ -30,13 +30,12 @@ const buildCatalog = (
   contexts: [
     {
       id: AxisContextId.make("ctx-A"),
+      kind: "company" as const,
       name: "Company",
-      capabilities: [],
-      workHubSources: [],
+      createdAt: "2026-09-09T00:00:00.000Z",
+      updatedAt: "2026-09-09T00:00:00.000Z",
     },
   ],
-  capabilities: [],
-  workHubSources: [],
   projectBindings: bindings.map((binding) => ({
     contextId: AxisContextId.make(binding.contextId),
     project: {
@@ -44,6 +43,10 @@ const buildCatalog = (
       projectId: ProjectId.make(binding.projectId),
     },
   })),
+  providerOwnerships: [],
+  providerAccessGrants: [],
+  capabilities: [],
+  workHubSources: [],
 });
 
 beforeEach(() => {
