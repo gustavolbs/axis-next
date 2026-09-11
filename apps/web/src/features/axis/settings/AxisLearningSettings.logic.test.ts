@@ -16,6 +16,7 @@ import {
   buildManualLearningEvidence,
   buildManualLearningProposal,
   learningVersionAction,
+  learningAnalysisEvidenceIds,
 } from "./AxisLearningSettings.logic";
 
 const contextId = AxisContextId.make("company-a");
@@ -54,6 +55,24 @@ function version(id: string, targetKey = "skill:review", createdAt = now): AxisL
 }
 
 describe("Axis Learning settings logic", () => {
+  it("bounds analysis to recent evidence without mutating the retained history", () => {
+    const evidence = Array.from({ length: 40 }, (_, index) =>
+      buildManualLearningEvidence({
+        contextId: AxisContextId.make("company"),
+        id: `evidence-${index}`,
+        sourceId: "manual",
+        summary: "Observed outcome",
+        observedAt: new Date(Date.UTC(2026, 8, 1, 0, index)).toISOString(),
+        expiresAt: "2026-10-01T00:00:00.000Z",
+      }),
+    );
+    const selected = learningAnalysisEvidenceIds(evidence);
+    expect(selected).toHaveLength(32);
+    expect(selected[0]).toBe("evidence-39");
+    expect(selected.at(-1)).toBe("evidence-8");
+    expect(evidence[0]?.id).toBe("evidence-0");
+    expect(learningAnalysisEvidenceIds([])).toEqual([]);
+  });
   it("keeps manually recorded evidence inside the selected context", () => {
     const evidence = buildManualLearningEvidence({
       contextId,
