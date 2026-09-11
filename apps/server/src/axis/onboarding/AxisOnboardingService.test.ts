@@ -325,6 +325,7 @@ for (const apply of [false, true])
           assert.equal(duplicate.run.execution.turnId, observed.turnId);
           assert.equal(s.requests.length, 1);
           if (!apply) return;
+          assert.equal(duplicate.applied, false);
           const applied = yield* s.service.apply({
             scope,
             runId: completed.id,
@@ -340,6 +341,13 @@ for (const apply of [false, true])
             commandId: CommandId.make("apply-onboarding"),
           });
           assert.equal(applied.profile.revision, 1);
+          assert.equal(applied.run.applied, true);
+          assert.equal((yield* reloaded.get(scope, completed.id)).applied, true);
+          assert.equal(
+            (yield* reloaded.list(scope)).find((item) => item.run.id === completed.id)?.applied,
+            true,
+          );
+          assert.equal((yield* reloaded.start(startInput)).applied, true);
           assert.equal(applied.profile.sources[0]?.path, "package.json");
           assert.equal(applied.profile.facts.length, completed.facts.length);
           assert.equal(applied.profile.rules[0]?.text, completed.candidateRules[0]!.text);

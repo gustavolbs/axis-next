@@ -782,6 +782,7 @@ export class AxisOnboardingRpcError extends Schema.TaggedErrorClass<AxisOnboardi
 export const AxisOnboardingRunSnapshot = Schema.Struct({
   run: AxisOnboardingRun,
   progress: AxisOnboardingProgress,
+  applied: Schema.optionalKey(Schema.Boolean),
 });
 export type AxisOnboardingRunSnapshot = typeof AxisOnboardingRunSnapshot.Type;
 
