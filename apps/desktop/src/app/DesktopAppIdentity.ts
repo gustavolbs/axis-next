@@ -47,6 +47,9 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
 
 export const resolveUserDataPath = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  // Development servers own isolated state; Chromium caches and instance locks
+  // must follow that state instead of sharing one profile between worktrees.
+  if (environment.isDevelopment) return environment.path.join(environment.stateDir, "electron");
   const fileSystem = yield* FileSystem.FileSystem;
   const legacyPath = environment.path.join(
     environment.appDataDirectory,
