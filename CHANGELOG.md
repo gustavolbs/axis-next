@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.5] - 2026-09-11
+
+### Added
+
+- Integrate the parallel RouteMux worker slice: testable Jira and Trello write adapters, scoped task intake, PR plan + delivery, review evidence + feedback, verification evidence, and Hermes-driven learning evidence plumbing through the scheduler X12 path.
+- Integrate the parallel Codex slice: pin Hermes (`NousResearch/hermes-agent` 0.21.1 with source digests), persist and reconcile versioned Learning outcomes, materialize effective Axis instructions for both Codex and Claude, and surface the X12 scheduled activity runner.
+- Integrate the parallel web slice: per-project Learning review panel (U06), label legacy vs per-project Learning groups in Settings (U07), Escape-to-back on the project Overview shell (U02), and the project Learning panel mount in the Overview (I03).
+- Cover project Overview scope resolution end-to-end (controlled-transport / out-of-order / conflict cases).
+
+### Fixed
+
+- Align the new task/workflow Context.Service declarations with the `Context.Service<Self, Interface>()(...)` Self-type + deterministic-key contract that the Effect language service requires.
+- Replace `Schema["Type"]` lookups, `Math.random()`, `new Date()`, untagged `new Error()`, and `Schema.decodeUnknownSync` inside Effect generators with the typed Effect equivalents.
+- Teach the Work Hub scheduled activity editor to render the server-managed `learningAnalysis` action without fabricating it from the UI.
+
 ## [0.12.4] - 2026-09-11
 
 ### Fixed
