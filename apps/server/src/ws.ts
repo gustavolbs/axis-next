@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
+  AuthAccessWriteScope,
   AxisLearningLifecycleEventId,
   AxisLearningPersistenceError,
   AxisLearningRevisionRequiredError,
@@ -185,13 +186,18 @@ const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchComma
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 
-/** Resolve the authenticated Axis context without trusting an RPC scope. */
+/** Environment administrators can select a catalog context; other sessions retain their context. */
 export const resolveAxisCallerContextId = (
-  subject: string,
+  session: { readonly subject: string; readonly scopes: ReadonlyArray<AuthEnvironmentScope> },
   contexts: ReadonlyArray<Pick<AxisContext, "id" | "kind">>,
-): AxisContextId | undefined =>
-  contexts.find((context) => context.id === subject)?.id ??
+  requestedContextId?: AxisContextId,
+): AxisContextId | undefined => {
+  if (requestedContextId !== undefined && session.scopes.includes(AuthAccessWriteScope)) {
+    return contexts.find((context) => context.id === requestedContextId)?.id;
+  }
+  return contexts.find((context) => context.id === session.subject)?.id ??
   contexts.find((context) => context.kind === "personal")?.id;
+};
 
 type AxisTaskScopeIdentity = {
   readonly contextId: string;
@@ -668,12 +674,12 @@ const makeWsRpcLayer = (
                       }),
                   ),
                   Effect.flatMap((catalog) => {
-                    // The RPC scope is untrusted data. Resolve the caller from
-                    // the authenticated subject and server-owned context catalog
-                    // so a request cannot authorize itself by naming its target.
+                    // Context selection needs administrative authority. Project
+                    // existence, environment and binding are still resolved below.
                     const callerContextId = resolveAxisCallerContextId(
-                      currentSession.subject,
+                      currentSession,
                       catalog.catalog.contexts,
+                      scope.contextId,
                     );
                     return callerContextId === undefined
                       ? Effect.fail(
@@ -720,8 +726,9 @@ const makeWsRpcLayer = (
               ),
               Effect.flatMap((snapshot) => {
                 const callerContextId = resolveAxisCallerContextId(
-                  currentSession.subject,
+                  currentSession,
                   snapshot.catalog.contexts,
+                  scope.contextId,
                 );
                 if (callerContextId === undefined) {
                   return Effect.fail(
@@ -769,8 +776,9 @@ const makeWsRpcLayer = (
           ),
           Effect.flatMap((snapshot) => {
             const callerContextId = resolveAxisCallerContextId(
-              currentSession.subject,
+              currentSession,
               snapshot.catalog.contexts,
+              contextId,
             );
             if (callerContextId === undefined) {
               return Effect.fail(
@@ -853,7 +861,7 @@ const makeWsRpcLayer = (
                   ),
                   Effect.flatMap((snapshot) => {
                     const callerContextId = resolveAxisCallerContextId(
-                      currentSession.subject,
+                      currentSession,
                       snapshot.catalog.contexts,
                     );
                     return callerContextId === undefined

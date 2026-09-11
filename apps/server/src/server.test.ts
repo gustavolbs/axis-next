@@ -5511,11 +5511,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("validates Axis project scope through RPC before reading or writing profiles", () =>
+  it.effect("lets administrators select a company while validating project scope through RPC", () =>
     Effect.gen(function* () {
       const environmentId = testEnvironmentDescriptor.environmentId;
       const scope = {
-        contextId: AxisContextId.make("personal"),
+        contextId: AxisContextId.make("company"),
         project: { environmentId, projectId: defaultProjectId },
       };
       let catalog = yield* decodeAxisContextCatalogSnapshot({
@@ -5530,8 +5530,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               createdAt: "2026-09-09T00:00:00.000Z",
               updatedAt: "2026-09-09T00:00:00.000Z",
             },
+            {
+              id: "company",
+              kind: "company",
+              name: "Company",
+              createdAt: "2026-09-09T00:00:00.000Z",
+              updatedAt: "2026-09-09T00:00:00.000Z",
+            },
           ],
-          projectBindings: [{ contextId: "personal", project: scope.project }],
+          projectBindings: [{ contextId: "company", project: scope.project }],
         },
       });
       const catalogGet = Effect.sync(() => catalog);
@@ -5579,7 +5586,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
             for (const invalidScope of [
-              { ...scope, contextId: AxisContextId.make("company") },
+              { ...scope, contextId: AxisContextId.make("missing") },
               {
                 ...scope,
                 project: { ...scope.project, environmentId: EnvironmentId.make("foreign") },
@@ -5612,7 +5619,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes an authorized context-scoped Axis Learning snapshot", () =>
+  it.effect("keeps non-administrative Axis Learning sessions in their own context", () =>
     Effect.gen(function* () {
       const snapshot = yield* decodeAxisLearningSnapshot({
         contextId: "personal",
@@ -5654,7 +5661,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
-      const wsUrl = yield* getWsServerUrl("/ws");
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: ownerCookie },
+        body: yield* HttpBody.json({ scopes: [...AuthStandardClientScopes] }),
+      });
+      assert.equal(pairingResponse.status, 200);
+      const pairingBody = (yield* pairingResponse.json) as { readonly credential: string };
+      const wsUrl = yield* getWsServerUrl("/ws", { credential: pairingBody.credential });
       const response = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
