@@ -863,6 +863,11 @@ export function createServerEnvironmentAtoms<R, E>(
     tag: WS_METHODS.axisProjectProfileGet,
     staleTimeMs: 5_000,
   });
+  const axisProjectContextPreview = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:axis:project-context-preview",
+    tag: WS_METHODS.axisProjectContextPreview,
+    staleTimeMs: 5_000,
+  });
   const axisTasks = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:axis:tasks",
     tag: WS_METHODS.axisTasksList,
@@ -917,6 +922,7 @@ export function createServerEnvironmentAtoms<R, E>(
     settingsValueAtom,
     providersValueAtom,
     axisProjectProfile,
+    axisProjectContextPreview,
     axisTasks,
     axisTask,
     axisOnboardingRuns,
