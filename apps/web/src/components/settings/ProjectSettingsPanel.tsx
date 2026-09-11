@@ -24,7 +24,7 @@ import type {
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { useCanGoBack, useNavigate } from "@tanstack/react-router";
+import { useCanGoBack, useNavigate, useSearch } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import {
@@ -164,6 +164,7 @@ function memberKey(member: { environmentId: string; id: string }): string {
 
 export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
   const navigate = useNavigate();
+  const search = useSearch({ strict: false });
   const canGoBack = useCanGoBack();
   const navigateBackWithinApp = useCallback(() => {
     if (canGoBack) {
@@ -193,6 +194,24 @@ export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron}>
           <ProjectSettingsBreadcrumb projectKey={projectKey} />
+          <Button
+            size="xs"
+            variant="outline"
+            className="ml-auto"
+            onClick={() =>
+              void navigate({
+                to: "/projects/$projectKey",
+                params: { projectKey },
+                search: {
+                  view: "overview",
+                  ...(search.environmentId ? { environmentId: search.environmentId } : {}),
+                  ...(search.projectId ? { projectId: search.projectId } : {}),
+                },
+              })
+            }
+          >
+            Project overview
+          </Button>
         </WorkspacePageHeader>
         <ProjectSettingsPanel projectKey={projectKey} />
       </div>
@@ -220,6 +239,7 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
       void navigate({
         to: "/projects/$projectKey",
         params: { projectKey: clicked.value },
+        search: { view: "settings" },
         replace: true,
         hashScrollIntoView: false,
       });
@@ -256,6 +276,7 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
 export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
+  const search = useSearch({ strict: false });
 
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
 
@@ -283,11 +304,16 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
       void navigate({
         to: "/projects/$projectKey",
         params: { projectKey: successor.projectKey },
+        search: {
+          view: "settings",
+          ...(search.environmentId ? { environmentId: search.environmentId } : {}),
+          ...(search.projectId ? { projectId: search.projectId } : {}),
+        },
         replace: true,
         hashScrollIntoView: false,
       });
     }
-  }, [groups, navigate, projectKey, selected]);
+  }, [groups, navigate, projectKey, search.environmentId, search.projectId, selected]);
 
   if (!selected) {
     return (
@@ -303,6 +329,7 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
 
 function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const navigate = useNavigate();
+  const search = useSearch({ strict: false });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const representative =
     group.memberProjects.find(
@@ -506,10 +533,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
 
   // ----- checkout selection and scripts -----
-  const [selectedCheckoutKey, setSelectedCheckoutKey] = useState(representative.physicalProjectKey);
   const selectedCheckout =
-    group.memberProjects.find((member) => member.physicalProjectKey === selectedCheckoutKey) ??
-    representative;
+    group.memberProjects.find(
+      (member) => member.environmentId === search.environmentId && member.id === search.projectId,
+    ) ?? representative;
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
   );
@@ -1010,7 +1037,22 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           headerAction={
             <Select
               value={selectedCheckout.physicalProjectKey}
-              onValueChange={(value) => setSelectedCheckoutKey(String(value))}
+              onValueChange={(value) => {
+                const member = group.memberProjects.find(
+                  (item) => item.physicalProjectKey === value,
+                );
+                if (!member) return;
+                void navigate({
+                  to: "/projects/$projectKey",
+                  params: { projectKey: group.projectKey },
+                  search: {
+                    view: "settings",
+                    environmentId: member.environmentId,
+                    projectId: member.id,
+                  },
+                  replace: true,
+                });
+              }}
             >
               <SelectTrigger size="sm" className="max-w-64" aria-label="Selected checkout">
                 <SelectValue>{selectedCheckoutLabel}</SelectValue>

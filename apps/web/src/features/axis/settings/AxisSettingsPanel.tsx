@@ -159,6 +159,7 @@ export function AxisSettingsPanel({ section }: { readonly section?: AxisSettings
         <AxisLearningSettings
           environmentId={loaded.environmentId}
           contexts={loaded.snapshot.catalog.contexts}
+          projectBindings={loaded.snapshot.catalog.projectBindings}
         />
       ) : null}
       {screen === undefined ? (

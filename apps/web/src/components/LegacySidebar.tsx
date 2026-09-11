@@ -6,6 +6,7 @@ import {
   ContainerIcon,
   FolderPlusIcon,
   Globe2Icon,
+  LayoutDashboardIcon,
   LoaderIcon,
   SearchIcon,
   SquarePenIcon,
@@ -2205,6 +2206,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         void router.navigate({
           to: "/projects/$projectKey",
           params: { projectKey: project.projectKey },
+          search: { view: "settings" },
         });
         return;
       }
@@ -2308,7 +2310,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       <div className="group/project-header relative">
         <SidebarMenuButton
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
-          className={`pr-8 group-hover/project-header:bg-sidebar-row-hover group-hover/project-header:text-sidebar-foreground max-sm:pr-14 ${
+          className={`pr-20 group-hover/project-header:bg-sidebar-row-hover group-hover/project-header:text-sidebar-foreground ${
             isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : ""
           }`}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
@@ -2366,6 +2368,30 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             ) : null}
           </span>
         </SidebarMenuButton>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`Project overview for ${project.displayName}`}
+                className={`${SIDEBAR_ICON_ACTION_BUTTON_CLASS} absolute top-1 right-7`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (isMobile) setOpenMobile(false);
+                  void router.navigate({
+                    to: "/projects/$projectKey",
+                    params: { projectKey: project.projectKey },
+                    search: { view: "overview" },
+                  });
+                }}
+              />
+            }
+          >
+            <LayoutDashboardIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">Project overview</TooltipPopup>
+        </Tooltip>
         {/* Environment badge – visible by default, crossfades with the
             "new thread" button on hover using the same pointer-events +
             opacity pattern as the thread row archive/timestamp swap. */}
@@ -2379,7 +2405,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                       ? "Local sandbox project"
                       : "Remote project"
                   }
-                  className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-icon-muted transition-opacity duration-150 max-sm:right-7 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0 max-sm:group-hover/project-header:opacity-100 max-sm:group-focus-within/project-header:opacity-100"
+                  className="pointer-events-none absolute top-1 right-14 inline-flex size-5 items-center justify-center rounded-md text-icon-muted"
                 />
               }
             >
