@@ -280,7 +280,7 @@ it.effect("invokes the pinned native runtime with bounded stdin and no secret pa
     expect(HERMES_AGENT_COMMIT).toBe("2237be355906fbe6065ce1815711eee52b2d646e");
     expect(HERMES_AGENT_REPOSITORY).toBe("https://github.com/NousResearch/hermes-agent");
     expect(HERMES_AGENT_DECISION_DIGEST).toBe(
-      "sha256:da8198ace52ad2956db12b59122f49d9c7b7ebf8161a3e6b10ce893f23cbbc07",
+      "sha256:6dbe4c8afa5b805e3c2938cfe185495766b698067451077cf1209ece2668a1d3",
     );
     expect(HERMES_AGENT_SOURCE_DIGESTS).toEqual({
       runAgent: "51e28e8905ebe1c9442e0c67a7eca0d53e6315414cf8c6927501b130d7650872",
