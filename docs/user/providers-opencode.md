@@ -59,7 +59,10 @@ The model selected in the composer is the coordinator for that turn. To choose
 a different child model, mention its catalog name or exact slug together with
 the word **agent**, **subagent**, **worker**, or **reviewer** in your prompt, for
 example: “Call an agent using DeepSeek V4 Pro Relay and ask it to say hello.”
-T3 Code creates that child selection from the live catalog for the instance;
-there are no fixed MiniMax, DeepSeek, GLM, GPT, or role assignments. If no child
-model is mentioned, OpenCode's normal agent behavior applies and the child
-inherits the coordinator model when it has no explicit configuration.
+For a locally managed OpenCode server, T3 Code creates that child selection from
+the live catalog for the instance; there are no fixed MiniMax, DeepSeek, GLM, GPT,
+or role assignments. If no child model is mentioned, OpenCode's normal agent
+behavior applies and the child inherits the coordinator model when it has no
+explicit configuration. An externally managed OpenCode server must load its own
+agent definitions, so this per-prompt model selection is available after using a
+local server or configuring the corresponding child agents on that server.

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.3] - 2026-09-11
+
+### Changed
+
+- Keep RouteMux subagent selection scoped to locally managed OpenCode servers and document the external-server configuration requirement.
+
 ## [0.12.2] - 2026-09-10
 
 ### Added

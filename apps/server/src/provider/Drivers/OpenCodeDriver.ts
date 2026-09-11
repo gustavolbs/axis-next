@@ -154,7 +154,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           ? []
           : openCodeGatewayModels(liveGatewayModels ?? [], gatewayDefinition.opencode.providerId);
       const openCodeGatewaySubagents =
-        gatewayDefinition?.opencode === undefined
+        gatewayDefinition?.opencode === undefined || effectiveConfig.serverUrl.trim().length > 0
           ? []
           : openCodeGatewayAgents(liveGatewayModels ?? [], gatewayDefinition.opencode.providerId);
       const processEnv =
