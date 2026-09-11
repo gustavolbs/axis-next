@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.0] - 2026-09-11
+
+### Added
+
+- Project-scoped learning workflow: per-step verification evidence (`AxisVerificationEvidence`), self-review bound to the current diff (`AxisReviewEvidence`), pull request planning/delivery (`AxisPullRequestPlan`, `AxisPullRequestDelivery`), review feedback as evidence (`AxisReviewFeedback`), and learning outcome reconciliation (`AxisLearningOutcomes`).
+- Task intake from local, Jira and Trello sources with idempotent commandId + source key dedupe (`AxisTaskIntake`).
+- Idempotent Jira comment/transition/link-pr actions and Trello comment/move actions with intent reconciliation (`AxisJiraActions`, `AxisTrelloActions`).
+- Data lifecycle runtime over the existing stores for export/purge/delete scoped to a single project (`AxisProjectDataLifecycleService`).
+- New persistence migrations 066–072 covering verification evidence, review evidence, review feedback, task intake, learning outcomes, Jira intents and Trello intents.
+- Project learning panel and proposal detail in the web Overview, grouped by project (`ProjectLearningPanel`, `LearningProposalDetail`).
+- Removed mobile dependencies from X14 so the feature can be accepted without `apps/mobile`.
+
+### Changed
+
+- Contracts `AxisLearningActivationState` and `AxisTaskFeedback` continue to evolve behind the same RPC surfaces; the new services reuse them without duplicating ledgers.
+
 ## [0.12.3] - 2026-09-11
 
 ### Changed

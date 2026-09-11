@@ -40,6 +40,7 @@ import { ProjectPatternsPanel } from "./ProjectPatternsPanel";
 import { ProjectContextPreviewPanel } from "./ProjectContextPreviewPanel";
 import { ProjectWorkflowView } from "./ProjectWorkflowView";
 import { ProjectIntegrationsPanel } from "./ProjectIntegrationsPanel";
+import { ProjectLearningPanel } from "./ProjectLearningPanel";
 import { AxisLearningSettings } from "../settings/AxisLearningSettings";
 import type {
   ProjectOnboardingConnectionState,
@@ -710,6 +711,32 @@ export function ProjectOverviewPage({
               scope={selectedScope}
               projectLabel={overviewGroup.label}
               connectionState={onboardingConnectionState}
+            />
+          ) : null}
+          {view === "learning" && selectedScope !== null && selectedProject !== null ? (
+            <ProjectLearningPanel
+              key={`learning:${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
+              scope={selectedScope}
+              snapshot={{
+                scope: selectedScope,
+                proposals: [],
+                activeVersions: [],
+                engineState: "available",
+                lastImprovementRunAt: null,
+              }}
+              proposals={[]}
+              busy={false}
+              onApprove={async () => ({
+                proposalId: "" as never,
+                commandId: "" as never,
+                status: "accepted",
+              })}
+              onActivate={async () => ({
+                proposalId: "" as never,
+                commandId: "" as never,
+                status: "activated",
+              })}
+              onOpenProposal={() => undefined}
             />
           ) : null}
         </WorkspacePageContainer>
