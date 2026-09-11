@@ -16,6 +16,7 @@ import type {
 import {
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   AssistantCitation,
+  AxisLearningVersionId,
   ApprovalRequestId,
   EnvironmentId,
   EventId,
@@ -2355,7 +2356,12 @@ it.effect(
         }),
       );
       const normal = yield* provider
-        .sendTurn({ threadId, input: "Normal first" })
+        .sendTurn({
+          threadId,
+          input: "Normal first",
+          axisContextDigest: "sha256:effective-context",
+          axisLearningVersionIds: [AxisLearningVersionId.make("learning-version-1")],
+        })
         .pipe(Effect.forkScoped);
       yield* Deferred.await(entered);
       yield* Effect.gen(function* () {
@@ -2390,6 +2396,9 @@ it.effect(
       const after = Option.getOrThrow(yield* directory.getBinding(threadId));
       assert.propertyVal(after.runtimePayload, "axisNormalTurnEffect", null);
       assert.propertyVal(after.runtimePayload, "activeTurnId", "normal-turn");
+      assert.deepEqual(readRuntimePayloadForTest(after.runtimePayload).axisLearningVersionIds, [
+        "learning-version-1",
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 

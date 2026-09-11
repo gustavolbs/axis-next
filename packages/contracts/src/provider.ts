@@ -22,6 +22,7 @@ import {
   RuntimeMode,
 } from "./orchestration.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { AxisLearningVersionId } from "./axisLearning.ts";
 import { TokenEfficiencyEngineId, TokenEfficiencyMode } from "./tokenEfficiency.ts";
 
 const ProviderSessionStatus = Schema.Literals([
@@ -85,6 +86,8 @@ export const ProviderSendTurnInput = Schema.Struct({
   axisContextInstructions: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(32_000))),
   /** Digest of the server-resolved Axis context consumed by this turn. */
   axisContextDigest: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  /** Server-resolved Learning versions that contributed to the effective context. */
+  axisLearningVersionIds: Schema.optional(Schema.Array(AxisLearningVersionId)),
   /** Token-efficiency policy resolved by Axis for this provider/model. */
   axisTokenEfficiencyPolicy: Schema.optional(
     Schema.Struct({

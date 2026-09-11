@@ -653,6 +653,7 @@ const make = Effect.gen(function* () {
     return {
       instructions: formatAxisEffectiveContextInstructions(resolved),
       digest: resolved.digest,
+      learningVersionIds: resolved.learningVersionIds,
       ...(resolved.tokenEfficiencyPolicy === undefined
         ? {}
         : {
@@ -1087,6 +1088,7 @@ const make = Effect.gen(function* () {
         ? {
             axisContextInstructions: axisContext.instructions,
             axisContextDigest: axisContext.digest,
+            axisLearningVersionIds: axisContext.learningVersionIds,
             ...(axisContext.tokenEfficiencyPolicy === undefined
               ? {}
               : { axisTokenEfficiencyPolicy: axisContext.tokenEfficiencyPolicy }),
