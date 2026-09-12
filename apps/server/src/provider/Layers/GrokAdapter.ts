@@ -1573,6 +1573,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               );
               const promptParts: Array<EffectAcpSchema.ContentBlock> = [
                 ...(text ? [{ type: "text" as const, text }] : []),
+                ...(input.axisSkillInstructions
+                  ? [{ type: "text" as const, text: input.axisSkillInstructions }]
+                  : []),
                 ...imagePromptParts,
               ];
 

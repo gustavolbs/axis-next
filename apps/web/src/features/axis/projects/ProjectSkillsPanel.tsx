@@ -27,12 +27,13 @@ import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
-  PROJECT_SKILL_ROOTS,
+  AXIS_AGENTS_PATH,
+  mergeAxisAgentsBlock,
+  PROJECT_SKILL_ROOT,
   SKILL_NAME_PATTERN,
   missingStarterSkills,
   collectProjectSkills,
   projectSkillPath,
-  projectSkillPaths,
   skillBody,
   skillDocument,
   type ProjectSkill,
@@ -61,6 +62,21 @@ export function ProjectSkillsPanel({
   const [loadedPath, setLoadedPath] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [agentsBridgeReady, setAgentsBridgeReady] = useState(false);
+
+  useEffect(() => {
+    setAgentsBridgeReady(false);
+  }, [environmentId, workspaceRoot]);
+
+  const projectEntriesQuery = useEnvironmentQuery(
+    projectEnvironment.listEntries({ environmentId, input: { cwd: workspaceRoot } }),
+  );
+  const agentsFileQuery = useEnvironmentQuery(
+    projectEnvironment.readFile({
+      environmentId,
+      input: { cwd: workspaceRoot, relativePath: AXIS_AGENTS_PATH },
+    }),
+  );
 
   const skills = useMemo(
     () => collectProjectSkills(providers, workspaceRoot),
@@ -110,6 +126,7 @@ export function ProjectSkillsPanel({
           input: {
             instanceId: provider.instanceId,
             cwd: workspaceRoot,
+            projectRoot: workspaceRoot,
             forceWorkspaceRefresh: true,
           },
         }),
@@ -118,15 +135,68 @@ export function ProjectSkillsPanel({
     setRefreshing(false);
   };
 
+  const ensureAgentsBridge = async (): Promise<boolean> => {
+    if (projectEntriesQuery.isPending || agentsFileQuery.isPending) return false;
+    if (agentsBridgeReady) return true;
+    if (projectEntriesQuery.error !== null) {
+      toastManager.add({
+        type: "error",
+        title: "Could not inspect AGENTS.md",
+        description:
+          "The project file index could not be read, so existing instructions were left untouched.",
+      });
+      return false;
+    }
+    const agentsEntry = projectEntriesQuery.data?.entries.some(
+      (entry) => entry.kind === "file" && entry.path === AXIS_AGENTS_PATH,
+    );
+    if (agentsEntry && agentsFileQuery.data === null) {
+      toastManager.add({
+        type: "error",
+        title: "Could not safely update AGENTS.md",
+        description: "The existing AGENTS.md could not be read, so it was left untouched.",
+      });
+      return false;
+    }
+    const existingContents = agentsFileQuery.data?.contents ?? "";
+    const mergedContents = mergeAxisAgentsBlock(existingContents);
+    if (mergedContents === existingContents) {
+      setAgentsBridgeReady(true);
+      return true;
+    }
+    const result = await writeFile({
+      environmentId,
+      input: {
+        cwd: workspaceRoot,
+        relativePath: AXIS_AGENTS_PATH,
+        contents: mergedContents,
+      },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Could not update AGENTS.md",
+          description:
+            error instanceof Error ? error.message : "The Axis skill bridge could not be written.",
+        });
+      }
+      return false;
+    }
+    setAgentsBridgeReady(true);
+    return true;
+  };
+
   const remove = async (skill: ProjectSkill) => {
     const confirmed = await ensureLocalApi().dialogs.confirm(
-      `Delete “${skill.displayName}” from this project? This removes its project copies for every provider, but does not change personal or installed skills.`,
+      `Delete “${skill.displayName}” from this project? This removes only the Axis-managed skill, not provider-native or personal skills.`,
       { variant: "destructive" },
     );
     if (!confirmed || saving) return;
 
     setSaving(true);
-    const paths = [...new Set([...skill.relativePaths, ...projectSkillPaths(skill.name)])];
+    const paths = [...new Set(skill.relativePaths)];
     const results = await Promise.all(
       paths.map((relativePath) =>
         deleteFile({ environmentId, input: { cwd: workspaceRoot, relativePath } }),
@@ -187,18 +257,20 @@ export function ProjectSkillsPanel({
 
     setSaving(true);
     const contents = skillDocument({ name: normalizedName, description, instructions });
-    const writeResults = await Promise.all(
-      PROJECT_SKILL_ROOTS.map((root) =>
-        writeFile({
-          environmentId,
-          input: {
-            cwd: workspaceRoot,
-            relativePath: projectSkillPath(root, normalizedName),
-            contents,
-          },
-        }),
-      ),
-    );
+    if (!(await ensureAgentsBridge())) {
+      setSaving(false);
+      return;
+    }
+    const writeResults = [
+      await writeFile({
+        environmentId,
+        input: {
+          cwd: workspaceRoot,
+          relativePath: projectSkillPath(normalizedName),
+          contents,
+        },
+      }),
+    ];
     const writeFailure = writeResults.find((result) => result._tag === "Failure");
     if (writeFailure) {
       setSaving(false);
@@ -215,9 +287,7 @@ export function ProjectSkillsPanel({
     }
 
     if (editingSkill !== null && editingSkill.name.toLowerCase() !== normalizedName) {
-      const oldPaths = [
-        ...new Set([...editingSkill.relativePaths, ...projectSkillPaths(editingSkill.name)]),
-      ];
+      const oldPaths = [...new Set(editingSkill.relativePaths)];
       const deleteResults = await Promise.all(
         oldPaths.map((relativePath) =>
           deleteFile({ environmentId, input: { cwd: workspaceRoot, relativePath } }),
@@ -255,18 +325,20 @@ export function ProjectSkillsPanel({
   const installStarterSkills = async () => {
     if (saving || starterSkills.length === 0) return;
     setSaving(true);
+    if (!(await ensureAgentsBridge())) {
+      setSaving(false);
+      return;
+    }
     const results = await Promise.all(
-      starterSkills.flatMap((skill) =>
-        PROJECT_SKILL_ROOTS.map((root) =>
-          writeFile({
-            environmentId,
-            input: {
-              cwd: workspaceRoot,
-              relativePath: projectSkillPath(root, skill.name),
-              contents: skillDocument(skill),
-            },
-          }),
-        ),
+      starterSkills.map((skill) =>
+        writeFile({
+          environmentId,
+          input: {
+            cwd: workspaceRoot,
+            relativePath: projectSkillPath(skill.name),
+            contents: skillDocument(skill),
+          },
+        }),
       ),
     );
     setSaving(false);
@@ -295,7 +367,7 @@ export function ProjectSkillsPanel({
     <>
       <SettingsSection
         title="Project skills"
-        description="Skills created here are shared with the providers used by this project."
+        description={`Skills live once in ${PROJECT_SKILL_ROOT} and are available in the composer for every provider.`}
         headerAction={
           <div className="flex items-center gap-1">
             <Button
@@ -398,7 +470,8 @@ export function ProjectSkillsPanel({
               {editingSkill === null ? "Create project skill" : "Edit project skill"}
             </DialogTitle>
             <DialogDescription>
-              Write the behavior once. The project exposes it to its provider runtimes.
+              Write the behavior once. Axis stores it in {PROJECT_SKILL_ROOT} and exposes it to
+              every provider.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="grid gap-4">

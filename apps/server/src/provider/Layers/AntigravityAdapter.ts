@@ -1042,6 +1042,9 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       Effect.provideService(Path.Path, path),
       Effect.mapError((cause) => mapAntigravityError(input.threadId, "session/prompt", cause)),
     );
+    const promptWithAxisSkill = input.axisSkillInstructions
+      ? [...prompt, { type: "text" as const, text: input.axisSkillInstructions }]
+      : prompt;
     let intent: TurnIntent | undefined;
     // The caller holds promptLock while it changes or settles the active turn.
     const finishTurn = (turn: TurnIntent, payload: TurnCompletedPayload) =>
@@ -1135,7 +1138,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
             .prompt(
               {
                 prompt: [
-                  ...prompt,
+                  ...promptWithAxisSkill,
                   {
                     type: "text",
                     text: buildRuntimeInstructions({

@@ -2,9 +2,12 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  AXIS_AGENTS_BLOCK_END,
+  AXIS_AGENTS_BLOCK_START,
   SKILL_NAME_PATTERN,
   STARTER_SKILLS,
   collectProjectSkills,
+  mergeAxisAgentsBlock,
   missingStarterSkills,
   skillBody,
   skillDocument,
@@ -47,7 +50,7 @@ describe("ProjectSkillsPanel logic", () => {
           skills: [
             {
               name: "review-follow-up",
-              path: "/repo/.agents/skills/review-follow-up/SKILL.md",
+              path: "/repo/.axis-tools/skills/review-follow-up/SKILL.md",
               scope: "project",
               description: "Review changes",
             },
@@ -63,12 +66,12 @@ describe("ProjectSkillsPanel logic", () => {
           skills: [
             {
               name: "review-follow-up",
-              path: "/repo/.claude/skills/review-follow-up/SKILL.md",
+              path: "/repo/.axis-tools/skills/review-follow-up/SKILL.md",
               scope: "project",
             },
             {
               name: "outside",
-              path: "/other/.claude/skills/outside/SKILL.md",
+              path: "/other/.axis-tools/skills/outside/SKILL.md",
               scope: "project",
             },
           ],
@@ -78,7 +81,7 @@ describe("ProjectSkillsPanel logic", () => {
           skills: [
             {
               name: "opencode-skill",
-              path: "/repo/.agents/skills/opencode-skill/SKILL.md",
+              path: "/repo/.axis-tools/skills/opencode-skill/SKILL.md",
             },
           ],
         }),
@@ -92,19 +95,16 @@ describe("ProjectSkillsPanel logic", () => {
         displayName: "Opencode Skill",
         description: "",
         providers: ["opencode"],
-        relativePath: ".agents/skills/opencode-skill/SKILL.md",
-        relativePaths: [".agents/skills/opencode-skill/SKILL.md"],
+        relativePath: ".axis-tools/skills/opencode-skill/SKILL.md",
+        relativePaths: [".axis-tools/skills/opencode-skill/SKILL.md"],
       },
       {
         name: "review-follow-up",
         displayName: "Review Follow Up",
         description: "Review changes",
         providers: ["codex", "claudeAgent"],
-        relativePath: ".agents/skills/review-follow-up/SKILL.md",
-        relativePaths: [
-          ".agents/skills/review-follow-up/SKILL.md",
-          ".claude/skills/review-follow-up/SKILL.md",
-        ],
+        relativePath: ".axis-tools/skills/review-follow-up/SKILL.md",
+        relativePaths: [".axis-tools/skills/review-follow-up/SKILL.md"],
       },
     ]);
   });
@@ -134,7 +134,7 @@ describe("ProjectSkillsPanel logic", () => {
           skills: [
             {
               name: STARTER_SKILLS[0]!.name,
-              path: "/repo/.agents/skills/analyze-ticket/SKILL.md",
+              path: "/repo/.axis-tools/skills/analyze-ticket/SKILL.md",
               scope: "project",
             },
           ],
@@ -160,5 +160,18 @@ describe("ProjectSkillsPanel logic", () => {
         "running the narrowest meaningful project-defined checks",
       );
     }
+  });
+
+  it("preserves user AGENTS content and replaces only its managed block", () => {
+    const original = "# Project rules\n\nKeep the existing instructions.\n";
+    const first = mergeAxisAgentsBlock(original);
+    const second = mergeAxisAgentsBlock(`${first}\n\nUser edit\n`);
+
+    expect(first).toContain(original.trim());
+    expect(first).toContain(AXIS_AGENTS_BLOCK_START);
+    expect(first).toContain(AXIS_AGENTS_BLOCK_END);
+    expect(second).toContain("User edit");
+    expect(second.match(new RegExp(AXIS_AGENTS_BLOCK_START, "g"))).toHaveLength(1);
+    expect(second.match(new RegExp(AXIS_AGENTS_BLOCK_END, "g"))).toHaveLength(1);
   });
 });

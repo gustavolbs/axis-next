@@ -1505,6 +1505,8 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly modelCatalog: ClaudeModelCatalog;
     /** Names of the skills Claude Code can run for this session's cwd. */
     readonly skillNames: ReadonlySet<string>;
+    /** Axis skills take precedence over same-named native skills. */
+    readonly axisSkillNames: ReadonlySet<string>;
   },
 ) {
   const text = buildPromptText(input, dependencies.boundInstanceId, dependencies.modelCatalog);
@@ -1514,7 +1516,14 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   // `/name` is its first character. A `$skill` chip anywhere in the prompt is
   // therefore split into [leading text, "/name trailing text"] so the CLI
   // runs it natively and the prose around it survives. See ClaudeSkillDispatch.
-  const dispatch = planClaudeSkillDispatch(text, dependencies.skillNames);
+  const dispatch = planClaudeSkillDispatch(
+    text,
+    new Set(
+      [...dependencies.skillNames].filter(
+        (name) => !dependencies.axisSkillNames.has(name.toLowerCase()),
+      ),
+    ),
+  );
   if (dispatch?.leadingText !== undefined) {
     sdkContent.push({ type: "text", text: dispatch.leadingText });
   }
@@ -5121,7 +5130,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const steeringTurnState =
         context.turnState && context.turnState.synthetic !== true ? context.turnState : null;
       const axisContext = normalizeClaudeAxisContext(
-        input.axisContextInstructions,
+        [input.axisContextInstructions, input.axisSkillInstructions]
+          .filter((value): value is string => value !== undefined && value.length > 0)
+          .join("\n\n"),
         input.axisContextDigest,
       );
       const axisContextChanged = !sameClaudeAxisContext(context, axisContext);
@@ -5245,6 +5256,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             .filter((skill) => skill.enabled && skill.userInvocable !== false)
             .map((skill) => skill.name),
         ),
+        axisSkillNames: new Set((input.axisSkillNames ?? []).map((name) => name.toLowerCase())),
       });
 
       yield* Queue.offer(context.promptQueue, {

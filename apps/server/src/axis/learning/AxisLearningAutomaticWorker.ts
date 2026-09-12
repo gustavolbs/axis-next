@@ -379,7 +379,7 @@ export const make = Effect.gen(function* () {
       const relativePath = input.relativePath?.replaceAll("\\", "/") ?? "";
       const sourceKind =
         input.sourceKind ??
-        (/(?:^|\/)(?:\.agents|\.claude|\.cursor|\.gemini|\.grok|\.agent)\/skills\//u.test(
+        (/(?:^|\/)(?:\.axis-tools\/skills|(?:\.agents|\.claude|\.cursor|\.gemini|\.grok|\.agent)\/skills)\//u.test(
           relativePath,
         )
           ? "skill"

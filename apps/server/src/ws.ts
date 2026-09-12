@@ -2454,6 +2454,7 @@ const makeWsRpcLayer = (
                 ? providerRegistry.refreshWorkspaceSnapshot({
                     instanceId: input.instanceId,
                     cwd: input.cwd,
+                    ...(input.projectRoot === undefined ? {} : { projectRoot: input.projectRoot }),
                     force: input.forceWorkspaceRefresh === true,
                   })
                 : input.instanceId !== undefined
@@ -3816,7 +3817,7 @@ const makeWsRpcLayer = (
                       cwd: input.cwd,
                       relativePath: result.relativePath,
                       sourceId: `workspace-write:${result.relativePath}`,
-                      summary: `Wrote workspace file '${result.relativePath}'. Contents: ${input.contents}`,
+                      summary: `Wrote workspace file '${result.relativePath}' (${input.contents.length} characters).`,
                     }),
                   ),
                 ),

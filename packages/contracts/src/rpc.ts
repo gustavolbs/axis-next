@@ -575,6 +575,8 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
      */
     instanceId: Schema.optional(ProviderInstanceId),
     cwd: Schema.optional(TrimmedNonEmptyString),
+    /** Canonical project root used to discover provider-neutral Axis skills. */
+    projectRoot: Schema.optional(TrimmedNonEmptyString),
     /** Explicit user request. Background status refreshes must not open agent sessions. */
     refreshModels: Schema.optional(Schema.Boolean),
     /** Re-read skills and slash commands even when this workspace was already cached. */

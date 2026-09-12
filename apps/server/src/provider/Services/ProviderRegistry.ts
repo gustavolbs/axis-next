@@ -51,6 +51,8 @@ export interface ProviderRegistryShape {
   readonly refreshWorkspaceSnapshot: (input: {
     readonly instanceId: ProviderInstanceId;
     readonly cwd: string;
+    /** Canonical project root for provider-neutral Axis skills. */
+    readonly projectRoot?: string;
     readonly force?: boolean;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 

@@ -12,6 +12,7 @@
 ### Changed
 
 - Keep project context assignment and day-to-day skills setup together in Project Overview.
+- Store project skills once in `.axis-tools` and preserve provider-native skill files.
 
 ## [0.13.0] - 2026-09-11
 

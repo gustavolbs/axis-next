@@ -996,8 +996,14 @@ export function makeCursorAdapter(
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           const rawPrompt = input.input?.trim() ?? "";
           if (rawPrompt) {
+            const axisSkillNames = new Set(
+              (input.axisSkillNames ?? []).map((name) => name.toLowerCase()),
+            );
             let cursorSkillNames = ctx.cursorSkillNames;
-            if (hasCursorSkillMention(rawPrompt) && cursorSkillNames === undefined) {
+            if (
+              hasCursorSkillMention(rawPrompt) &&
+              (cursorSkillNames === undefined || axisSkillNames.size > 0)
+            ) {
               const skills = yield* discoverCursorSkills(
                 ctx.session.cwd,
                 options?.environment,
@@ -1007,15 +1013,25 @@ export function makeCursorAdapter(
               );
               cursorSkillNames = new Set(
                 skills
-                  .filter((skill) => skill.enabled && skill.userInvocable !== false)
+                  .filter(
+                    (skill) =>
+                      skill.enabled &&
+                      skill.userInvocable !== false &&
+                      !axisSkillNames.has(skill.name.toLowerCase()),
+                  )
                   .map((skill) => skill.name),
               );
-              ctx.cursorSkillNames = cursorSkillNames;
+              if (axisSkillNames.size === 0) {
+                ctx.cursorSkillNames = cursorSkillNames;
+              }
             }
             const prompt = cursorSkillNames
               ? rewriteCursorSkillMentions(rawPrompt, cursorSkillNames)
               : rawPrompt;
             promptParts.push({ type: "text", text: prompt });
+          }
+          if (input.axisSkillInstructions) {
+            promptParts.push({ type: "text", text: input.axisSkillInstructions });
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {
