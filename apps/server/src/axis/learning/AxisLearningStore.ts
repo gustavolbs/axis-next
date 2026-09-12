@@ -13,6 +13,7 @@ import {
   type AxisLearningActivationResponse as AxisLearningActivationResponseType,
   AxisLearningConflictError,
   AxisLearningEvidence,
+  AxisLearningEvidenceId,
   type AxisLearningEvidence as AxisLearningEvidenceType,
   AxisLearningLifecycleEvent,
   type AxisLearningLifecycleEvent as AxisLearningLifecycleEventType,
@@ -133,6 +134,15 @@ export class AxisLearningStore extends Context.Service<
       contextId: AxisContextId,
       scope?: AxisLearningScope,
     ) => Effect.Effect<ReadonlyArray<AxisLearningEvidenceType>, AxisLearningPersistenceError>;
+    readonly listPendingAutomaticEvidence: (
+      contextId: AxisContextId,
+      scope: AxisLearningScope,
+    ) => Effect.Effect<ReadonlyArray<AxisLearningEvidenceType>, AxisLearningPersistenceError>;
+    readonly markAutomaticEvidenceAnalyzed: (
+      scope: AxisLearningScope,
+      evidenceIds: ReadonlyArray<AxisLearningEvidenceId>,
+      analyzedAt: string,
+    ) => Effect.Effect<void, AxisLearningPersistenceError>;
     readonly purgeExpiredEvidence: (
       now: string,
     ) => Effect.Effect<number, AxisLearningPersistenceError>;
@@ -405,7 +415,38 @@ export const make = Effect.gen(function* () {
     sql<JsonRow>`
       SELECT evidence_json AS value FROM axis_learning_evidence
       WHERE context_id = ${contextId} AND scope_key = ${scopeKey(scope)} ORDER BY created_at, id
-    `.pipe(Effect.mapError(persistenceError("list evidence")), Effect.flatMap(decodeEvidenceRows));
+      `.pipe(
+      Effect.mapError(persistenceError("list evidence")),
+      Effect.flatMap(decodeEvidenceRows),
+    );
+
+  const listPendingAutomaticEvidence: AxisLearningStore["Service"]["listPendingAutomaticEvidence"] =
+    (contextId, scope) =>
+      sql<JsonRow>`
+      SELECT evidence_json AS value FROM axis_learning_evidence
+      WHERE context_id = ${contextId}
+        AND scope_key = ${scopeKey(scope)}
+        AND automatic_analyzed_at IS NULL
+      ORDER BY created_at, id
+    `.pipe(
+        Effect.mapError(persistenceError("list pending automatic evidence")),
+        Effect.flatMap(decodeEvidenceRows),
+      );
+
+  const markAutomaticEvidenceAnalyzed: AxisLearningStore["Service"]["markAutomaticEvidenceAnalyzed"] =
+    (scope, evidenceIds, analyzedAt) =>
+      evidenceIds.length === 0
+        ? Effect.void
+        : sql`
+          UPDATE axis_learning_evidence
+          SET automatic_analyzed_at = ${analyzedAt}
+          WHERE context_id = ${scope.contextId}
+            AND scope_key = ${scopeKey(scope)}
+            AND id IN ${sql.in(evidenceIds)}
+        `.pipe(
+            Effect.asVoid,
+            Effect.mapError(persistenceError("mark automatic evidence analyzed")),
+          );
 
   const purgeExpiredEvidence: AxisLearningStore["Service"]["purgeExpiredEvidence"] = (now) =>
     sql<CountRow>`
@@ -1068,6 +1109,8 @@ export const make = Effect.gen(function* () {
   return {
     recordEvidence,
     listEvidence,
+    listPendingAutomaticEvidence,
+    markAutomaticEvidenceAnalyzed,
     purgeExpiredEvidence,
     createProposal,
     getProposal,

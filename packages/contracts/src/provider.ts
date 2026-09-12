@@ -84,6 +84,14 @@ export const ProviderSendTurnInput = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionMode),
   /** Server-resolved Axis instructions; never supplied by the client RPC. */
   axisContextInstructions: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(32_000))),
+  /** Server-resolved content of explicitly selected provider-neutral project skills. */
+  axisSkillInstructions: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(24_000))),
+  /** Names represented by the server-resolved project skill instructions. */
+  axisSkillNames: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))).check(
+      Schema.isMaxLength(32),
+    ),
+  ),
   /** Digest of the server-resolved Axis context consumed by this turn. */
   axisContextDigest: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   /** Server-resolved Learning versions that contributed to the effective context. */

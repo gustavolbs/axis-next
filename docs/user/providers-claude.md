@@ -51,9 +51,12 @@ for using composer commands.
 
 ## Skills
 
-Claude skills come from the config directory's `skills` folder and the project's
-`.claude/skills` folder. If both define the same name, the config-directory copy
-wins. Skills disabled in Claude's settings do not appear in the composer.
+Claude-native skills come from the config directory's `skills` folder and the
+project's `.claude/skills` folder. If both define the same name, the
+config-directory copy wins. Skills disabled in Claude's settings do not appear
+in the composer. Skills managed by T3 Code in Project Overview are stored once
+in `.axis-tools/skills` and are available here too; they do not overwrite
+Claude-native files.
 
 Use `$` in the composer to select a skill. Skills marked `disable-model-invocation`
 can still be started by you. Invoke those one per message: Claude directly runs

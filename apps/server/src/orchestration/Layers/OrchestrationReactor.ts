@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import {
   OrchestrationReactor,
@@ -11,6 +12,7 @@ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeInge
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
+import { AxisLearningAutomaticWorker } from "../../axis/learning/AxisLearningAutomaticWorker.ts";
 
 export const makeOrchestrationReactor = Effect.gen(function* () {
   const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
@@ -19,6 +21,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const threadDeletionReactor = yield* ThreadDeletionReactor;
   const threadSettlementReactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
+  const automaticLearning = yield* Effect.serviceOption(AxisLearningAutomaticWorker);
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
     yield* providerRuntimeIngestion.start();
@@ -27,6 +30,9 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
     yield* threadDeletionReactor.start();
     yield* threadSettlementReactor.start();
     yield* agentAwarenessRelay.start();
+    if (Option.isSome(automaticLearning)) {
+      yield* automaticLearning.value.start();
+    }
   });
 
   return {

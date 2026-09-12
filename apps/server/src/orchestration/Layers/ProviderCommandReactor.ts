@@ -66,6 +66,12 @@ import {
   type AxisEffectiveContextResult,
 } from "../../axis/projects/AxisEffectiveContext.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
+import {
+  axisProjectSkillNamesInPrompt,
+  AXIS_PROJECT_SKILL_PROMPT_MAX_CHARS,
+  formatAxisProjectSkillInstructions,
+  readAxisProjectSkill,
+} from "../../axis/projects/AxisProjectSkills.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
@@ -565,7 +571,10 @@ const make = Effect.gen(function* () {
   });
 
   const resolveAxisContextInstructions = Effect.fnUntraced(function* (input: {
-    readonly thread: { readonly projectId: ProjectId | null };
+    readonly thread: {
+      readonly projectId: ProjectId | null;
+      readonly worktreePath: string | null;
+    };
     readonly activeSession: ProviderSession | undefined;
     readonly modelSelection: ModelSelection;
   }) {
@@ -663,6 +672,35 @@ const make = Effect.gen(function* () {
             },
           }),
     };
+  });
+
+  const resolveAxisProjectSkillInstructions = Effect.fnUntraced(function* (input: {
+    readonly thread: { readonly projectId: ProjectId | null };
+    readonly messageText: string;
+  }) {
+    if (input.thread.projectId === null || isAxisChatsProject(input.thread.projectId)) {
+      return undefined;
+    }
+    const names = axisProjectSkillNamesInPrompt(input.messageText);
+    if (names.length === 0) return undefined;
+    const project = yield* resolveProject(input.thread.projectId);
+    if (!project) return undefined;
+    const workspaceRoot = project.workspaceRoot;
+    const skills = yield* Effect.forEach(
+      names,
+      (name) => readAxisProjectSkill({ workspaceRoot, name }),
+      { concurrency: 1 },
+    ).pipe(Effect.map((values) => values.filter((value) => value !== undefined)));
+    if (skills.length === 0) return undefined;
+    const instructions = formatAxisProjectSkillInstructions(skills);
+    if (instructions.length > AXIS_PROJECT_SKILL_PROMPT_MAX_CHARS) {
+      return yield* new ProviderAdapterValidationError({
+        provider: "axis",
+        operation: "thread.turn.start",
+        issue: `Selected project skills exceed the ${AXIS_PROJECT_SKILL_PROMPT_MAX_CHARS}-character limit. Select fewer skills or shorten them.`,
+      });
+    }
+    return { instructions, names: skills.map((skill) => skill.name) };
   });
 
   /**
@@ -899,7 +937,11 @@ const make = Effect.gen(function* () {
           });
     const refreshWorkspaceSnapshot = effectiveCwd
       ? providerRegistry
-          .refreshWorkspaceSnapshot({ instanceId: desiredInstanceId, cwd: effectiveCwd })
+          .refreshWorkspaceSnapshot({
+            instanceId: desiredInstanceId,
+            cwd: effectiveCwd,
+            ...(project?.workspaceRoot === undefined ? {} : { projectRoot: project.workspaceRoot }),
+          })
           .pipe(Effect.forkDetach)
       : Effect.void;
 
@@ -1071,6 +1113,10 @@ const make = Effect.gen(function* () {
       activeSession,
       modelSelection: modelForTurn ?? requestedModelSelection,
     });
+    const axisSkillInstructions = yield* resolveAxisProjectSkillInstructions({
+      thread,
+      messageText: input.messageText,
+    });
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
@@ -1094,6 +1140,12 @@ const make = Effect.gen(function* () {
               : { axisTokenEfficiencyPolicy: axisContext.tokenEfficiencyPolicy }),
           }
         : {}),
+      ...(axisSkillInstructions === undefined
+        ? {}
+        : {
+            axisSkillInstructions: axisSkillInstructions.instructions,
+            axisSkillNames: axisSkillInstructions.names,
+          }),
     };
   });
 

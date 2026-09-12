@@ -15,6 +15,8 @@ import * as NodeFSP from "node:fs/promises";
 import type {
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectDeleteFileInput,
+  ProjectDeleteFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
@@ -46,6 +48,7 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedErrorClass<W
       "close",
       "make-directory",
       "write-file",
+      "delete-file",
     ]),
     cause: Schema.Defect(),
   },
@@ -127,6 +130,16 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
       ProjectWriteFileResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    /**
+     * Delete one file relative to the workspace root. Missing files are treated
+     * as success so deleting a multi-provider skill can be idempotent.
+     */
+    readonly deleteFile: (
+      input: ProjectDeleteFileInput,
+    ) => Effect.Effect<
+      ProjectDeleteFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
   }
@@ -339,7 +352,54 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ readFile, writeFile });
+  const deleteFile: WorkspaceFileSystem["Service"]["deleteFile"] = Effect.fn(
+    "WorkspaceFileSystem.deleteFile",
+  )(function* (input) {
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+    const info = yield* fileSystem.stat(target.absolutePath).pipe(
+      Effect.catchTag("PlatformError", (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed(null)
+          : Effect.fail(
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: target.absolutePath,
+                operationPath: target.absolutePath,
+                operation: "stat",
+                cause,
+              }),
+            ),
+      ),
+    );
+    if (info !== null && info.type !== "File") {
+      return yield* new WorkspacePathNotFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: target.absolutePath,
+      });
+    }
+    yield* fileSystem.remove(target.absolutePath, { force: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: target.absolutePath,
+            operationPath: target.absolutePath,
+            operation: "delete-file",
+            cause,
+          }),
+      ),
+    );
+    yield* workspaceEntries.refresh(input.cwd);
+    return { relativePath: target.relativePath };
+  });
+
+  return WorkspaceFileSystem.of({ readFile, writeFile, deleteFile });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

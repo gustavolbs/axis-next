@@ -102,5 +102,15 @@ export function createProjectEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
       },
     }),
+    deleteFile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:delete-file",
+      tag: WS_METHODS.projectsDeleteFile,
+      scheduler: fileScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.cwd, input.relativePath]),
+      },
+    }),
   };
 }

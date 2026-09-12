@@ -116,6 +116,7 @@ export interface ThreadComposerProps {
   readonly queueCount: number;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
+  readonly projectRoot: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftMedia: () => Promise<void>;
@@ -342,6 +343,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     ownerKey: composerOwnerKey,
     environmentId: props.environmentId,
     projectCwd: props.projectCwd,
+    projectRoot: props.projectRoot,
     selectedProviderStatus,
     hasThread: true,
     hasCompactableConversation: props.hasCompactableConversation,

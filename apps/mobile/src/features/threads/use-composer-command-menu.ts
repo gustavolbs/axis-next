@@ -140,6 +140,7 @@ export function useComposerCommandMenu({
   ownerKey,
   environmentId,
   projectCwd,
+  projectRoot,
   selectedProviderStatus,
   hasThread,
   hasCompactableConversation,
@@ -151,6 +152,7 @@ export function useComposerCommandMenu({
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly projectCwd: string | null;
+  readonly projectRoot: string | null;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly hasThread: boolean;
   readonly hasCompactableConversation: boolean;
@@ -205,9 +207,9 @@ export function useComposerCommandMenu({
   }, [hasWorkspaceSnapshot]);
   useEffect(() => {
     if (!environmentId || !projectCwd || !selectedProviderInstanceId) return;
-    const key = `${environmentId}:${selectedProviderInstanceId}:${projectCwd}`;
+    const key = `${environmentId}:${selectedProviderInstanceId}:${projectCwd}:${projectRoot ?? ""}`;
     if (workspaceRefreshKeyRef.current === key) return;
-    if (hasWorkspaceSnapshot) {
+    if (hasWorkspaceSnapshot && projectRoot === null) {
       workspaceRefreshKeyRef.current = key;
       workspaceRefreshRetryRef.current = null;
       return;
@@ -225,7 +227,11 @@ export function useComposerCommandMenu({
     };
     void refreshProviders({
       environmentId,
-      input: { instanceId: selectedProviderInstanceId, cwd: projectCwd },
+      input: {
+        instanceId: selectedProviderInstanceId,
+        cwd: projectCwd,
+        ...(projectRoot === null ? {} : { projectRoot }),
+      },
     }).then((result) => {
       const refreshed =
         result._tag === "Success" &&
@@ -241,6 +247,7 @@ export function useComposerCommandMenu({
     environmentId,
     hasWorkspaceSnapshot,
     projectCwd,
+    projectRoot,
     refreshProviders,
     selectedProviderInstanceId,
   ]);

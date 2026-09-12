@@ -2443,6 +2443,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getCodexServiceTierOptionValue(input.modelSelection)
         : undefined;
+    const axisInstructions = [input.axisContextInstructions, input.axisSkillInstructions]
+      .filter((value): value is string => value !== undefined && value.length > 0)
+      .join("\n\n");
     return yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),
@@ -2456,9 +2459,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           : {}),
         ...(serviceTier ? { serviceTier } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
-        ...(input.axisContextInstructions
-          ? { axisContextInstructions: input.axisContextInstructions }
-          : {}),
+        ...(axisInstructions ? { axisContextInstructions: axisInstructions } : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));

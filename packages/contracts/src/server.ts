@@ -117,6 +117,8 @@ export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
 export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  /** Project root used to add provider-neutral Axis skills, when applicable. */
+  projectRoot: Schema.optional(TrimmedNonEmptyString),
   checkedAt: IsoDateTime,
   slashCommands: Schema.Array(ServerProviderSlashCommand),
   skills: Schema.Array(ServerProviderSkill),

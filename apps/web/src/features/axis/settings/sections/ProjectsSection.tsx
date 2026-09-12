@@ -19,7 +19,7 @@ export function ProjectsSection({ model }: { readonly model: AxisSettingsLoaded 
     <SettingsSection
       id="axis-project-contexts"
       title="Project contexts"
-      description="Assign each Project to Personal or one Company before scheduled agents can work in it."
+      description="For one project, choose the context directly in its Overview. This list remains available for bulk administration."
     >
       {localProjects.length === 0 ? (
         <SettingsRow

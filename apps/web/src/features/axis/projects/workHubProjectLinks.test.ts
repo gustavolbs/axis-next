@@ -33,11 +33,16 @@ const catalog = (overrides: Partial<AxisContextCatalog> = {}): AxisContextCatalo
 
 describe("work hub project links", () => {
   it("only exposes destinations whose router contract supports the action", () => {
-    const links = buildWorkHubProjectLinks(scope);
+    const links = buildWorkHubProjectLinks(scope, "project-key");
     expect(links.configureProject).toEqual({
       kind: "link",
-      to: "/settings/axis",
-      search: { section: "projects" },
+      to: "/projects/$projectKey",
+      params: { projectKey: "project-key" },
+      search: {
+        view: "overview",
+        environmentId: "env-a",
+        projectId: "project-a",
+      },
     });
     expect(links.configureSources.kind).toBe("unavailable");
     expect(links.configureSources).toMatchObject({

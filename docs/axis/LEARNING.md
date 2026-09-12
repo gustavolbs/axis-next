@@ -8,7 +8,9 @@ context-scoped execution evidence and produce reviewable proposals. T3 remains r
 provider execution, Threads, Turns, approvals, activities, checkpoints, and scheduling.
 
 The first integration treats Hermes as an optional learning engine behind an Axis-owned contract,
-not as a new provider type. Replacing the engine must not change the ownership, isolation, review,
+not as a new provider type. It is enabled by default, with provider presets and a local Ollama
+option in the Learning settings; it remains inactive until its pinned package, Python runtime, and
+credential are available. Replacing the engine must not change the ownership, isolation, review,
 or rollback model described here.
 
 ## Evidence and output
@@ -80,6 +82,16 @@ The learning layer cannot grant provider access, enable an MCP, broaden connecto
 approve source-system mutations, or change retention policy. Those remain explicit Axis/T3
 operations with their existing authorization and approval rules.
 
+## Automatic learning
+
+When enabled and available, the server records bounded evidence after provider turns, ticket and
+workflow changes, pull-request and review actions, workspace or skill changes, and Work Hub
+refreshes. The worker analyzes pending evidence immediately after it is recorded, retries pending
+evidence when the server starts or Hermes becomes available, and includes a small recent history so
+it can compare a correction with the problem that preceded it. It is event-driven; there is no
+fixed polling interval. Every result remains a proposal for review, and no proposal is activated
+without an explicit user action.
+
 ## Scheduled learning
 
 Learning may be invoked after a completed task or by an Axis scheduled activity, such as a weekly
@@ -102,7 +114,7 @@ The capability is introduced in dependency order:
 3. Execution evidence and explicit user corrections are recorded with provenance and retention.
 4. A provider-independent proposal store and review surface add immutable versions, activation,
    rejection, and rollback.
-5. Hermes is connected as the first optional learning engine for offline proposal generation.
+5. Hermes is connected as the first learning engine for automatic and on-demand proposal generation.
 6. Evaluation gates and outcome monitoring support skill, instruction, collection-policy, and
    scheduled-activity proposals.
 

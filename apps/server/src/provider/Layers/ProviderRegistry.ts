@@ -27,6 +27,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderSkill,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -41,6 +42,7 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "../../config.ts";
+import { discoverAxisProjectSkills } from "../../axis/projects/AxisProjectSkills.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import {
@@ -84,9 +86,11 @@ export function upsertProviderWorkspaceSnapshot(
   provider: ServerProvider,
   cwd: string,
   scopedSnapshot: ServerProvider,
+  projectRoot?: string,
 ): ServerProvider {
   const workspaceSnapshot = {
     cwd,
+    ...(projectRoot === undefined ? {} : { projectRoot }),
     checkedAt: scopedSnapshot.checkedAt,
     slashCommands: scopedSnapshot.slashCommands,
     skills: scopedSnapshot.skills,
@@ -98,6 +102,31 @@ export function upsertProviderWorkspaceSnapshot(
       workspaceSnapshot,
     ].slice(-MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER),
   };
+}
+
+/** Expose Axis skills to every composer without copying them into provider roots. */
+export function mergeAxisProjectSkills(
+  providerSkills: ReadonlyArray<ServerProviderSkill>,
+  axisSkills: ReadonlyArray<{
+    readonly name: string;
+    readonly path: string;
+    readonly description?: string;
+    readonly displayName?: string;
+  }>,
+): ReadonlyArray<ServerProviderSkill> {
+  const managed = axisSkills.map(
+    (skill) =>
+      ({
+        name: skill.name,
+        path: skill.path,
+        scope: "project",
+        enabled: true,
+        ...(skill.description ? { description: skill.description } : {}),
+        ...(skill.displayName ? { displayName: skill.displayName } : {}),
+      }) satisfies ServerProviderSkill,
+  );
+  const names = new Set(managed.map((skill) => skill.name.toLowerCase()));
+  return [...managed, ...providerSkills.filter((skill) => !names.has(skill.name.toLowerCase()))];
 }
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
@@ -243,6 +272,11 @@ export const ProviderRegistryLive = Layer.effect(
     const config = yield* ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const discoverProjectSkills = (cwd: string) =>
+      discoverAxisProjectSkills(cwd).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
 
     // Aggregator PubSub — consumers (WS gateway, etc.) subscribe here for
     // coalesced updates across every instance.
@@ -763,13 +797,21 @@ export const ProviderRegistryLive = Layer.effect(
     const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
+      readonly projectRoot?: string;
+      readonly force?: boolean;
     }) {
       const providers = yield* Ref.get(providersRef);
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
+      const existingWorkspaceSnapshot = provider?.workspaceSnapshots?.find(
+        (snapshot) => snapshot.cwd === input.cwd,
+      );
       if (
         !provider ||
         !provider.enabled ||
-        provider.workspaceSnapshots?.some((s) => s.cwd === input.cwd)
+        (input.force !== true &&
+          existingWorkspaceSnapshot !== undefined &&
+          (input.projectRoot === undefined ||
+            existingWorkspaceSnapshot.projectRoot === input.projectRoot))
       ) {
         return providers;
       }
@@ -787,26 +829,45 @@ export const ProviderRegistryLive = Layer.effect(
         Effect.flatMap((scopedSnapshot) =>
           scopedSnapshot.status === "error"
             ? Ref.get(providersRef)
-            : instanceRegistry.getInstance(input.instanceId).pipe(
-                Effect.flatMap((currentInstance) => {
-                  if (currentInstance !== instance) return Ref.get(providersRef);
-                  return Ref.modify(providersRef, (currentProviders) => {
-                    const nextProviders = currentProviders.map((candidate) =>
-                      candidate.instanceId === input.instanceId &&
-                      !candidate.workspaceSnapshots?.some((s) => s.cwd === input.cwd)
-                        ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
-                        : candidate,
-                    );
-                    return [[currentProviders, nextProviders] as const, nextProviders];
-                  }).pipe(
-                    Effect.tap(([previousProviders, nextProviders]) =>
-                      haveProvidersChanged(previousProviders, nextProviders)
-                        ? PubSub.publish(changesPubSub, nextProviders)
-                        : Effect.void,
-                    ),
-                    Effect.map(([, nextProviders]) => nextProviders),
-                  );
-                }),
+            : discoverProjectSkills(input.projectRoot ?? input.cwd).pipe(
+                Effect.flatMap((axisSkills) =>
+                  instanceRegistry.getInstance(input.instanceId).pipe(
+                    Effect.flatMap((currentInstance) => {
+                      if (currentInstance !== instance) return Ref.get(providersRef);
+                      const scopedSnapshotWithAxisSkills = {
+                        ...scopedSnapshot,
+                        skills: mergeAxisProjectSkills(scopedSnapshot.skills, axisSkills),
+                      };
+                      return Ref.modify(providersRef, (currentProviders) => {
+                        const nextProviders = currentProviders.map((candidate) =>
+                          candidate.instanceId === input.instanceId &&
+                          (input.force === true ||
+                            !candidate.workspaceSnapshots?.some(
+                              (snapshot) =>
+                                snapshot.cwd === input.cwd &&
+                                (input.projectRoot === undefined ||
+                                  snapshot.projectRoot === input.projectRoot),
+                            ))
+                            ? upsertProviderWorkspaceSnapshot(
+                                candidate,
+                                input.cwd,
+                                scopedSnapshotWithAxisSkills,
+                                input.projectRoot,
+                              )
+                            : candidate,
+                        );
+                        return [[currentProviders, nextProviders] as const, nextProviders];
+                      }).pipe(
+                        Effect.tap(([previousProviders, nextProviders]) =>
+                          haveProvidersChanged(previousProviders, nextProviders)
+                            ? PubSub.publish(changesPubSub, nextProviders)
+                            : Effect.void,
+                        ),
+                        Effect.map(([, nextProviders]) => nextProviders),
+                      );
+                    }),
+                  ),
+                ),
               ),
         ),
         Effect.ensuring(

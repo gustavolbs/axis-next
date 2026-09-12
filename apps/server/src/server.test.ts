@@ -879,6 +879,8 @@ const buildAppUnderTest = (options?: {
             ...options?.layers?.axisScheduledActivities,
           }),
           Layer.mock(AxisLearningStore)({
+            listPendingAutomaticEvidence: () => Effect.succeed([]),
+            markAutomaticEvidenceAnalyzed: () => Effect.void,
             ...options?.layers?.axisLearning,
           }),
           Layer.mock(AxisLearningEngine)({

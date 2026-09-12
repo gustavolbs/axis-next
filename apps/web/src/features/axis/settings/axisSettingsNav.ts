@@ -21,20 +21,27 @@ import {
 
 export const AXIS_SETTINGS_SECTIONS = [
   "contexts",
-  "projects",
   "providers",
   "capabilities",
   "grants",
   "learning",
 ] as const;
 
-export type AxisSettingsSection = (typeof AXIS_SETTINGS_SECTIONS)[number];
+/** Accepted for old deep links; project assignment now lives in Project Overview. */
+export const AXIS_SETTINGS_LEGACY_SECTIONS = ["projects"] as const;
+
+export type AxisSettingsSection =
+  | (typeof AXIS_SETTINGS_SECTIONS)[number]
+  | (typeof AXIS_SETTINGS_LEGACY_SECTIONS)[number];
 
 export const DEFAULT_AXIS_SETTINGS_SECTION: AxisSettingsSection = "contexts";
 
 export function isAxisSettingsSection(value: unknown): value is AxisSettingsSection {
   return (
-    typeof value === "string" && (AXIS_SETTINGS_SECTIONS as ReadonlyArray<string>).includes(value)
+    typeof value === "string" &&
+    (
+      [...AXIS_SETTINGS_SECTIONS, ...AXIS_SETTINGS_LEGACY_SECTIONS] as ReadonlyArray<string>
+    ).includes(value)
   );
 }
 
@@ -48,9 +55,9 @@ export interface AxisSettingsScreen {
 }
 
 /**
- * One entry per screen. Order is the sidebar order, and it follows the order
- * a user has to do things in: contexts exist before Projects and providers
- * can be assigned to them, and a grant needs both ends to already exist.
+ * These are the global administration screens. Project assignment and project
+ * skills are deliberately absent: both are actions on a concrete Project
+ * Overview, where the user has the workspace context needed to make the choice.
  */
 export const AXIS_SETTINGS_SCREENS: ReadonlyArray<AxisSettingsScreen> = [
   {
@@ -58,12 +65,6 @@ export const AXIS_SETTINGS_SCREENS: ReadonlyArray<AxisSettingsScreen> = [
     label: "Contexts",
     description: "Each Company is an isolated work and data context.",
     keywords: ["axis", "context", "company", "personal", "isolation"],
-  },
-  {
-    section: "projects",
-    label: "Projects",
-    description: "Assign each Project to Personal or one Company.",
-    keywords: ["axis", "project", "context", "assign", "scheduled"],
   },
   {
     section: "providers",

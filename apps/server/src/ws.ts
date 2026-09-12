@@ -42,6 +42,7 @@ import {
   ClientSurface,
   ClientWebDeployment,
   CommandId,
+  axisProjectScopeKey,
   type DiscoveredLocalServerList,
   EventId,
   type EditorId,
@@ -68,6 +69,7 @@ import {
   ProjectReadFileError,
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
+  ProjectDeleteFileError,
   ProjectWriteFileError,
   ProviderCapabilityInventoryError,
   ProviderUploadFeedbackError,
@@ -179,7 +181,9 @@ import { AxisProjectScope } from "./axis/projects/AxisProjectScope.ts";
 import { AxisProjectContextPreview } from "./axis/projects/AxisProjectContextPreview.ts";
 import { AxisScheduledActivityRunner } from "./axis/scheduled/AxisScheduledActivityRunner.ts";
 import { AxisLearningStore } from "./axis/learning/AxisLearningStore.ts";
+import { AxisLearningEngine } from "./axis/learning/AxisLearningEngine.ts";
 import { AxisLearningService } from "./axis/learning/AxisLearningService.ts";
+import { AxisLearningAutomaticWorker } from "./axis/learning/AxisLearningAutomaticWorker.ts";
 import { AxisTaskStore } from "./axis/tasks/AxisTaskStore.ts";
 import { AxisTaskWorkflowService } from "./axis/tasks/AxisTaskWorkflowService.ts";
 import { AxisTaskFeedbackService } from "./axis/learning/AxisTaskFeedbackService.ts";
@@ -601,7 +605,125 @@ const makeWsRpcLayer = (
       const axisWorkHubSourceSync = yield* AxisWorkHubSourceSync;
       const axisScheduledActivities = yield* AxisScheduledActivityRunner;
       const axisLearning = yield* AxisLearningStore;
+      const axisLearningEngine = yield* Effect.serviceOption(AxisLearningEngine);
       const axisLearningService = yield* Effect.serviceOption(AxisLearningService);
+      const automaticLearningOption = yield* Effect.serviceOption(AxisLearningAutomaticWorker);
+      const automaticLearning = Option.getOrElse(
+        automaticLearningOption,
+        () =>
+          ({
+            start: () => Effect.void,
+            schedule: () => Effect.void,
+            observe: () => Effect.void,
+            observeProject: () => Effect.void,
+            observeContext: () => Effect.void,
+            observeWorkspace: () => Effect.void,
+            observeWorkHub: () => Effect.void,
+          }) satisfies AxisLearningAutomaticWorker["Service"],
+      );
+      const compactLearningText = (value: string, max = 1_900) => {
+        const normalized = value.replaceAll(/\s+/gu, " ").trim();
+        return normalized.length > max ? `${normalized.slice(0, max - 1)}...` : normalized;
+      };
+      const observePullRequest = (
+        input: {
+          readonly projectId: ProjectId;
+          readonly repository: string;
+          readonly number: number;
+        },
+        operation: string,
+        summary: string,
+      ) =>
+        automaticLearning.observeProject(input.projectId, {
+          sourceKind: "review",
+          sourceId: `pull-request:${operation}:${JSON.stringify(input)}`,
+          summary: compactLearningText(summary),
+        });
+      const observeTask = (
+        task: {
+          readonly scope: AxisContextProjectScope;
+          readonly id: string;
+          readonly threadId: string;
+          readonly title: string;
+          readonly status: string;
+          readonly revision: number;
+          readonly acceptanceCriteria: ReadonlyArray<{ readonly text: string }>;
+          readonly steps: ReadonlyArray<{
+            readonly skillId: string;
+            readonly status: string;
+          }>;
+        },
+        operation: string,
+      ) =>
+        automaticLearning.observe(task.scope, {
+          sourceKind: "ticket",
+          sourceId: `axis-task:${operation}:${task.id}:${task.revision}`,
+          summary: compactLearningText(
+            `${operation} ticket '${task.title}' (${task.id}) in thread ${task.threadId}. ` +
+              `Status: ${task.status}. Acceptance criteria: ${
+                task.acceptanceCriteria.map((criterion) => criterion.text).join(" | ") || "none"
+              }. ` +
+              `Workflow steps: ${
+                task.steps.map((step) => `${step.skillId}=${step.status}`).join(", ") || "none"
+              }.`,
+          ),
+        });
+      const observePullRequestActivity = (
+        input: {
+          readonly projectId: ProjectId;
+          readonly repository: string;
+          readonly number: number;
+        },
+        activity: {
+          readonly comments: ReadonlyArray<{
+            readonly id: string;
+            readonly body: string;
+            readonly reviewState: string | null;
+            readonly path: string | null;
+            readonly author: { readonly login: string } | null;
+          }>;
+          readonly reviewThreads: ReadonlyArray<{
+            readonly id: string;
+            readonly path: string;
+            readonly line: number | null;
+            readonly isResolved: boolean;
+            readonly comments: ReadonlyArray<{
+              readonly body: string;
+              readonly author: { readonly login: string } | null;
+            }>;
+          }>;
+          readonly commentCount: number;
+          readonly commentsTruncated: boolean;
+        },
+      ) =>
+        observePullRequest(
+          input,
+          "activity",
+          `Observed review activity for ${input.repository}#${input.number}. ` +
+            `Comments (${activity.commentCount}${activity.commentsTruncated ? ", truncated" : ""}): ` +
+            JSON.stringify(
+              activity.comments.map((comment) => ({
+                id: comment.id,
+                author: comment.author?.login ?? "unknown",
+                reviewState: comment.reviewState,
+                path: comment.path,
+                body: comment.body,
+              })),
+            ) +
+            `. Threads: ` +
+            JSON.stringify(
+              activity.reviewThreads.map((thread) => ({
+                id: thread.id,
+                path: thread.path,
+                line: thread.line,
+                resolved: thread.isResolved,
+                comments: thread.comments.map((comment) => ({
+                  author: comment.author?.login ?? "unknown",
+                  body: comment.body,
+                })),
+              })),
+            ),
+        );
       const axisTasks = yield* AxisTaskStore;
       const axisWorkflow = yield* Effect.serviceOption(AxisTaskWorkflowService);
       const axisTaskFeedback = yield* Effect.serviceOption(AxisTaskFeedbackService);
@@ -961,9 +1083,7 @@ const makeWsRpcLayer = (
         );
       const learningScopeKey = (scope: AxisLearningScope): string =>
         `${scope.contextId}\u0000${
-          scope.project === undefined
-            ? "context"
-            : axisContextProjectScopeKey({ contextId: scope.contextId, project: scope.project })
+          scope.project === undefined ? "context" : axisProjectScopeKey(scope.project)
         }`;
       const validateLearningPayloadScope = (
         contextId: AxisContextId,
@@ -2334,6 +2454,8 @@ const makeWsRpcLayer = (
                 ? providerRegistry.refreshWorkspaceSnapshot({
                     instanceId: input.instanceId,
                     cwd: input.cwd,
+                    ...(input.projectRoot === undefined ? {} : { projectRoot: input.projectRoot }),
+                    force: input.forceWorkspaceRefresh === true,
                   })
                 : input.instanceId !== undefined
                   ? providerRegistry.refreshInstance(input.instanceId)
@@ -2809,13 +2931,17 @@ const makeWsRpcLayer = (
               Effect.flatMap((validatedScope) =>
                 nowIso.pipe(
                   Effect.flatMap((createdAt) =>
-                    axisLearning.recordEvidence({
-                      ...evidence,
-                      ...(validatedScope === undefined
-                        ? {}
-                        : { provenance: { ...evidence.provenance, scope: validatedScope } }),
-                      createdAt,
-                    }),
+                    axisLearning
+                      .recordEvidence({
+                        ...evidence,
+                        ...(validatedScope === undefined
+                          ? {}
+                          : { provenance: { ...evidence.provenance, scope: validatedScope } }),
+                        createdAt,
+                      })
+                      .pipe(
+                        Effect.tap((saved) => automaticLearning.schedule(saved.provenance.scope)),
+                      ),
                   ),
                 ),
               ),
@@ -3017,7 +3143,7 @@ const makeWsRpcLayer = (
             WS_METHODS.axisTaskFeedbackRecord,
             taskFeedbackContext(input).pipe(
               Effect.flatMap(({ caller, service }) =>
-                Option.isNone(axisLearningOutcomes)
+                (Option.isNone(axisLearningOutcomes)
                   ? service.record(caller, input)
                   : axisLearningOutcomes.value.record(caller, input).pipe(
                       Effect.map(({ canonical }) => canonical),
@@ -3028,7 +3154,8 @@ const makeWsRpcLayer = (
                             message: cause.message.slice(0, 512),
                           }),
                       ),
-                    ),
+                    )
+                ).pipe(Effect.tap((saved) => automaticLearning.schedule(saved.provenance.scope))),
               ),
             ),
             { "rpc.aggregate": "axis" },
@@ -3048,7 +3175,9 @@ const makeWsRpcLayer = (
             validateTaskProjectScope(task.scope, "write").pipe(
               Effect.flatMap((resolved) =>
                 axisTaskScopeMatchesValidatedScope(task.scope, resolved)
-                  ? axisTasks.create(task, commandId)
+                  ? axisTasks
+                      .create(task, commandId)
+                      .pipe(Effect.tap((saved) => observeTask(saved, "created")))
                   : Effect.fail(
                       new AxisTaskValidationError({
                         message: "The task scope changed during validation.",
@@ -3065,7 +3194,9 @@ const makeWsRpcLayer = (
               Effect.flatMap((resolved) =>
                 axisContextProjectScopeKey(resolved) ===
                 axisContextProjectScopeKey(mutation.task.scope)
-                  ? axisTasks.update(mutation)
+                  ? axisTasks
+                      .update(mutation)
+                      .pipe(Effect.tap((saved) => observeTask(saved, "updated")))
                   : Effect.fail(
                       new AxisTaskValidationError({
                         message: "The task scope changed during validation.",
@@ -3079,7 +3210,11 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.axisTasksPause,
             validateTaskProjectScope(input.scope, "write").pipe(
-              Effect.flatMap((resolved) => axisTasks.pause({ ...input, scope: resolved })),
+              Effect.flatMap((resolved) =>
+                axisTasks
+                  .pause({ ...input, scope: resolved })
+                  .pipe(Effect.tap((saved) => observeTask(saved, "paused"))),
+              ),
             ),
             { "rpc.aggregate": "axis" },
           ),
@@ -3087,7 +3222,11 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.axisTasksReopen,
             validateTaskProjectScope(input.scope, "write").pipe(
-              Effect.flatMap((resolved) => axisTasks.reopen({ ...input, scope: resolved })),
+              Effect.flatMap((resolved) =>
+                axisTasks
+                  .reopen({ ...input, scope: resolved })
+                  .pipe(Effect.tap((saved) => observeTask(saved, "reopened"))),
+              ),
             ),
             { "rpc.aggregate": "axis" },
           ),
@@ -3095,7 +3234,11 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.axisTasksUnlinkSource,
             validateTaskProjectScope(input.scope, "write").pipe(
-              Effect.flatMap((resolved) => axisTasks.unlinkSource({ ...input, scope: resolved })),
+              Effect.flatMap((resolved) =>
+                axisTasks
+                  .unlinkSource({ ...input, scope: resolved })
+                  .pipe(Effect.tap((saved) => observeTask(saved, "source-unlinked"))),
+              ),
             ),
             { "rpc.aggregate": "axis" },
           ),
@@ -3328,13 +3471,32 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "pull-requests",
           }),
         [WS_METHODS.pullRequestsDetail]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsDetail, pullRequests.detail(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsDetail,
+            pullRequests
+              .detail(input)
+              .pipe(
+                Effect.tap((detail) =>
+                  observePullRequest(
+                    input,
+                    "detail",
+                    `Observed ${detail.repository}#${detail.number}: '${detail.title}'. ` +
+                      `State: ${detail.state}. Body: ${detail.body}. ` +
+                      `Reviewers: ${detail.reviewers.map((reviewer) => reviewer.login).join(", ") || "none"}. ` +
+                      `Checks: ${detail.checks.map((check) => `${check.name}=${check.status}`).join(", ") || "none"}.`,
+                  ),
+                ),
+              ),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.pullRequestsActivity]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsActivity, pullRequests.activity(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsActivity,
+            pullRequests
+              .activity(input)
+              .pipe(Effect.tap((activity) => observePullRequestActivity(input, activity))),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.pullRequestsThreadComments]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsThreadComments,
@@ -3350,39 +3512,123 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsRunAction]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsRunAction, pullRequests.runAction(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsRunAction,
+            pullRequests
+              .runAction(input)
+              .pipe(
+                Effect.tap(() =>
+                  observePullRequest(
+                    input,
+                    "action",
+                    `Ran '${input.action}' on ${input.repository}#${input.number}.`,
+                  ),
+                ),
+              ),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.pullRequestsUpdate]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsUpdate, pullRequests.update(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsUpdate,
+            pullRequests
+              .update(input)
+              .pipe(
+                Effect.tap(() =>
+                  observePullRequest(
+                    input,
+                    "update",
+                    `Updated ${input.repository}#${input.number}. ` +
+                      `Title: ${input.title ?? "unchanged"}. Body: ${input.body ?? "unchanged"}.`,
+                  ),
+                ),
+              ),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.pullRequestsComment]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsComment, pullRequests.comment(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsComment,
+            pullRequests
+              .comment(input)
+              .pipe(
+                Effect.tap(() =>
+                  observePullRequest(
+                    input,
+                    "comment",
+                    `Posted a review comment on ${input.repository}#${input.number}: ${input.body}`,
+                  ),
+                ),
+              ),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.pullRequestsUpdateComment]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsUpdateComment,
-            pullRequests.updateComment(input),
+            pullRequests
+              .updateComment(input)
+              .pipe(
+                Effect.tap(() =>
+                  observePullRequest(
+                    input,
+                    "update-comment",
+                    `Updated review comment ${input.commentId} on ${input.repository}#${input.number}: ${input.body}`,
+                  ),
+                ),
+              ),
             {
               "rpc.aggregate": "pull-requests",
             },
           ),
         [WS_METHODS.pullRequestsSubmitReview]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsSubmitReview, pullRequests.submitReview(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSubmitReview,
+            pullRequests
+              .submitReview(input)
+              .pipe(
+                Effect.tap(() =>
+                  observePullRequest(
+                    input,
+                    "submit-review",
+                    `Submitted '${input.verdict}' review on ${input.repository}#${input.number}. ` +
+                      `Summary: ${input.body || "none"}. Inline comments: ${
+                        input.comments
+                          .map((comment) => `${comment.path}: ${comment.body}`)
+                          .join(" | ") || "none"
+                      }.`,
+                  ),
+                ),
+              ),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.pullRequestsReplyToThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsReplyToThread,
-            pullRequests.replyToThread(input),
+            pullRequests
+              .replyToThread(input)
+              .pipe(
+                Effect.tap(() =>
+                  observePullRequest(
+                    input,
+                    "reply",
+                    `Replied to review thread ${input.threadId} on ${input.repository}#${input.number}: ${input.body}`,
+                  ),
+                ),
+              ),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsSetThreadResolution]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsSetThreadResolution,
-            pullRequests.setThreadResolution(input),
+            pullRequests
+              .setThreadResolution(input)
+              .pipe(
+                Effect.tap(() =>
+                  observePullRequest(
+                    input,
+                    "resolve-thread",
+                    `${input.resolved ? "Resolved" : "Reopened"} review thread ${input.threadId} on ${input.repository}#${input.number}.`,
+                  ),
+                ),
+              ),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsSetReaction]: (input) =>
@@ -3408,7 +3654,19 @@ const makeWsRpcLayer = (
         [WS_METHODS.pullRequestsRequestReviewers]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsRequestReviewers,
-            pullRequests.requestReviewers(input),
+            pullRequests
+              .requestReviewers(input)
+              .pipe(
+                Effect.tap(() =>
+                  observePullRequest(
+                    input,
+                    "request-reviewers",
+                    `${input.requested ? "Requested" : "Removed"} reviewers ${input.reviewers
+                      .map((reviewer) => reviewer.id)
+                      .join(", ")} on ${input.repository}#${input.number}.`,
+                  ),
+                ),
+              ),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsLabelCandidates]: (input) =>
@@ -3418,9 +3676,23 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsSetLabels, pullRequests.setLabels(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSetLabels,
+            pullRequests
+              .setLabels(input)
+              .pipe(
+                Effect.tap(() =>
+                  observePullRequest(
+                    input,
+                    "labels",
+                    `Changed labels on ${input.repository}#${input.number}: ${input.labels
+                      .map((label) => `${input.applied ? "+" : "-"}${label}`)
+                      .join(", ")}.`,
+                  ),
+                ),
+              ),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
@@ -3539,6 +3811,47 @@ const makeWsRpcLayer = (
                         ...projectFileFailureContext(cause),
                         cause,
                       }),
+                  ),
+                  Effect.tap((result) =>
+                    automaticLearning.observeWorkspace({
+                      cwd: input.cwd,
+                      relativePath: result.relativePath,
+                      sourceId: `workspace-write:${result.relativePath}`,
+                      summary: `Wrote workspace file '${result.relativePath}' (${input.contents.length} characters).`,
+                    }),
+                  ),
+                ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsDeleteFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsDeleteFile,
+            isAxisChatCwd(config.stateDir, input.cwd)
+              ? Effect.fail(
+                  new ProjectDeleteFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    failure: "operation_failed",
+                    cause: new Error("Chats cannot change workspace files."),
+                  }),
+                )
+              : workspaceFileSystem.deleteFile(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectDeleteFileError({
+                        cwd: input.cwd,
+                        relativePath: input.relativePath,
+                        ...projectFileFailureContext(cause),
+                        cause,
+                      }),
+                  ),
+                  Effect.tap((result) =>
+                    automaticLearning.observeWorkspace({
+                      cwd: input.cwd,
+                      relativePath: result.relativePath,
+                      sourceId: `workspace-delete:${result.relativePath}`,
+                      summary: `Deleted workspace file '${result.relativePath}'.`,
+                    }),
                   ),
                 ),
             { "rpc.aggregate": "workspace" },
