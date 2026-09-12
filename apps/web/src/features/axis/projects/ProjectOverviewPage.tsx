@@ -1,5 +1,7 @@
 import {
-  type AxisContextId,
+  AxisContextId,
+  axisProviderInstanceLocatorKey,
+  resolveAxisContextProviderInstances,
   type AxisContextProjectScope,
   AxisOnboardingCandidateRuleId,
   AxisOnboardingDecisionId,
@@ -11,7 +13,10 @@ import {
   type ScopedProjectRef,
 } from "@t3tools/contracts";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import {
   AlertCircleIcon,
   ArrowLeftIcon,
@@ -20,10 +25,17 @@ import {
   ExternalLinkIcon,
   SettingsIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { SidebarInset } from "~/components/ui/sidebar";
 import { Button } from "~/components/ui/button";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { SettingsSection, SettingsRow } from "~/components/settings/settingsLayout";
 import { WorkspacePageContainer } from "~/components/WorkspacePageContainer";
 import { WorkspacePageHeader } from "~/components/WorkspacePageHeader";
@@ -31,6 +43,7 @@ import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
 import { environmentCatalog } from "~/connection/catalog";
 import { resolveDefaultProviderModelSelection } from "~/providerInstances";
@@ -41,6 +54,8 @@ import { ProjectContextPreviewPanel } from "./ProjectContextPreviewPanel";
 import { ProjectWorkflowView } from "./ProjectWorkflowView";
 import { ProjectIntegrationsPanel } from "./ProjectIntegrationsPanel";
 import { ProjectLearningPanel } from "./ProjectLearningPanel";
+import { ProjectSkillsPanel } from "./ProjectSkillsPanel";
+import { setAxisProjectContext } from "../settings/AxisSettings.logic";
 import type {
   ProjectOnboardingConnectionState,
   ProjectOnboardingProgress,
@@ -223,6 +238,43 @@ export function ProjectOverviewPage({
       .map((binding) => binding.contextId);
     return matchingContextIds.length === 1 ? matchingContextIds[0]! : null;
   }, [catalogQuery.data, selectedProject]);
+  const selectedProjectBindingContextIds = useMemo<ReadonlyArray<AxisContextId>>(
+    () =>
+      selectedProject === null || catalogQuery.data === null
+        ? []
+        : catalogQuery.data.catalog.projectBindings
+            .filter(
+              (binding) =>
+                binding.project.environmentId === selectedProject.environmentId &&
+                binding.project.projectId === selectedProject.id,
+            )
+            .map((binding) => binding.contextId),
+    [catalogQuery.data, selectedProject],
+  );
+  const projectProviders = useMemo(() => {
+    const providers = selectedEnvironment?.serverConfig?.providers ?? [];
+    const environmentId = selectedEnvironment?.environmentId;
+    if (catalogQuery.data === null || selectedContextId === null || environmentId === undefined) {
+      return providers;
+    }
+    const accessible = new Set(
+      resolveAxisContextProviderInstances(catalogQuery.data.catalog, selectedContextId).map(
+        axisProviderInstanceLocatorKey,
+      ),
+    );
+    return providers.filter((provider) =>
+      accessible.has(
+        axisProviderInstanceLocatorKey({
+          environmentId,
+          instanceId: provider.instanceId,
+        }),
+      ),
+    );
+  }, [catalogQuery.data, selectedContextId, selectedEnvironment]);
+  const replaceCatalog = useAtomCommand(serverEnvironment.replaceAxisContextCatalog, {
+    reportFailure: false,
+  });
+  const [savingProjectContext, setSavingProjectContext] = useState(false);
   const selectedScope = useMemo<AxisContextProjectScope | null>(
     () =>
       selectedProject === null || selectedContextId === null
@@ -447,6 +499,44 @@ export function ProjectOverviewPage({
       replace: true,
     });
   };
+  const setProjectContext = async (value: string | null) => {
+    const snapshot = catalogQuery.data;
+    if (
+      snapshot === null ||
+      selectedProject === null ||
+      selectedEnvironment === undefined ||
+      savingProjectContext
+    ) {
+      return;
+    }
+    setSavingProjectContext(true);
+    const result = await replaceCatalog({
+      environmentId: selectedEnvironment.environmentId,
+      input: {
+        expectedRevision: snapshot.revision,
+        catalog: setAxisProjectContext(
+          snapshot.catalog,
+          {
+            environmentId: selectedProject.environmentId,
+            projectId: selectedProject.id,
+          },
+          value === null ? null : AxisContextId.make(value),
+        ),
+      },
+    });
+    setSavingProjectContext(false);
+    if (result._tag === "Success") {
+      catalogQuery.refresh();
+      toastManager.add({ type: "success", title: "Project context updated" });
+    } else if (!isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Could not update project context",
+        description: error instanceof Error ? error.message : "Refresh the project and try again.",
+      });
+    }
+  };
   const openSettings = () => {
     void navigate({
       search: {
@@ -594,30 +684,86 @@ export function ProjectOverviewPage({
             ))}
           </nav>
 
-          <SettingsSection
-            title="Physical members"
-            description="Choose the environment that owns this project before running work."
-          >
-            {overviewGroup.members.map((member) => (
+          {overviewGroup.members.length > 1 ? (
+            <SettingsSection
+              title="Physical members"
+              description="Choose the environment that owns this project before running work."
+            >
+              {overviewGroup.members.map((member) => (
+                <SettingsRow
+                  key={member.physicalProjectKey}
+                  title={`${member.project.title} · ${member.project.environmentId}`}
+                  description={member.project.workspaceRoot}
+                  status={<MemberState member={member} />}
+                  control={
+                    <Button
+                      size="xs"
+                      variant={member.isSelected ? "secondary" : "outline"}
+                      onClick={() => selectMember(member)}
+                    >
+                      {member.isSelected ? "Selected" : "Select"}
+                    </Button>
+                  }
+                />
+              ))}
+            </SettingsSection>
+          ) : null}
+
+          {selectedProject !== null &&
+          selectedEnvironment?.serverConfig?.environment.capabilities.axis === true &&
+          catalogQuery.data !== null ? (
+            <SettingsSection
+              title="Project context"
+              description="Choose the context that determines this project's provider access and rules."
+            >
               <SettingsRow
-                key={member.physicalProjectKey}
-                title={`${member.project.title} · ${member.project.environmentId}`}
-                description={member.project.workspaceRoot}
-                status={<MemberState member={member} />}
+                title={
+                  overviewGroup.bindingState === "ambiguous"
+                    ? "Choose one context"
+                    : selectedContextId === null
+                      ? "No context assigned"
+                      : (catalogQuery.data.catalog.contexts.find(
+                          (context) => context.id === selectedContextId,
+                        )?.name ?? "Context assigned")
+                }
+                description={selectedProject.workspaceRoot}
                 control={
-                  <Button
-                    size="xs"
-                    variant={member.isSelected ? "secondary" : "outline"}
-                    onClick={() => selectMember(member)}
+                  <Select
+                    value={selectedProjectBindingContextIds.length === 1 ? selectedContextId : null}
+                    disabled={savingProjectContext}
+                    onValueChange={(value) => {
+                      void setProjectContext(value === "unassigned" ? null : value);
+                    }}
                   >
-                    {member.isSelected ? "Selected" : "Select"}
-                  </Button>
+                    <SelectTrigger size="sm" className="w-48" aria-label="Project context">
+                      <SelectValue placeholder="Choose context" />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      <SelectItem value="unassigned">No context</SelectItem>
+                      {catalogQuery.data.catalog.contexts.map((context) => (
+                        <SelectItem key={context.id} value={context.id}>
+                          {context.name}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
                 }
               />
-            ))}
-          </SettingsSection>
-
-          {selectedScope === null ? (
+              <SettingsRow
+                title="Providers available in this context"
+                description={
+                  selectedContextId === null
+                    ? "Assign a context to choose which provider accounts this project can use."
+                    : projectProviders.length === 0
+                      ? "No provider account is assigned to this context yet."
+                      : projectProviders
+                          .map((provider) => provider.displayName?.trim() || provider.driver)
+                          .join(", ")
+                }
+                status={selectedContextId === null ? "Needs context" : projectProviders.length}
+              />
+            </SettingsSection>
+          ) : selectedScope === null ? (
             <SettingsSection title="Project context">
               <SettingsRow
                 title={
@@ -633,8 +779,7 @@ export function ProjectOverviewPage({
                   selectedEnvironment?.connection.phase === "connected" &&
                   selectedEnvironment.serverConfig?.environment.capabilities.axis !== true
                     ? "Update the selected environment to use project onboarding and patterns."
-                    : (catalogQuery.error ??
-                      "Select a connected project and configure its company or personal context in Axis settings.")
+                    : (catalogQuery.error ?? "Select a context to start working in this project.")
                 }
                 control={
                   selectedEnvironment?.serverConfig?.environment.capabilities.axis === true ? (
@@ -681,6 +826,13 @@ export function ProjectOverviewPage({
               commands={onboardingCommands}
               projectLabel={overviewGroup.label}
               progress={onboardingProgressForUi(latestOnboarding)}
+            />
+          ) : null}
+          {view === "overview" && selectedProject !== null ? (
+            <ProjectSkillsPanel
+              environmentId={selectedProject.environmentId}
+              workspaceRoot={selectedProject.workspaceRoot}
+              providers={projectProviders}
             />
           ) : null}
           {view === "patterns" && selectedScope !== null && selectedProject !== null ? (
@@ -736,6 +888,7 @@ export function ProjectOverviewPage({
               key={`${selectedScope.contextId}:${selectedProject.environmentId}:${selectedProject.id}`}
               environmentId={selectedProject.environmentId}
               scope={selectedScope}
+              projectKey={projectKey}
               projectLabel={overviewGroup.label}
               connectionState={onboardingConnectionState}
             />

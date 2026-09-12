@@ -146,10 +146,12 @@ export function AxisSettingsPanel({ section }: { readonly section?: AxisSettings
   // Both narrowings are established above; the screens take the loaded shape
   // so none of them re-checks for a snapshot it cannot render without.
   const loaded = model as AxisSettingsLoaded;
+  const sectionTitle =
+    screen?.label ?? (active === "projects" ? "Project assignment" : "Axis settings");
 
   return (
     <SettingsPageContainer width="wide" className="gap-7">
-      <AxisSummary model={loaded} section={screen?.label ?? "Axis settings"} />
+      <AxisSummary model={loaded} section={sectionTitle} />
       {active === "contexts" ? <ContextsSection model={loaded} /> : null}
       {active === "projects" ? <ProjectsSection model={loaded} /> : null}
       {active === "providers" ? <ProvidersSection model={loaded} /> : null}
@@ -162,7 +164,7 @@ export function AxisSettingsPanel({ section }: { readonly section?: AxisSettings
           projectBindings={loaded.snapshot.catalog.projectBindings}
         />
       ) : null}
-      {screen === undefined ? (
+      {screen === undefined && active !== "projects" ? (
         <SettingsSection title="Axis" description="Unknown Axis settings screen.">
           <SettingsRow title="Pick a screen from the sidebar" />
         </SettingsSection>

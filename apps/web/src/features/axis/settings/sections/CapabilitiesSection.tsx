@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router";
 import { CheckIcon, Trash2Icon } from "lucide-react";
 
 import type { AxisCapability, AxisCapabilityKind } from "@t3tools/contracts";
@@ -22,7 +21,7 @@ const CAPABILITY_LABELS: Readonly<Record<AxisCapabilityKind, string>> = {
 };
 
 export function CapabilitiesSection({ model }: { readonly model: AxisSettingsLoaded }) {
-  const { snapshot, saving, save, providers, providerLabel } = model;
+  const { snapshot, saving, save, providerLabel } = model;
 
   const toggleCapability = (capability: AxisCapability, enabled: boolean) => {
     void save(
@@ -109,37 +108,6 @@ export function CapabilitiesSection({ model }: { readonly model: AxisSettingsLoa
             />
           ))
         )}
-      </SettingsSection>
-
-      <SettingsSection
-        title="Where capabilities come from"
-        description="MCPs, skills, instructions, and preferences belong to a provider instance. Open one to inspect or change its native configuration."
-      >
-        {providers.map((provider) => (
-          <SettingsRow
-            key={provider.key}
-            title={provider.label}
-            description="Manage this provider's isolated MCP connections and skills."
-            control={
-              <Button
-                render={
-                  <Link
-                    to="/settings/providers"
-                    search={{
-                      environmentId: provider.locator.environmentId,
-                      instanceId: provider.locator.instanceId,
-                      section: "mcps",
-                    }}
-                  />
-                }
-                size="xs"
-                variant="outline"
-              >
-                Manage
-              </Button>
-            }
-          />
-        ))}
       </SettingsSection>
     </>
   );

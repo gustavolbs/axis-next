@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.14.0] - 2026-09-11
+
+### Added
+
+- Configure Hermes with simple provider presets, automatic credential discovery, and a local Ollama option.
+- Analyze project evidence automatically after provider work, ticket changes, reviews, workspace edits, and Work Hub syncs.
+- Create, edit, delete, and install starter project skills from Project Overview for every supported provider.
+- Harden starter workflows with repository-specific instruction discovery, prompt-injection defenses, least-privilege boundaries, and explicit verification gates.
+
+### Changed
+
+- Keep project context assignment and day-to-day skills setup together in Project Overview.
+
+## [0.13.0] - 2026-09-11
+
+### Added
+
+- Manage project context and shared skills directly from Project Overview, with project skills available to supported provider composers.
+- Run automatic Hermes learning after provider turns and Axis activity while keeping every proposal reviewable before activation.
+
+### Changed
+
+- Keep project-level setup in Overview and reduce the global Axis settings surface to context administration.
+- Refresh provider workspace catalogs immediately after project skill changes.
+
 ## [0.12.7] - 2026-09-11
 
 ### Fixed

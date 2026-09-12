@@ -16,9 +16,9 @@ import * as AxisWorkHubSourceSync from "./axis/workHub/AxisWorkHubSourceSync.ts"
 import * as AxisScheduledActivityStore from "./axis/scheduled/AxisScheduledActivityStore.ts";
 import * as AxisScheduledActivityRunner from "./axis/scheduled/AxisScheduledActivityRunner.ts";
 import * as AxisLearningStore from "./axis/learning/AxisLearningStore.ts";
-import * as AxisLearningEngine from "./axis/learning/AxisLearningEngine.ts";
 import * as HermesLearningEngine from "./axis/learning/engines/HermesLearningEngine.ts";
 import * as AxisLearningService from "./axis/learning/AxisLearningService.ts";
+import * as AxisLearningAutomaticWorker from "./axis/learning/AxisLearningAutomaticWorker.ts";
 import * as AxisTaskFeedbackService from "./axis/learning/AxisTaskFeedbackService.ts";
 import * as AxisLearningOutcomes from "./axis/learning/AxisLearningOutcomes.ts";
 import * as AxisProjectProfileStore from "./axis/projects/AxisProjectProfileStore.ts";
@@ -299,6 +299,7 @@ const PlatformServicesLive = Layer.unwrap(
 
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
+  Layer.provideMerge(AxisLearningAutomaticWorker.layer),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
@@ -343,24 +344,7 @@ const AxisScheduledActivityStoreLayerLive = AxisScheduledActivityStore.layer.pip
 const AxisLearningStoreLayerLive = AxisLearningStore.layer.pipe(
   Layer.provide(SqlitePersistenceLayerLive),
 );
-const AxisLearningEngineLayerLive = Layer.unwrap(
-  Effect.sync(() => {
-    const isHermesSelected = process.env.AXIS_LEARNING_ENGINE === "hermes";
-    const pythonExecutable = process.env.AXIS_HERMES_PYTHON;
-    const hermesHome = process.env.AXIS_HERMES_HOME;
-    const model = process.env.AXIS_HERMES_MODEL;
-    const baseUrl = process.env.AXIS_HERMES_BASE_URL;
-    return isHermesSelected
-      ? HermesLearningEngine.layer({
-          pythonExecutable: pythonExecutable ?? "",
-          hermesHome: hermesHome ?? "",
-          model: model ?? "",
-          baseUrl: baseUrl ?? "",
-          apiKeyEnv: process.env.AXIS_HERMES_API_KEY_ENV,
-        })
-      : AxisLearningEngine.layer();
-  }),
-);
+const AxisLearningEngineLayerLive = HermesLearningEngine.dynamicLayer;
 const AxisProjectProfileStoreLayerLive = AxisProjectProfileStore.layer.pipe(
   Layer.provide(SqlitePersistenceLayerLive),
 );

@@ -21,6 +21,7 @@ import Migration0062 from "./Migrations/062_AxisOnboardingRuns.ts";
 import Migration0063 from "./Migrations/063_AxisOnboardingPendingTurn.ts";
 import Migration0064 from "./Migrations/064_AxisOnboardingApplications.ts";
 import Migration0065 from "./Migrations/065_AxisWorkflowAttempts.ts";
+import Migration0066 from "./Migrations/066_AxisLearningAutomaticEvidence.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -154,6 +155,7 @@ export const migrationEntries = [
   [63, "AxisOnboardingPendingTurn", Migration0063],
   [64, "AxisOnboardingApplications", Migration0064],
   [65, "AxisWorkflowAttempts", Migration0065],
+  [66, "AxisLearningAutomaticEvidence", Migration0066],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

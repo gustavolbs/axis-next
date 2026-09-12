@@ -101,6 +101,13 @@ provider. On mobile, both are also available before starting a thread on
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
 
+For project work, open the project's **Overview** to create, edit, or remove a
+skill. The **Starter skills** kit provides common workflows such as analyzing a
+ticket, planning development, self-review, processing review feedback, and
+preparing a pull request. Project skills are copied to the native project
+locations used by the supported providers and appear in the composer after the
+provider catalog refreshes.
+
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 

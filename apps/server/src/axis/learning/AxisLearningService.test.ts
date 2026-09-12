@@ -70,6 +70,8 @@ const storeLayer = (overrides: Partial<AxisLearningStore["Service"]> = {}) =>
   Layer.mock(AxisLearningStore)({
     recordEvidence: () => Effect.succeed(evidence),
     listEvidence: () => Effect.succeed([evidence]),
+    listPendingAutomaticEvidence: () => Effect.succeed([evidence]),
+    markAutomaticEvidenceAnalyzed: () => Effect.void,
     purgeExpiredEvidence: () => Effect.succeed(0),
     createProposal: () => Effect.die("not used"),
     getProposal: () => Effect.die("not used"),

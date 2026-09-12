@@ -564,4 +564,40 @@ layer("AxisLearningStore", (it) => {
       assert.instanceOf(outsideScopeActivation, AxisLearningNotFoundError);
     }),
   );
+
+  it.effect("tracks automatic analysis independently for each evidence record", () =>
+    Effect.gen(function* () {
+      const store = yield* AxisLearningStore;
+      const first = yield* decodeEvidenceEffect({
+        ...evidence,
+        id: "evidence_automatic_first",
+        provenance: { ...evidence.provenance, scope: projectA, fingerprint: "sha256:auto-first" },
+      });
+      const second = yield* decodeEvidenceEffect({
+        ...evidence,
+        id: "evidence_automatic_second",
+        provenance: {
+          ...evidence.provenance,
+          scope: projectA,
+          fingerprint: "sha256:auto-second",
+        },
+      });
+      yield* store.recordEvidence(first);
+      yield* store.recordEvidence(second);
+
+      assert.deepEqual(
+        (yield* store.listPendingAutomaticEvidence(AxisContextId.make("company_a"), projectA))
+          .map((item) => item.id)
+          .filter((id) => id.startsWith("evidence_automatic_")),
+        [first.id, second.id],
+      );
+      yield* store.markAutomaticEvidenceAnalyzed(projectA, [first.id], "2026-09-06T10:00:00.000Z");
+      assert.deepEqual(
+        (yield* store.listPendingAutomaticEvidence(AxisContextId.make("company_a"), projectA))
+          .map((item) => item.id)
+          .filter((id) => id.startsWith("evidence_automatic_")),
+        [second.id],
+      );
+    }),
+  );
 });
