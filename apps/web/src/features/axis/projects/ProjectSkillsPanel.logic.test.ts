@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   AXIS_AGENTS_BLOCK_END,
   AXIS_AGENTS_BLOCK_START,
+  EXTERNAL_STARTER_SKILLS,
   SKILL_NAME_PATTERN,
   STARTER_SKILLS,
   collectProjectSkills,
@@ -146,7 +147,9 @@ describe("ProjectSkillsPanel logic", () => {
     expect(missingStarterSkills(installed).map((skill) => skill.name)).not.toContain(
       "analyze-ticket",
     );
-    expect(missingStarterSkills([])).toHaveLength(STARTER_SKILLS.length);
+    expect(missingStarterSkills([])).toHaveLength(
+      STARTER_SKILLS.length + EXTERNAL_STARTER_SKILLS.length,
+    );
   });
 
   it("gives every starter workflow the project and security contract", () => {
@@ -160,6 +163,39 @@ describe("ProjectSkillsPanel logic", () => {
         "running the narrowest meaningful project-defined checks",
       );
     }
+  });
+
+  it("ships external skill wrappers as thin pointers to upstream repos", () => {
+    const expectedNames = [
+      "taste-skill",
+      "impeccable",
+      "playwright-cli",
+      "awesome-design-md",
+      "img2threejs",
+    ];
+    expect(EXTERNAL_STARTER_SKILLS.map((skill) => skill.name)).toEqual(expectedNames);
+    for (const skill of EXTERNAL_STARTER_SKILLS) {
+      expect(SKILL_NAME_PATTERN.test(skill.name)).toBe(true);
+      expect(skill.instructions.length).toBeGreaterThan(80);
+      expect(skill.instructions.length).toBeLessThan(3_500);
+    }
+    // Each wrapper must point at the upstream install command rather than
+    // re-stating the skill rules; the actual guidance lives there.
+    expect(EXTERNAL_STARTER_SKILLS.find((s) => s.name === "taste-skill")!.instructions).toContain(
+      "npx skills add",
+    );
+    expect(EXTERNAL_STARTER_SKILLS.find((s) => s.name === "impeccable")!.instructions).toContain(
+      "npx impeccable install",
+    );
+    expect(
+      EXTERNAL_STARTER_SKILLS.find((s) => s.name === "playwright-cli")!.instructions,
+    ).toContain("@playwright/cli");
+    expect(
+      EXTERNAL_STARTER_SKILLS.find((s) => s.name === "awesome-design-md")!.instructions,
+    ).toContain("DESIGN.md");
+    expect(EXTERNAL_STARTER_SKILLS.find((s) => s.name === "img2threejs")!.instructions).toContain(
+      "img2threejs",
+    );
   });
 
   it("preserves user AGENTS content and replaces only its managed block", () => {

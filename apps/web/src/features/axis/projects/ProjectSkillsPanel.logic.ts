@@ -59,7 +59,12 @@ const STARTER_PROJECT_CONTRACT = `Before acting:
 - If a missing fact would materially change the implementation, security, data handling, compatibility, or acceptance criteria, stop and ask one focused question. Otherwise state the assumption and proceed conservatively. Never invent requirements or claim verification that did not happen.
 - Finish by checking the complete diff and running the narrowest meaningful project-defined checks. Report commands and results accurately, including failures, skips, and remaining risk.`;
 
-/** Built-in workflows cover the repeated loop from ticket to verified PR. */
+/**
+ * Built-in workflows cover the repeated loop from ticket to verified PR.
+ * Every entry MUST begin with {@link STARTER_PROJECT_CONTRACT}; the Project
+ * Skills panel renders that block to the user and the missing-skills test
+ * asserts it is present.
+ */
 export const STARTER_SKILLS: ReadonlyArray<SkillDraft> = [
   {
     name: "analyze-ticket",
@@ -177,11 +182,104 @@ By default, prepare the title and body only. Never push, open a remote PR, appro
   },
 ];
 
+/**
+ * External skill wrappers. Each entry is a thin pointer to a skill that
+ * lives in a public upstream repo; the body only tells the agent how to
+ * fetch or invoke the real skill. The wrapper is provider-neutral, so a
+ * single install makes the skill available across every provider in the
+ * Axis composer via `$<name>`. Follow upstream for the actual rules and
+ * keep this body short so a stale copy is harder to mistake for current
+ * upstream guidance.
+ */
+export const EXTERNAL_STARTER_SKILLS: ReadonlyArray<SkillDraft> = [
+  {
+    name: "taste-skill",
+    description: "Anti-slop frontend design rules from leonxlnx/taste-skill.",
+    instructions: `This wrapper points at leonxlnx/taste-skill. The real skill ships with the upstream repo and changes often.
+
+Install (Codex / Antigravity / OpenCode):
+
+    npx skills add https://github.com/leonxlnx/taste-skill --skill design-taste-frontend
+
+Other variants available from the same upstream repo: design-taste-frontend-v1, gpt-taste, image-to-code, redesign-existing-projects, high-end-visual-design, full-output-enforcement, minimalist-ui, industrial-brutalist-ui, stitch-design-taste, imagegen-frontend-web, imagegen-frontend-mobile, brandkit. Re-run \`npx skills add\` with \`--skill "<name>"\` to install a specific variant.
+
+After install, follow the upstream SKILL.md (not this wrapper) for the current rules. Use this skill when the user is building or refining a frontend surface and wants stronger layout, typography, motion, and spacing choices than the model defaults.`,
+  },
+  {
+    name: "impeccable",
+    description: "Design guidance and 23 commands from pbakaus/impeccable.",
+    instructions: `This wrapper points at pbakaus/impeccable. The real skill includes commands such as \`init\`, \`craft\`, \`audit\`, \`critique\`, \`polish\`, \`distill\`, and \`animate\`, plus a 61-rule deterministic detector.
+
+Install (Claude Code / Cursor / Codex / OpenCode / Hermes / Grok Build):
+
+    npx impeccable install
+
+Manual install for Claude Code (project scope):
+
+    cp -r dist/claude-code/.claude your-project/
+
+After install, run \`/impeccable init\` once per project to record \`PRODUCT.md\` and \`DESIGN.md\`, then invoke \`/impeccable <command> <target>\` for the design work. Follow the upstream SKILL.md and command table for the current behavior.`,
+  },
+  {
+    name: "playwright-cli",
+    description: "Token-efficient Playwright CLI from microsoft/playwright-cli.",
+    instructions: `This wrapper points at microsoft/playwright-cli. The CLI drives a real Playwright browser without forcing page data into the model context, so it is more token-efficient than the Playwright MCP for high-throughput coding workflows.
+
+Install:
+
+    npm install -g @playwright/cli@latest
+
+Wire the SKILL into the agent (Claude Code / GitHub Copilot / others):
+
+    playwright-cli install --skills
+
+Common commands: \`open\`, \`goto\`, \`click\`, \`type\`, \`fill\`, \`snapshot\`, \`screenshot\`, \`eval\`, \`find\`, \`console\`, \`requests\`, \`route\`, \`resize\`, \`record\`. Sessions are kept in memory by default; pass \`--persistent\` to save the profile to disk. Run \`playwright-cli show\` to open the visual dashboard for live monitoring.
+
+For token efficiency: prefer \`snapshot --depth=N\` then targeted \`find\`, and reuse a single session with \`-s=<name>\` rather than reopening the browser.`,
+  },
+  {
+    name: "awesome-design-md",
+    description: "DESIGN.md design system references from voltagent/awesome-design-md.",
+    instructions: `This wrapper points at voltagent/awesome-design-md, a curated collection of DESIGN.md files extracted from real brand design systems. Each DESIGN.md is a plain markdown spec the agent reads to generate UI that matches the documented visual language.
+
+Usage: drop a chosen DESIGN.md into the project root and tell the agent \`follow the DESIGN.md\`. The wrapper itself does not ship any specific design system; pick one per project.
+
+To browse available systems: https://getdesign.md/
+
+Popular picks worth starting from: Vercel, Linear, Notion, Stripe, Apple, Cursor, Resend, Anthropic, and Cohere. After selecting one, copy its DESIGN.md into \`DESIGN.md\` at the project root and reference it in the prompt.`,
+  },
+  {
+    name: "img2threejs",
+    description: "Image-to-procedural Three.js pipeline from img2threejs/img2threejs.",
+    instructions: `This wrapper points at img2threejs/img2threejs. The skill rebuilds a reference image as a procedural Three.js \`THREE.Group\` factory with quality gates at each pass, deterministic Python validation, and an optional plugin system for domain-specific profiles (CS2 skins, characters).
+
+Install:
+
+    git clone https://github.com/img2threejs/img2threejs.git ~/.claude/skills/img2threejs
+
+If you use more than one host (Claude Code / Codex / OpenCode), keep a single checkout and symlink each host's skill directory to it so they cannot drift:
+
+    ~/.codex/skills/img2threejs  -> <your checkout>
+
+Optional plugin harness for CS2 and animated-character profiles:
+
+    npx github:img2threejs/img2 install
+
+Invoke with an attached reference image:
+
+    /img2threejs Rebuild this object as a Three.js model, keep the proportions, angles, and colours.
+
+Follow the upstream SKILL.md and docs/ARCHITECTURE.md for the current pipeline, gates, and scripts.`,
+  },
+];
+
 export function missingStarterSkills(
   skills: ReadonlyArray<ProjectSkill>,
 ): ReadonlyArray<SkillDraft> {
   const installed = new Set(skills.map((skill) => skill.name.toLowerCase()));
-  return STARTER_SKILLS.filter((skill) => !installed.has(skill.name));
+  return [...STARTER_SKILLS, ...EXTERNAL_STARTER_SKILLS].filter(
+    (skill) => !installed.has(skill.name),
+  );
 }
 
 function normalizedPath(value: string): string {

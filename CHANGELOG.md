@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.14.1] - 2026-09-13
+
+### Added
+
+- Ship five external skill wrappers in the Project Overview starter kit: `taste-skill`, `impeccable`, `playwright-cli`, `awesome-design-md`, and `img2threejs`. Each wrapper points at the canonical install command for its upstream repo and is provider-neutral, so it appears in the composer for every configured provider once installed via `.axis-tools/skills/`.
+
 ## [0.14.0] - 2026-09-11
 
 ### Added
