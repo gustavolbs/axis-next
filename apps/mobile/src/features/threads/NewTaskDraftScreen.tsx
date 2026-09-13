@@ -317,6 +317,7 @@ export function NewTaskDraftScreen(props: {
       (flow.workspaceMode === "worktree"
         ? selectedProject?.workspaceRoot
         : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null,
+    projectRoot: selectedProject?.workspaceRoot ?? null,
     selectedProviderStatus: flow.selectedProviderStatus,
     hasThread: false,
     hasCompactableConversation: false,

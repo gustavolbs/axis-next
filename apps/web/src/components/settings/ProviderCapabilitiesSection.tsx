@@ -309,11 +309,11 @@ export function ProviderCapabilitiesSection({
 
   return (
     <SettingsSection
-      title={isMcpPage ? "MCP connections" : "Skills"}
+      title={isMcpPage ? "MCP connections" : "Native skill catalog"}
       description={
         isMcpPage
           ? "Connections discovered from this provider's native configuration. Secrets and command arguments are never returned to the client."
-          : "Skills discovered in the scopes understood by this provider instance."
+          : "This provider's native catalog. Create and edit project skills in the Project Overview; refresh here to inspect what this provider can invoke."
       }
       headerAction={
         <Button
@@ -483,7 +483,7 @@ export function ProviderCapabilitiesSection({
         visibleSkills.length === 0 ? (
           <SettingsRow
             title={inventory.skills.length === 0 ? "No skills found" : "No matches"}
-            description="Skills are read from this provider's native user and project scopes."
+            description="Project skills are managed from the Project Overview. Personal and installed skills stay in their provider-specific locations."
           />
         ) : (
           <div className="divide-y divide-border/50">

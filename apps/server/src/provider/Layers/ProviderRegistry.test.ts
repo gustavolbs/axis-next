@@ -44,6 +44,7 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
 import {
   haveProvidersChanged,
+  mergeAxisProjectSkills,
   mergeProviderSnapshot,
   upsertProviderWorkspaceSnapshot,
   ProviderRegistryLive,
@@ -620,6 +621,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             slashCommands: scopedSnapshot.slashCommands,
             skills: scopedSnapshot.skills,
           },
+        ]);
+      });
+
+      it("exposes Axis skills before same-named native skills without mutating the input", () => {
+        const nativeSkills = [
+          { name: "review", path: "/repo/.claude/skills/review/SKILL.md", enabled: true },
+          { name: "native-only", path: "/repo/.claude/skills/native-only/SKILL.md", enabled: true },
+        ] as const satisfies ReadonlyArray<ServerProvider["skills"][number]>;
+        const result = mergeAxisProjectSkills(nativeSkills, [
+          {
+            name: "review",
+            path: "/repo/.axis-tools/skills/review/SKILL.md",
+            description: "Review with the project workflow",
+          },
+        ]);
+
+        assert.deepStrictEqual(result, [
+          {
+            name: "review",
+            path: "/repo/.axis-tools/skills/review/SKILL.md",
+            scope: "project",
+            enabled: true,
+            description: "Review with the project workflow",
+          },
+          nativeSkills[1],
+        ]);
+        assert.deepStrictEqual(nativeSkills, [
+          { name: "review", path: "/repo/.claude/skills/review/SKILL.md", enabled: true },
+          { name: "native-only", path: "/repo/.claude/skills/native-only/SKILL.md", enabled: true },
         ]);
       });
 
@@ -1475,6 +1505,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             );
             yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
             assert.strictEqual(yield* Ref.get(snapshotCalls), 2);
+            yield* registry.refreshWorkspaceSnapshot({
+              instanceId,
+              cwd: "/workspace",
+              projectRoot: "/project-root",
+            });
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
+            assert.strictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.[0]?.projectRoot,
+              "/project-root",
+            );
+            yield* registry.refreshWorkspaceSnapshot({
+              instanceId,
+              cwd: "/workspace",
+              force: true,
+            });
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 4);
 
             yield* Ref.set(instancesRef, [rebuiltInstance]);
             yield* PubSub.publish(registryChanges, undefined);

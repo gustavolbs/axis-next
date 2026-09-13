@@ -838,6 +838,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   queueCount={props.selectedThreadQueueCount}
                   environmentId={props.environmentId}
                   projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
+                  projectRoot={props.projectWorkspaceRoot}
                   bottomInset={composerBottomInset}
                   onChangeDraftMessage={props.onChangeDraftMessage}
                   onPickDraftMedia={props.onPickDraftMedia}

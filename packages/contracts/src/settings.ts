@@ -826,6 +826,31 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+/**
+ * Provider presets for Axis Learning. The credential itself stays in the
+ * provider environment/secret store; this setting only selects how Hermes
+ * reaches the model.
+ */
+export const AxisHermesProvider = Schema.Literals(["openai", "openrouter", "ollama", "custom"]);
+export type AxisHermesProvider = typeof AxisHermesProvider.Type;
+
+export const AxisHermesSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  provider: AxisHermesProvider.pipe(Schema.withDecodingDefault(Effect.succeed("openai"))),
+  model: TrimmedNonEmptyString.pipe(Schema.withDecodingDefault(Effect.succeed("gpt-5.4-mini"))),
+  baseUrl: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("https://api.openai.com/v1")),
+  ),
+  apiKeyEnv: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("OPENAI_API_KEY")),
+  ),
+  /** Empty means discover `python3`/`python` from PATH. */
+  pythonExecutable: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Empty means use a private directory below the server state directory. */
+  hermesHome: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type AxisHermesSettings = typeof AxisHermesSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
   // `enableAssistantStreaming`): decoding drops the old key, so everyone,
@@ -855,6 +880,7 @@ export const ServerSettings = Schema.Struct({
   ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
+  axisHermes: AxisHermesSettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
   automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
@@ -1120,6 +1146,17 @@ export const ServerSettingsPatch = Schema.Struct({
       profile: Schema.optionalKey(BackgroundActivityProfileSelection),
       baseProfile: Schema.optionalKey(BackgroundActivityProfile),
       overrides: Schema.optionalKey(BackgroundActivityOverrides),
+    }),
+  ),
+  axisHermes: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      provider: Schema.optionalKey(AxisHermesProvider),
+      model: Schema.optionalKey(TrimmedNonEmptyString),
+      baseUrl: Schema.optionalKey(TrimmedNonEmptyString),
+      apiKeyEnv: Schema.optionalKey(TrimmedNonEmptyString),
+      pythonExecutable: Schema.optionalKey(TrimmedString),
+      hermesHome: Schema.optionalKey(TrimmedString),
     }),
   ),
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),

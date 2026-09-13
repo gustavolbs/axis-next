@@ -14,10 +14,12 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { AxisContextCatalogStore } from "../contexts/AxisContextCatalogStore.ts";
+import { AxisLearningAutomaticWorker } from "../learning/AxisLearningAutomaticWorker.ts";
 import { AxisWorkHubCacheStore, mergeAxisWorkHubCacheSnapshot } from "./AxisWorkHubCacheStore.ts";
 
 export type AxisWorkHubSourceSyncError =
@@ -64,6 +66,7 @@ export const make = Effect.gen(function* () {
   const cacheStore = yield* AxisWorkHubCacheStore;
   const providers = yield* ProviderInstanceRegistry;
   const serverEnvironment = yield* ServerEnvironment;
+  const automaticLearning = yield* Effect.serviceOption(AxisLearningAutomaticWorker);
   const localEnvironmentId = yield* serverEnvironment.getEnvironmentId;
   const inFlight = new Map<
     string,
@@ -277,11 +280,23 @@ export const make = Effect.gen(function* () {
         if (cached) {
           const now = yield* DateTime.now;
           if (isAxisWorkHubCacheFresh(cached, DateTime.toEpochMillis(now))) {
-            return { status: "skipped" as const, reason: "fresh-cache" as const, snapshot: cached };
+            const outcome = {
+              status: "skipped" as const,
+              reason: "fresh-cache" as const,
+              snapshot: cached,
+            };
+            if (Option.isSome(automaticLearning)) {
+              yield* automaticLearning.value.observeWorkHub(outcome.snapshot);
+            }
+            return outcome;
           }
         }
       }
-      return yield* runSingleFlight(sourceId);
+      const outcome = yield* runSingleFlight(sourceId);
+      if (Option.isSome(automaticLearning)) {
+        yield* automaticLearning.value.observeWorkHub(outcome.snapshot);
+      }
+      return outcome;
     },
   );
 

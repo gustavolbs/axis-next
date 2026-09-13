@@ -55,7 +55,11 @@ function LinkButton({
     );
   }
   return (
-    <Button size="xs" variant="outline" render={<Link to={link.to} search={link.search} />}>
+    <Button
+      size="xs"
+      variant="outline"
+      render={<Link to={link.to} params={link.params} search={link.search} />}
+    >
       <ExternalLinkIcon aria-hidden />
       {children}
     </Button>
@@ -65,15 +69,17 @@ function LinkButton({
 export function ProjectIntegrationsPanel({
   environmentId,
   scope,
+  projectKey,
   projectLabel,
   connectionState,
 }: {
   readonly environmentId: EnvironmentId;
   readonly scope: AxisContextProjectScope;
+  readonly projectKey: string;
   readonly projectLabel?: string;
   readonly connectionState: ProjectIntegrationsConnectionState;
 }) {
-  const links = buildWorkHubProjectLinks(scope);
+  const links = buildWorkHubProjectLinks(scope, projectKey);
   const scopeMatchesEnvironment = scope.project.environmentId === environmentId;
   const catalogQuery = useEnvironmentQuery(
     scopeMatchesEnvironment && connectionState === "connected"
@@ -167,10 +173,8 @@ export function ProjectIntegrationsPanel({
       {model.binding === null ? (
         <SettingsRow
           title="No project association"
-          description="No explicit Axis context binding exists for this physical project. Open the global project bindings settings to select it there."
-          control={
-            <LinkButton link={links.configureProject}>Open project bindings settings</LinkButton>
-          }
+          description="Choose the context for this project in its Overview before configuring integrations."
+          control={<LinkButton link={links.configureProject}>Open project overview</LinkButton>}
         />
       ) : model.sources.length === 0 ? (
         <SettingsRow

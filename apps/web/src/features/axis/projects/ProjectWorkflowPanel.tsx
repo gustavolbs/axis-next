@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   AlertCircleIcon,
@@ -88,6 +88,7 @@ export function ProjectWorkflowPanel({
     readonly commandId: string;
     readonly evidenceId: string;
   } | null>(null);
+  const automaticFeedbackAttemptRef = useRef<string | null>(null);
   const connected =
     connectionState === "connected" && scope.project.environmentId === environmentId;
   const tasksQuery = useEnvironmentQuery(
@@ -215,6 +216,81 @@ export function ProjectWorkflowPanel({
     tasksQuery.refresh,
   ]);
 
+  const canStart = canStartProjectWorkflow({
+    connectionState,
+    threadId,
+    task: selectedTask,
+    step: selectedStep,
+    modelSelection,
+  });
+  const canCancel =
+    currentState !== null &&
+    ["accepted", "running", "waiting-input"].includes(currentState.status) &&
+    selectedTask !== null &&
+    attemptCommandId !== null;
+  const canRetry =
+    currentState !== null &&
+    ["failed", "interrupted"].includes(currentState.status) &&
+    selectedTask !== null &&
+    attemptCommandId !== null &&
+    modelSelection !== null;
+  const feedbackRecordedForAttempt =
+    attemptCommandId !== null && recordedFeedback?.commandId === attemptCommandId;
+  const feedbackTurnId = currentState?.execution.turnId ?? null;
+  const canRecordFeedback =
+    !feedbackRecordedForAttempt &&
+    canRecordTaskFeedback({
+      connectionState,
+      threadId,
+      task: selectedTask,
+      step: selectedStep,
+      state: currentState,
+    });
+
+  useEffect(() => {
+    if (
+      !canRecordFeedback ||
+      action !== null ||
+      attemptCommandId === null ||
+      selectedTask === null ||
+      selectedStep === null ||
+      threadId === null ||
+      feedbackTurnId === null ||
+      automaticFeedbackAttemptRef.current === attemptCommandId
+    ) {
+      return;
+    }
+    automaticFeedbackAttemptRef.current = attemptCommandId;
+    void run(
+      "feedback",
+      async () =>
+        recordTaskFeedback({
+          environmentId,
+          input: {
+            scope,
+            threadId,
+            taskId: selectedTask.id,
+            stepId: selectedStep.id,
+            commandId: attemptCommandId,
+            expectedTurnId: feedbackTurnId,
+          },
+        }),
+      (evidence) => setRecordedFeedback({ commandId: attemptCommandId, evidenceId: evidence.id }),
+    );
+  }, [
+    action,
+    attemptCommandId,
+    canRecordFeedback,
+    feedbackTurnId,
+    environmentId,
+    recordTaskFeedback,
+    run,
+    scope,
+    selectedStep,
+    selectedTask,
+    threadId,
+  ]);
+
   if (scope.project.environmentId !== environmentId)
     return (
       <SettingsSection title="Workflow">
@@ -264,35 +340,6 @@ export function ProjectWorkflowPanel({
       </SettingsSection>
     );
 
-  const canStart = canStartProjectWorkflow({
-    connectionState,
-    threadId,
-    task: selectedTask,
-    step: selectedStep,
-    modelSelection,
-  });
-  const canCancel =
-    currentState !== null &&
-    ["accepted", "running", "waiting-input"].includes(currentState.status) &&
-    selectedTask !== null &&
-    attemptCommandId !== null;
-  const canRetry =
-    currentState !== null &&
-    ["failed", "interrupted"].includes(currentState.status) &&
-    selectedTask !== null &&
-    attemptCommandId !== null &&
-    modelSelection !== null;
-  const feedbackRecordedForAttempt =
-    attemptCommandId !== null && recordedFeedback?.commandId === attemptCommandId;
-  const canRecordFeedback =
-    !feedbackRecordedForAttempt &&
-    canRecordTaskFeedback({
-      connectionState,
-      threadId,
-      task: selectedTask,
-      step: selectedStep,
-      state: currentState,
-    });
   return (
     <SettingsSection
       title="Workflow"

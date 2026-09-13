@@ -110,13 +110,14 @@ const validateOutput = (
   );
 
 export const make = (executor?: AxisLearningEngineExecutor) => {
-  const status =
+  const initialStatus =
     executor === undefined
       ? ({
           availability: "absent" as AxisLearningEngineAvailability,
           message: "No Axis learning engine is configured.",
         } satisfies AxisLearningEngineStatus)
       : executor.status;
+  const currentStatus = () => executor?.status ?? initialStatus;
 
   const run = Effect.fn("AxisLearningEngine.run")(function* (
     rawRequest: unknown,
@@ -130,6 +131,7 @@ export const make = (executor?: AxisLearningEngineExecutor) => {
           }),
       ),
     );
+    const status = currentStatus();
     if (status.availability !== "available" || executor === undefined) return unavailable(status);
 
     const controller = new AbortController();
@@ -149,7 +151,12 @@ export const make = (executor?: AxisLearningEngineExecutor) => {
     return yield* validateOutput(request, yield* bounded);
   });
 
-  return Effect.succeed({ status, run } satisfies AxisLearningEngine["Service"]);
+  return Effect.succeed({
+    get status() {
+      return currentStatus();
+    },
+    run,
+  } satisfies AxisLearningEngine["Service"]);
 };
 
 export const layer = (executor?: AxisLearningEngineExecutor) =>

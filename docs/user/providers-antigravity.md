@@ -83,10 +83,13 @@ is unavailable. Continue with a follow-up message or start a new thread.
 
 ### Skills and attachments
 
-Put project skills in `.agents/skills`. T3 Code also reads `.gemini/skills` and the
-legacy `.agent/skills` directory. Among these project locations, the first copy
-wins in this order: `.gemini/skills`, `.agents/skills`, `.agent/skills`. See
-[commands and skills](./composer.md#commands-and-skills) for invoking them.
+For Antigravity-native skills, use `.agents/skills`. T3 Code also reads
+`.gemini/skills` and the legacy `.agent/skills` directory. Among these project
+locations, the first copy wins in this order: `.gemini/skills`, `.agents/skills`,
+`.agent/skills`. Skills managed by T3 Code in Project Overview are stored once
+in `.axis-tools/skills`, are available here too, and do not overwrite native
+files. See [commands and skills](./composer.md#commands-and-skills) for
+invoking them.
 
 Antigravity accepts images, PDFs, text files, and supported audio formats directly.
 Its limits are 1 MiB per text file, 10 MiB per image, 20 MiB per audio clip, and

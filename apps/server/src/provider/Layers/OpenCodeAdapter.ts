@@ -3236,6 +3236,9 @@ export function makeOpenCodeAdapter(
                   .join("\n\n"),
                 parts: [
                   ...(text ? [{ type: "text" as const, text }] : []),
+                  ...(input.axisSkillInstructions
+                    ? [{ type: "text" as const, text: input.axisSkillInstructions }]
+                    : []),
                   ...requestedGatewayAgents.map((agent): AgentPartInput => ({
                     type: "agent",
                     name: agent.name,

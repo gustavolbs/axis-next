@@ -10,8 +10,13 @@ import type {
 export type WorkHubProjectLink =
   | {
       readonly kind: "link";
-      readonly to: "/settings/axis";
-      readonly search: { readonly section: "projects" };
+      readonly to: "/projects/$projectKey";
+      readonly params: { readonly projectKey: string };
+      readonly search: {
+        readonly view: "overview";
+        readonly environmentId: string;
+        readonly projectId: string;
+      };
     }
   | { readonly kind: "unavailable"; readonly reason: string };
 
@@ -32,10 +37,21 @@ export interface ProjectWorkHubIntegrations {
   readonly sources: ReadonlyArray<ProjectWorkHubIntegration>;
 }
 
-export function buildWorkHubProjectLinks(scope: AxisContextProjectScope): WorkHubProjectLinks {
-  void scope;
+export function buildWorkHubProjectLinks(
+  scope: AxisContextProjectScope,
+  projectKey: string,
+): WorkHubProjectLinks {
   return {
-    configureProject: { kind: "link", to: "/settings/axis", search: { section: "projects" } },
+    configureProject: {
+      kind: "link",
+      to: "/projects/$projectKey",
+      params: { projectKey },
+      search: {
+        view: "overview",
+        environmentId: scope.project.environmentId,
+        projectId: scope.project.projectId,
+      },
+    },
     configureSources: {
       kind: "unavailable",
       reason: "Physical project selection is not supported by Work Hub source settings yet.",

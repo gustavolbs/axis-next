@@ -5,6 +5,7 @@ import {
   AxisLearningEngineDeadlineExceededError,
   AxisLearningEngineExecutionError,
   type AxisLearningEngineRequest,
+  type AxisLearningEngineStatus,
 } from "../../../../../../packages/contracts/src/axisLearningEngine.ts";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -15,8 +16,15 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ProcessRunner from "../../../processRunner.ts";
+import * as ServerConfig from "../../../config.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
+import type {
+  AxisHermesProvider,
+  ServerSettings as ServerSettingsType,
+} from "../../../../../../packages/contracts/src/settings.ts";
 
 export const HERMES_AGENT_VERSION = "0.21.1";
 export const HERMES_AGENT_RELEASE = "v2026.9.7";
@@ -35,11 +43,100 @@ export interface HermesLearningEngineConfig {
   readonly model: string;
   readonly baseUrl: string;
   readonly apiKeyEnv?: string | undefined;
+  /** Resolved in memory from a provider secret; never persisted or sent over RPC. */
+  readonly apiKey?: string | undefined;
   /** Fresh, environment-owned HERMES_HOME; global Hermes state is not allowed. */
   readonly hermesHome: string;
   readonly timeoutMs?: number | undefined;
   readonly maxOutputBytes?: number | undefined;
 }
+
+const HERMES_PRESET_DEFAULTS: Readonly<
+  Record<
+    AxisHermesProvider,
+    {
+      readonly baseUrl: string;
+      readonly model: string;
+      readonly apiKeyEnv: string;
+    }
+  >
+> = {
+  openai: {
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-5.4-mini",
+    apiKeyEnv: "OPENAI_API_KEY",
+  },
+  openrouter: {
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "openai/gpt-5.4-mini",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+  },
+  ollama: {
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "llama3.2",
+    apiKeyEnv: "OLLAMA_API_KEY",
+  },
+  custom: {
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-5.4-mini",
+    apiKeyEnv: "OPENAI_API_KEY",
+  },
+};
+
+const executableFromPath = (name: string): string | undefined => {
+  if (!name.trim()) return undefined;
+  if (NodePath.isAbsolute(name)) return name;
+  for (const directory of (process.env.PATH ?? "").split(NodePath.delimiter)) {
+    if (!directory) continue;
+    const candidate = NodePath.join(directory, name);
+    try {
+      NodeFS.accessSync(candidate, NodeFS.constants.X_OK);
+      return candidate;
+    } catch {
+      // Continue through PATH; a missing interpreter is reported as offline.
+    }
+  }
+  return undefined;
+};
+
+const findProviderApiKey = (settings: ServerSettingsType, name: string): string | undefined => {
+  for (const instance of Object.values(settings.providerInstances)) {
+    const variable = instance.environment?.find((candidate) => candidate.name === name);
+    if (variable?.value.trim()) return variable.value;
+  }
+  return undefined;
+};
+
+/** Resolve the friendly settings into the private subprocess configuration. */
+export const resolveHermesConfiguration = (input: {
+  readonly settings: ServerSettingsType;
+  readonly serverConfig: ServerConfig.ServerConfig["Service"];
+}): HermesLearningEngineConfig => {
+  const configured = input.settings.axisHermes;
+  const preset = HERMES_PRESET_DEFAULTS[configured.provider];
+  const apiKeyEnv = process.env.AXIS_HERMES_API_KEY_ENV ?? configured.apiKeyEnv ?? preset.apiKeyEnv;
+  const pythonExecutable =
+    executableFromPath(process.env.AXIS_HERMES_PYTHON || configured.pythonExecutable) ??
+    executableFromPath("python3") ??
+    executableFromPath("python") ??
+    "";
+  const hermesHome =
+    process.env.AXIS_HERMES_HOME ||
+    configured.hermesHome ||
+    NodePath.join(input.serverConfig.stateDir, "hermes");
+  const apiKey =
+    process.env[apiKeyEnv] ??
+    findProviderApiKey(input.settings, apiKeyEnv) ??
+    (configured.provider === "ollama" ? "ollama" : undefined);
+  return {
+    pythonExecutable,
+    hermesHome,
+    model: process.env.AXIS_HERMES_MODEL || configured.model || preset.model,
+    baseUrl: process.env.AXIS_HERMES_BASE_URL || configured.baseUrl || preset.baseUrl,
+    apiKeyEnv,
+    apiKey,
+  };
+};
 
 /**
  * Fixed source-level bridge for NousResearch/hermes-agent v0.21.1.
@@ -448,6 +545,39 @@ const configError = (config: HermesLearningEngineConfig): string | undefined => 
   return undefined;
 };
 
+const statusForHermesConfiguration = (
+  config: HermesLearningEngineConfig,
+  enabled: boolean,
+): AxisLearningEngineStatus => {
+  if (!enabled) {
+    return {
+      availability: "absent",
+      engineId: `hermes-agent@${HERMES_AGENT_VERSION}`,
+      message: "Hermes is disabled.",
+    };
+  }
+  const invalid = configError(config);
+  if (invalid !== undefined) {
+    return {
+      availability: "offline",
+      engineId: `hermes-agent@${HERMES_AGENT_VERSION}`,
+      message: invalid,
+    };
+  }
+  if (!config.apiKey) {
+    return {
+      availability: "offline",
+      engineId: `hermes-agent@${HERMES_AGENT_VERSION}`,
+      message: `Hermes needs the ${config.apiKeyEnv ?? "configured"} credential. Configure it in Providers or choose Ollama.`,
+    };
+  }
+  return {
+    availability: "available",
+    engineId: `hermes-agent@${HERMES_AGENT_VERSION}`,
+    message: `NousResearch/hermes-agent ${HERMES_AGENT_RELEASE}`,
+  };
+};
+
 const allocatePrivateRunDirectories = (
   hermesHomeRoot: string,
 ): Effect.Effect<HermesPrivateRunDirectories, AxisLearningEngineExecutionError> =>
@@ -520,10 +650,11 @@ const makeRunInput = (
   env: {
     HERMES_HOME: directories.hermesHome,
     AXIS_HERMES_RUN_ROOT: directories.root,
-    ...(process.env[config.apiKeyEnv ?? defaultApiKeyEnv] === undefined
+    ...((config.apiKey ?? process.env[config.apiKeyEnv ?? defaultApiKeyEnv]) === undefined
       ? {}
       : {
-          [config.apiKeyEnv ?? defaultApiKeyEnv]: process.env[config.apiKeyEnv ?? defaultApiKeyEnv],
+          [config.apiKeyEnv ?? defaultApiKeyEnv]:
+            config.apiKey ?? process.env[config.apiKeyEnv ?? defaultApiKeyEnv],
         }),
   },
   extendEnv: false,
@@ -626,5 +757,57 @@ export const layer = (config: HermesLearningEngineConfig) =>
     AxisLearningEngine,
     make(config).pipe(Effect.flatMap(AxisLearningEngineRuntime.make)),
   ).pipe(Layer.provide(ProcessRunner.layer));
+
+/**
+ * Live engine used by the server. Settings are resolved again for every run,
+ * and the status follows settings changes, so a preset change takes effect
+ * without restarting the server.
+ */
+export const dynamicLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const settingsService = yield* ServerSettings.ServerSettingsService;
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const processRunner = yield* ProcessRunner.ProcessRunner;
+    let currentSettings = yield* settingsService.getSettings.pipe(Effect.orDie);
+    let currentConfig = resolveHermesConfiguration({ settings: currentSettings, serverConfig });
+    let currentStatus = statusForHermesConfiguration(
+      currentConfig,
+      currentSettings.axisHermes.enabled || process.env.AXIS_LEARNING_ENGINE === "hermes",
+    );
+
+    const update = (next: ServerSettingsType) => {
+      currentSettings = next;
+      currentConfig = resolveHermesConfiguration({ settings: next, serverConfig });
+      currentStatus = statusForHermesConfiguration(
+        currentConfig,
+        next.axisHermes.enabled || process.env.AXIS_LEARNING_ENGINE === "hermes",
+      );
+    };
+    yield* settingsService.streamChanges.pipe(
+      Stream.runForEach((next) => Effect.sync(() => update(next))),
+      Effect.forkScoped,
+    );
+
+    const executor: AxisLearningEngineExecutor = {
+      get status() {
+        return currentStatus;
+      },
+      run: (request, cancellation) =>
+        Effect.gen(function* () {
+          // Reading here closes the small window between a settings write and
+          // the stream notification reaching this service.
+          update(
+            yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => currentSettings)),
+          );
+          const configuredExecutor = yield* make(currentConfig).pipe(
+            Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+          );
+          return yield* configuredExecutor.run(request, cancellation);
+        }),
+    };
+    const engine = yield* AxisLearningEngineRuntime.make(executor);
+    return Layer.succeed(AxisLearningEngine, engine);
+  }),
+).pipe(Layer.provide(ProcessRunner.layer));
 
 export const bridgeSourceForTest = HERMES_BRIDGE_SOURCE;
