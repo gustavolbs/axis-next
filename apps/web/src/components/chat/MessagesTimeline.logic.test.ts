@@ -5,6 +5,7 @@ import {
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
+  deriveSkillInjectionsByTurnId,
   liveWorkEntryLabel,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -530,6 +531,111 @@ describe("work entry labels", () => {
     },
   );
 });
+
+describe("skill injection label formatting", () => {
+  it("renders the first injected skill name plus a count when multiple load", () => {
+    const label = formatSkillInjectionLabelForTest({
+      id: "x",
+      turnId: "turn-1" as never,
+      createdAt: "2026-01-01T00:00:00Z",
+      toolCallId: "tool-1",
+      label: "x",
+      tone: "tool",
+      itemType: "skill_injection",
+      skillNames: ["taste-skill", "impeccable"],
+    });
+    expect(label).toBe("Loaded 2 skills ($taste-skill, …)");
+  });
+
+  it("falls back to a count-only label when no names are present", () => {
+    const label = formatSkillInjectionLabelForTest({
+      id: "x",
+      turnId: "turn-1" as never,
+      createdAt: "2026-01-01T00:00:00Z",
+      toolCallId: "tool-1",
+      label: "x",
+      tone: "tool",
+      itemType: "skill_injection",
+    });
+    expect(label).toBe("Loaded skills");
+  });
+
+  it("renders a single injected skill name verbatim", () => {
+    const label = formatSkillInjectionLabelForTest({
+      id: "x",
+      turnId: "turn-1" as never,
+      createdAt: "2026-01-01T00:00:00Z",
+      toolCallId: "tool-1",
+      label: "x",
+      tone: "tool",
+      itemType: "skill_injection",
+      skillNames: ["only-one"],
+    });
+    expect(label).toBe("Loaded $only-one");
+  });
+});
+
+function formatSkillInjectionLabelForTest(entry: Parameters<typeof workEntryDisplayLabel>[0]) {
+  return workEntryDisplayLabel(entry, "/workspace");
+}
+
+describe("deriveSkillInjectionsByTurnId", () => {
+  it("indexes skill_injection entries by turn and de-duplicates names", () => {
+    const map = deriveSkillInjectionsByTurnId([
+      workEntry("turn-a", ["taste-skill"]),
+      workEntry("turn-a", ["taste-skill", "impeccable"]),
+      workEntry("turn-b", ["playwright-cli"]),
+    ]);
+    expect(map.get("turn-a" as never)).toEqual(["taste-skill", "impeccable"]);
+    expect(map.get("turn-b" as never)).toEqual(["playwright-cli"]);
+  });
+
+  it("skips entries that are not skill_injection", () => {
+    const map = deriveSkillInjectionsByTurnId([
+      workEntry("turn-a", ["taste-skill"]),
+      {
+        id: "mcp",
+        kind: "work",
+        createdAt: "2026-01-01T00:00:00Z",
+        entry: {
+          id: "mcp-inner",
+          turnId: "turn-a" as never,
+          createdAt: "2026-01-01T00:00:00Z",
+          toolCallId: "mcp-1",
+          label: "mcp",
+          tone: "tool",
+          itemType: "mcp_tool_call",
+        },
+      },
+    ]);
+    expect(map.get("turn-a" as never)).toEqual(["taste-skill"]);
+  });
+
+  it("returns an empty map when nothing matches", () => {
+    expect(deriveSkillInjectionsByTurnId([]).size).toBe(0);
+  });
+});
+
+function workEntry(
+  turnId: string,
+  skillNames: ReadonlyArray<string>,
+): Parameters<typeof deriveSkillInjectionsByTurnId>[0][number] {
+  return {
+    id: `${turnId}-${skillNames.join("-")}`,
+    kind: "work",
+    createdAt: "2026-01-01T00:00:00Z",
+    entry: {
+      id: `${turnId}-${skillNames.join("-")}`,
+      turnId: turnId as never,
+      createdAt: "2026-01-01T00:00:00Z",
+      toolCallId: `${turnId}-tool`,
+      label: "Skill injection",
+      tone: "tool",
+      itemType: "skill_injection",
+      skillNames,
+    },
+  };
+}
 
 describe("shouldPreserveAssistantLineBreaks", () => {
   it("preserves Claude insight formatting without changing regular markdown", () => {
