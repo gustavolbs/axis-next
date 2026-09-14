@@ -170,6 +170,15 @@ export interface ProviderServiceShape {
    * Fan-out is owned by ProviderService (not by a standalone event-bus service).
    */
   readonly streamEvents: Stream.Stream<ProviderRuntimeEvent>;
+
+  /**
+   * Publish a synthetic runtime event into the canonical pub-sub.
+   *
+   * Used by the orchestrator to surface server-side events that no provider
+   * adapter emits on its own (today: skill injections, where the server knows
+   * which skills the turn prompt received but the SDK doesn't surface them).
+   */
+  readonly publishRuntimeEvent: (event: ProviderRuntimeEvent) => Effect.Effect<void, never, never>;
 }
 
 /**

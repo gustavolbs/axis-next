@@ -29,6 +29,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
 import { resolveConciseOutputProfile } from "../RuntimeInstructions.ts";
+import { discoverOpenCodeMcpServers } from "./ProviderMcpDiscovery.ts";
 import {
   checkOpenCodeProviderStatus,
   makePendingOpenCodeProvider,
@@ -327,6 +328,17 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                     }),
                 ),
               ),
+        discoverMcpServers: () =>
+          Effect.try({
+            try: () => discoverOpenCodeMcpServers({ cwd: serverConfig.cwd }),
+            catch: (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: `Failed to discover OpenCode MCP servers: ${cause instanceof Error ? cause.message : String(cause)}`,
+                cause,
+              }),
+          }),
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

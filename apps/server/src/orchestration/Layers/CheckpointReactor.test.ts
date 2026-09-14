@@ -140,6 +140,10 @@ function createProviderServiceHarness(
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },
+    publishRuntimeEvent: (event) =>
+      Effect.sync(() => {
+        Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
+      }),
   };
 
   const emit = (event: LegacyProviderRuntimeEvent): void => {
