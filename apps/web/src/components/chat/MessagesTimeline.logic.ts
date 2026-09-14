@@ -48,6 +48,9 @@ function singleToolCallLabel(entry: WorkLogEntry): string {
 }
 
 export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
+  if (entry.itemType === "skill_injection") {
+    return formatSkillInjectionLabelStatic(entry);
+  }
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command) return entry.command;
@@ -63,11 +66,24 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
 }
 
+function formatSkillInjectionLabelStatic(entry: WorkLogEntry): string {
+  const count = entry.skillNames?.length ?? 0;
+  if (count === 0) return "Loaded skills";
+  const first = entry.skillNames![0]!;
+  if (count === 1) return `Loaded $${first}`;
+  return `Loaded ${count} skills ($${first}, …)`;
+}
+
+export type { TimelineEntry };
+
 export function liveWorkEntryLabel(
   entry: WorkLogEntry,
   workspaceRoot: string | undefined,
   active: boolean,
 ) {
+  if (entry.itemType === "skill_injection") {
+    return formatSkillInjectionLabel(entry);
+  }
   const status = liveActivityToolStatus(entry.toolLifecycleStatus, active);
   const toolPresentation = resolveWorkEntryToolPresentation({
     ...entry,
@@ -89,6 +105,14 @@ export function liveWorkEntryLabel(
     return `${verb} ${commandProgramName(command) ?? "command"}`;
   }
   return workEntryDisplayLabel(entry, workspaceRoot);
+}
+
+function formatSkillInjectionLabel(entry: WorkLogEntry): string {
+  const count = entry.skillNames?.length ?? 0;
+  if (count === 0) return "Loaded skills";
+  const first = entry.skillNames![0]!;
+  if (count === 1) return `Loaded $${first}`;
+  return `Loaded ${count} skills ($${first}, …)`;
 }
 
 export function workEntryIsVisibleInGroup(
@@ -1314,4 +1338,28 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
   }
+}
+
+/**
+ * Index skill_injection work entries by turn so the assistant message can
+ * render the chips for the skills the server actually loaded into its prompt.
+ * Multiple skill_injection rows for the same turn collapse into a single
+ * chip set (server emits item.started + item.completed as separate entries).
+ */
+export function deriveSkillInjectionsByTurnId(
+  entries: ReadonlyArray<TimelineEntry>,
+): ReadonlyMap<TurnId, ReadonlyArray<string>> {
+  const map = new Map<TurnId, ReadonlyArray<string>>();
+  for (const entry of entries) {
+    if (entry.kind !== "work") continue;
+    if (entry.entry.itemType !== "skill_injection") continue;
+    const turnId = entry.entry.turnId ?? null;
+    if (!turnId) continue;
+    const names = entry.entry.skillNames;
+    if (!names || names.length === 0) continue;
+    const seen = new Set(map.get(turnId) ?? []);
+    for (const name of names) seen.add(name);
+    map.set(turnId, [...seen]);
+  }
+  return map;
 }

@@ -99,6 +99,8 @@ export interface WorkLogEntry {
   toolSource?: import("@t3tools/contracts").ToolActivitySource;
   toolData?: unknown;
   itemType?: ToolLifecycleItemType;
+  /** Names of the skills the server injected into this turn (inferred or `$name`). */
+  skillNames?: ReadonlyArray<string>;
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
@@ -847,7 +849,11 @@ export function deriveWorkLogEntries(
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
     if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
-    if (activity.kind === "tool.started") continue;
+    // Skill injections arrive as `item.started` with itemType `skill_injection`
+    // and surface as a `tool.started` activity from the runtime ingestion.
+    // They collapse to a single chip in MessagesTimeline, so let the entry
+    // through; every other `tool.started` row stays collapsed.
+    if (activity.kind === "tool.started" && !isSkillInjectionActivity(activity)) continue;
     // Agent task.started rows are CTA seeds: they carry the true spawn turn,
     // which is the batch key (completions of background subagents arrive
     // under later synthetic turns and must not start new batches). They
@@ -864,6 +870,15 @@ export function deriveWorkLogEntries(
     entries.push(toDerivedWorkLogEntry(activity));
   }
   return collapseDerivedWorkLogEntries(entries);
+}
+
+function isSkillInjectionActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "tool.started") return false;
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  return payload?.itemType === "skill_injection";
 }
 
 /** Adapters forward unknown wire-only SDK messages (background_tasks_changed,
@@ -998,6 +1013,15 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (itemType) {
     entry.itemType = itemType;
+  }
+  if (Array.isArray(payload?.skillNames)) {
+    const names = payload.skillNames
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    if (names.length > 0) {
+      entry.skillNames = names;
+    }
   }
   if (requestKind) {
     entry.requestKind = requestKind;

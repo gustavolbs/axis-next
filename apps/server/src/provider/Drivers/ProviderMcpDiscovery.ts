@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - MCP discovery reads native JSON config files in cwd and home.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import type { ProviderMcpServer } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -142,3 +147,141 @@ export const discoverProviderMcpServers = Effect.fn("discoverProviderMcpServers"
     return input.parse(result.stdout);
   },
 );
+
+/**
+ * Parse OpenCode MCP servers from its native JSON config files. OpenCode
+ * reads `~/.config/opencode/opencode.json` (user) and `<cwd>/opencode.json`
+ * (project); both carry an `mcp` map whose entries are either
+ * `{ type: "local", command: [...], environment, enabled? }` or
+ * `{ type: "remote", url, enabled?, headers? }`. Disabled entries are kept so
+ * the picker can show them as off.
+ */
+export function parseOpenCodeMcpConfig(raw: string): ReadonlyArray<ProviderMcpServer> {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (typeof decoded !== "object" || decoded === null) return [];
+  const mcp = (decoded as Record<string, unknown>).mcp;
+  if (typeof mcp !== "object" || mcp === null) return [];
+
+  return Object.entries(mcp as Record<string, unknown>).flatMap<
+    ProviderMcpServer,
+    [string, unknown]
+  >(([name, entry]) => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const record = entry as Record<string, unknown>;
+    const type = typeof record.type === "string" ? record.type.trim() : "";
+    const enabled = record.enabled !== false;
+    if (type === "remote") {
+      const url = typeof record.url === "string" ? record.url.trim() : "";
+      return [
+        {
+          name,
+          enabled,
+          status: enabled ? "configured" : "disabled",
+          transport: "http",
+          target: safeTarget(url) ?? undefined,
+        } satisfies ProviderMcpServer,
+      ];
+    }
+    const command = Array.isArray(record.command)
+      ? record.command
+          .filter((part): part is string => typeof part === "string")
+          .map((part) => part.trim())
+          .filter((part) => part.length > 0)
+      : [];
+    const target = command.length > 0 ? command.join(" ") : undefined;
+    return [
+      {
+        name,
+        enabled,
+        status: enabled ? "configured" : "disabled",
+        transport: "stdio",
+        ...(target ? { target } : {}),
+      } satisfies ProviderMcpServer,
+    ];
+  });
+}
+
+/** Strip ANSI color codes that the opencode CLI emits on its mcp list output. */
+const ANSI_ESCAPE = String.fromCharCode(27);
+function stripAnsi(value: string): string {
+  // CSI sequences: ESC [ … letter. Composed from String.fromCharCode so the
+  // regex literal carries no raw control characters.
+  return value.replace(new RegExp(`${ANSI_ESCAPE}\\[[0-9;]*[A-Za-z]`, "gu"), "");
+}
+
+/**
+ * Fallback parser for `opencode mcp list`. The CLI prints a framed TUI with one
+ * line per server carrying its name and connection status. We split on the
+ * framing glyphs and keep the readable entries only.
+ */
+export function parseOpenCodeMcpList(stdout: string): ReadonlyArray<ProviderMcpServer> {
+  const cleaned = stripAnsi(stdout);
+  const STATUS = /\b(connected|disabled|failed|connecting|needs auth)\b/iu;
+  return cleaned
+    .split(/\r?\n/u)
+    .map((line) => line.replace(/^[\s│┌└┐┘├┤─▲►▼◀●]+/gu, "").trim())
+    .filter(
+      (line) => line.length > 0 && !line.startsWith("MCP Servers") && !line.startsWith("Add "),
+    )
+    .flatMap((line) => {
+      const match = STATUS.exec(line);
+      if (!match) return [];
+      const rawName = line.slice(0, match.index).trim();
+      const name = rawName.split(/\s+/u)[0]?.trim();
+      if (!name) return [];
+      const nativeStatus = match[0].toLowerCase();
+      const status =
+        nativeStatus === "connected"
+          ? "connected"
+          : nativeStatus === "needs auth"
+            ? "authentication-required"
+            : nativeStatus === "failed"
+              ? "failed"
+              : "configured";
+      return [
+        {
+          name,
+          enabled: nativeStatus !== "disabled",
+          status,
+          scope: "local",
+        } satisfies ProviderMcpServer,
+      ];
+    });
+}
+
+/**
+ * Discover OpenCode MCP servers without spawning the CLI. OpenCode stores its
+ * config in two JSON files: `<cwd>/opencode.json` (project) and
+ * `~/.config/opencode/opencode.json` (user). Both hold an `mcp` map; project
+ * wins on name conflicts, matching OpenCode's own precedence. Falls back to
+ * the empty list when neither file exists or neither parses.
+ */
+export function discoverOpenCodeMcpServers(input: {
+  readonly cwd: string;
+}): ReadonlyArray<ProviderMcpServer> {
+  const candidates = [
+    NodePath.join(input.cwd, "opencode.json"),
+    NodePath.join(input.cwd, ".opencode", "opencode.json"),
+    NodePath.join(NodeOS.homedir(), ".config", "opencode", "opencode.json"),
+  ];
+  const serversByName = new Map<string, ProviderMcpServer>();
+  for (const candidate of candidates) {
+    let raw: string;
+    try {
+      raw = NodeFS.readFileSync(candidate, "utf8");
+    } catch {
+      continue;
+    }
+    for (const server of parseOpenCodeMcpConfig(raw)) {
+      if (!serversByName.has(server.name)) {
+        serversByName.set(server.name, { ...server, scope: "project" });
+      }
+    }
+  }
+  return [...serversByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}

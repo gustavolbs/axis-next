@@ -2835,6 +2835,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     get streamEvents(): ProviderServiceMethod<"streamEvents"> {
       return Stream.fromPubSub(runtimeEventPubSub);
     },
+    publishRuntimeEvent,
   } satisfies ProviderService.ProviderService["Service"];
 });
 

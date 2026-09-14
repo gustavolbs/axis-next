@@ -119,6 +119,7 @@ export const TOOL_LIFECYCLE_ITEM_TYPES = [
   "collab_agent_tool_call",
   "web_search",
   "image_view",
+  "skill_injection",
 ] as const;
 
 export const ToolLifecycleItemType = Schema.Literals(TOOL_LIFECYCLE_ITEM_TYPES);
@@ -505,6 +506,14 @@ export const ItemLifecyclePayload = Schema.Struct({
    */
   agentId: Schema.optional(TrimmedNonEmptyStringSchema),
   parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Skill names the server injected into the turn's prompt, either because
+   * the user mentioned them with `$name` or because the model inferred one
+   * from a matching description in `.axis-tools/skills/`. Surfaced on the
+   * `skill_injection` lifecycle so the client can render a chip next to the
+   * assistant message confirming which skills the agent actually received.
+   */
+  skillNames: Schema.optional(Schema.Array(TrimmedNonEmptyStringSchema)),
 });
 export type ItemLifecyclePayload = typeof ItemLifecyclePayload.Type;
 

@@ -24,6 +24,7 @@ import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybi
 import { Route as SettingsIntegrationsRouteImport } from './routes/settings.integrations'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
+import { Route as SettingsConnectorsRouteImport } from './routes/settings.connectors'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsAxisRouteImport } from './routes/settings.axis'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
@@ -109,6 +110,11 @@ const SettingsDiagnosticsRoute = SettingsDiagnosticsRouteImport.update({
   path: '/diagnostics',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsConnectorsRoute = SettingsConnectorsRouteImport.update({
+  id: '/connectors',
+  path: '/connectors',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   id: '/connections',
   path: '/connections',
@@ -177,6 +183,7 @@ export interface FileRoutesByFullPath {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/axis': typeof SettingsAxisRoute
   '/settings/connections': typeof SettingsConnectionsRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
@@ -201,6 +208,7 @@ export interface FileRoutesByTo {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/axis': typeof SettingsAxisRoute
   '/settings/connections': typeof SettingsConnectionsRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
@@ -229,6 +237,7 @@ export interface FileRoutesById {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/axis': typeof SettingsAxisRoute
   '/settings/connections': typeof SettingsConnectionsRoute
+  '/settings/connectors': typeof SettingsConnectorsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/integrations': typeof SettingsIntegrationsRoute
@@ -258,6 +267,7 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/axis'
     | '/settings/connections'
+    | '/settings/connectors'
     | '/settings/diagnostics'
     | '/settings/general'
     | '/settings/integrations'
@@ -282,6 +292,7 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/axis'
     | '/settings/connections'
+    | '/settings/connectors'
     | '/settings/diagnostics'
     | '/settings/general'
     | '/settings/integrations'
@@ -309,6 +320,7 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/axis'
     | '/settings/connections'
+    | '/settings/connectors'
     | '/settings/diagnostics'
     | '/settings/general'
     | '/settings/integrations'
@@ -440,6 +452,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsDiagnosticsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/connectors': {
+      id: '/settings/connectors'
+      path: '/connectors'
+      fullPath: '/settings/connectors'
+      preLoaderRoute: typeof SettingsConnectorsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/connections': {
       id: '/settings/connections'
       path: '/connections'
@@ -547,6 +566,7 @@ interface SettingsRouteChildren {
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsAxisRoute: typeof SettingsAxisRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
+  SettingsConnectorsRoute: typeof SettingsConnectorsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
@@ -560,6 +580,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsAxisRoute: SettingsAxisRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
+  SettingsConnectorsRoute: SettingsConnectorsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsIntegrationsRoute: SettingsIntegrationsRoute,

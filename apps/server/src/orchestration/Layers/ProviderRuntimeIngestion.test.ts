@@ -141,18 +141,21 @@ function createProviderServiceHarness() {
     },
     rollbackConversation: () => unsupported(),
     uploadFeedback: () => unsupported(),
-    get streamEvents() {
-      return Stream.fromPubSub(runtimeEventPubSub).pipe(
-        Stream.flatMap(({ events, enqueued }) =>
-          Stream.concat(
-            Stream.fromIterable(events),
-            enqueued
-              ? Stream.fromEffect(Deferred.succeed(enqueued, undefined)).pipe(Stream.drain)
-              : Stream.empty,
-          ),
-        ),
+    get streamEvents(): Stream.Stream<ProviderRuntimeEvent, never, never> {
+      const inner = Stream.fromPubSub(runtimeEventPubSub).pipe(
+        Stream.flatMap(({ events, enqueued }) => {
+          const tail = enqueued
+            ? (enqueued as unknown as Stream.Stream<ProviderRuntimeEvent>)
+            : Stream.empty;
+          return Stream.concat(Stream.fromIterable(events), tail);
+        }),
       );
+      return inner as Stream.Stream<ProviderRuntimeEvent, never, never>;
     },
+    publishRuntimeEvent: (event) =>
+      Effect.sync(() => {
+        Effect.runSync(PubSub.publish(runtimeEventPubSub, { events: [event] }));
+      }),
   };
 
   const setSession = (session: ProviderSession): void => {

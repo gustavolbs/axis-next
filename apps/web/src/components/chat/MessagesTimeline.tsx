@@ -141,10 +141,12 @@ import {
   toolGroupAction,
   workEntryDisplayLabel,
   workEntryIsVisibleInGroup,
+  deriveSkillInjectionsByTurnId,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestTurn,
+  type TimelineEntry,
   type WorkGroupScrollAnchor,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
@@ -172,6 +174,7 @@ import {
 } from "./userMessageTerminalContexts";
 import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { SkillInlineText } from "./SkillInlineText";
+import { SkillInjectionChips } from "./SkillInjectionChips";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
   buildReviewCommentRenderablePatch,
@@ -197,6 +200,8 @@ interface TimelineRowSharedState {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  /** Skill names the server injected per turn. Maps turnId → array of names. */
+  skillInjectionsByTurnId: ReadonlyMap<TurnId, ReadonlyArray<string>>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
@@ -650,6 +655,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     };
   }, [timelineViewportElement, rows.length]);
 
+  const skillInjectionsByTurnId = useMemo(
+    () => deriveSkillInjectionsByTurnId(timelineEntries as TimelineEntry[]),
+    [timelineEntries],
+  );
+
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
       citationRequest: readyCitationRequest,
@@ -662,6 +672,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      skillInjectionsByTurnId,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onUseArtifactTemplate,
@@ -699,6 +710,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
       agentPanelModel,
       onOpenAgents,
+      skillInjectionsByTurnId,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1490,6 +1502,10 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const skillNames =
+    row.message.turnId !== null && row.message.turnId !== undefined
+      ? (ctx.skillInjectionsByTurnId.get(row.message.turnId) ?? null)
+      : null;
 
   return (
     <>
@@ -1512,6 +1528,9 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             onImageExpand={ctx.onImageExpand}
           />
         </AssistantCitationSource>
+        {skillNames !== null && skillNames.length > 0 ? (
+          <SkillInjectionChips names={skillNames} skills={ctx.skills} />
+        ) : null}
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}

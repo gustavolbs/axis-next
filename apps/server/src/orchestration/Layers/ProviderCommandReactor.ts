@@ -69,6 +69,8 @@ import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import {
   axisProjectSkillNamesInPrompt,
   AXIS_PROJECT_SKILL_PROMPT_MAX_CHARS,
+  discoverAxisProjectSkills,
+  formatAxisProjectSkillCatalog,
   formatAxisProjectSkillInstructions,
   readAxisProjectSkill,
 } from "../../axis/projects/AxisProjectSkills.ts";
@@ -681,18 +683,36 @@ const make = Effect.gen(function* () {
     if (input.thread.projectId === null || isAxisChatsProject(input.thread.projectId)) {
       return undefined;
     }
-    const names = axisProjectSkillNamesInPrompt(input.messageText);
-    if (names.length === 0) return undefined;
     const project = yield* resolveProject(input.thread.projectId);
     if (!project) return undefined;
     const workspaceRoot = project.workspaceRoot;
+    const catalog = yield* discoverAxisProjectSkills(workspaceRoot);
+    if (catalog.length === 0) return undefined;
+    const catalogInstructions = formatAxisProjectSkillCatalog(catalog);
+    const names = axisProjectSkillNamesInPrompt(input.messageText);
+    if (names.length === 0) {
+      // No explicit mention — surface only the catalog so the model can pick
+      // a skill by description, matching Claude Code's native behavior.
+      return {
+        instructions: catalogInstructions,
+        names: [],
+        injectedNames: catalog.map((skill) => skill.name),
+      };
+    }
     const skills = yield* Effect.forEach(
       names,
       (name) => readAxisProjectSkill({ workspaceRoot, name }),
       { concurrency: 1 },
     ).pipe(Effect.map((values) => values.filter((value) => value !== undefined)));
-    if (skills.length === 0) return undefined;
-    const instructions = formatAxisProjectSkillInstructions(skills);
+    if (skills.length === 0) {
+      return {
+        instructions: catalogInstructions,
+        names: [],
+        injectedNames: catalog.map((skill) => skill.name),
+      };
+    }
+    const selectedInstructions = formatAxisProjectSkillInstructions(skills);
+    const instructions = `${catalogInstructions}\n\n${selectedInstructions}`;
     if (instructions.length > AXIS_PROJECT_SKILL_PROMPT_MAX_CHARS) {
       return yield* new ProviderAdapterValidationError({
         provider: "axis",
@@ -700,7 +720,13 @@ const make = Effect.gen(function* () {
         issue: `Selected project skills exceed the ${AXIS_PROJECT_SKILL_PROMPT_MAX_CHARS}-character limit. Select fewer skills or shorten them.`,
       });
     }
-    return { instructions, names: skills.map((skill) => skill.name) };
+    return {
+      instructions,
+      names: skills.map((skill) => skill.name),
+      injectedNames: Array.from(
+        new Set([...catalog.map((skill) => skill.name), ...skills.map((skill) => skill.name)]),
+      ),
+    };
   });
 
   /**
@@ -1123,6 +1149,38 @@ const make = Effect.gen(function* () {
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
+    }
+    if (axisSkillInstructions !== undefined && axisSkillInstructions.injectedNames.length > 0) {
+      const skillEventId = yield* serverEventId();
+      yield* providerService.publishRuntimeEvent({
+        eventId: skillEventId,
+        provider: ProviderDriverKind.make("axis"),
+        threadId: input.threadId,
+        createdAt: input.createdAt,
+        type: "item.started",
+        payload: {
+          itemType: "skill_injection",
+          title: `Loaded ${axisSkillInstructions.injectedNames.length} skill${
+            axisSkillInstructions.injectedNames.length === 1 ? "" : "s"
+          }`,
+          skillNames: axisSkillInstructions.injectedNames,
+        },
+      });
+      yield* providerService.publishRuntimeEvent({
+        eventId: yield* serverEventId(),
+        provider: ProviderDriverKind.make("axis"),
+        threadId: input.threadId,
+        createdAt: input.createdAt,
+        type: "item.completed",
+        payload: {
+          itemType: "skill_injection",
+          status: "completed",
+          title: `Loaded ${axisSkillInstructions.injectedNames.length} skill${
+            axisSkillInstructions.injectedNames.length === 1 ? "" : "s"
+          }`,
+          skillNames: axisSkillInstructions.injectedNames,
+        },
+      });
     }
     return {
       threadId: input.threadId,

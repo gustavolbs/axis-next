@@ -7,6 +7,7 @@ import {
   type ProviderSession,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
   type TokenEfficiencyConciseOutputProfile,
   ThreadId,
   type ToolLifecycleItemType,
@@ -338,6 +339,7 @@ interface OpenCodeSessionContext {
   readonly directory: string;
   readonly openCodeSessionId: string;
   readonly relatedSessionIds: Set<string>;
+  readonly emittedSubagentSessionIds: Set<string>;
   readonly resolvedRequestIds: Set<string>;
   readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
@@ -2209,10 +2211,52 @@ export function makeOpenCodeAdapter(
       if (event.type === "session.created" || event.type === "session.updated") {
         const session = event.properties.info;
         if (session.parentID && context.relatedSessionIds.has(session.parentID)) {
+          const wasNew = !context.relatedSessionIds.has(session.id);
           addRelatedOpenCodeSession(context, session.id);
+          if (
+            wasNew &&
+            context.activeTurnId !== undefined &&
+            !context.emittedSubagentSessionIds.has(session.id)
+          ) {
+            context.emittedSubagentSessionIds.add(session.id);
+            const title = session.title?.trim() || "OpenCode subagent";
+            emitUnsafe({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId: context.activeTurnId,
+                raw: event,
+              })),
+              type: "task.started",
+              payload: {
+                taskId: RuntimeTaskId.make(session.id),
+                description: title,
+                taskType: "subagent_batch",
+                agentKind: "agent",
+                title,
+              },
+            });
+          }
         }
       } else if (event.type === "session.deleted") {
-        context.relatedSessionIds.delete(event.properties.info.id);
+        const deletedId = event.properties.info.id;
+        if (context.emittedSubagentSessionIds.has(deletedId)) {
+          context.emittedSubagentSessionIds.delete(deletedId);
+          emitUnsafe({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId: context.activeTurnId,
+              raw: event,
+            })),
+            type: "task.completed",
+            payload: {
+              taskId: RuntimeTaskId.make(deletedId),
+              status: "completed",
+              taskType: "subagent_batch",
+              agentKind: "agent",
+            },
+          });
+        }
+        context.relatedSessionIds.delete(deletedId);
       }
 
       const payloadSessionId = openCodeEventSessionId(event);
@@ -2983,6 +3027,7 @@ export function makeOpenCodeAdapter(
           directory,
           openCodeSessionId: started.openCodeSession.id,
           relatedSessionIds: new Set([started.openCodeSession.id]),
+          emittedSubagentSessionIds: new Set<string>(),
           resolvedRequestIds: new Set(),
           autoRepliedRequestIds: new Set(),
           emittedTerminalRequestIds: new Set(),

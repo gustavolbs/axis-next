@@ -188,6 +188,7 @@ describe("ProviderSessionReaper", () => {
       rollbackConversation: () => unsupported(),
       uploadFeedback: () => unsupported(),
       streamEvents: Stream.empty,
+      publishRuntimeEvent: () => Effect.void,
     };
 
     const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
