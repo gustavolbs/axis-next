@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.14.4] - 2026-09-13
+
+### Added
+
+- Skill injection chips render below the assistant turn whenever the server injects `.axis-tools/skills/<name>/SKILL.md` into the prompt (inferred or `$name`). The chip set reflects exactly the skills the model received, so users can confirm which guidance the agent had access to.
+- `Settings → Connectors` page now scans every configured provider in parallel and shows a unified connector table with provider, type, scope, and status columns. Providers without MCP discovery still appear so the gap is visible.
+- `Settings → Connectors` is wired into the Settings sidebar nav with a `Plug` icon.
+
+## [0.14.3] - 2026-09-13
+
+### Added
+
+- New `Settings → Connectors` page that lists every configured provider and links directly to its MCP tab, so users no longer have to open each provider individually to find its connectors.
+- `axisSkillInstructions` now carries an `injectedNames` array covering both skills explicitly mentioned with `$name` and skills the model may have inferred from the project catalog, so the client can surface which skills actually reached the agent this turn.
+
+### Changed
+
+- `ProviderService` exposes a `publishRuntimeEvent` hook so the orchestrator can emit synthetic runtime events (today: skill injections) into the canonical pub-sub that every consumer subscribes to.
+- `ItemLifecyclePayload` adds an optional `skillNames` field and a new `skill_injection` lifecycle so the work-log pipeline can render a chip on the assistant turn whenever a server-side skill injection lands.
+- `deriveWorkLogEntries` keeps `tool.started` rows whose payload is `skill_injection` so the skill chip survives the existing tool-row collapse.
+
+## [0.14.2] - 2026-09-13
+
+### Changed
+
+- Axis project skills now expose a discovery catalog in the system prompt of every supported provider, matching how Claude Code, Codex, and OpenCode surface their native skills. Agents pick a skill by description without requiring an explicit `$name`, while the explicit mention still works as a shortcut.
+- OpenCode (including the RouteMux/OpenCode gateway) now emits `task.started`/`task.completed` events for child sessions it spawns, so the agents tab shows OpenCode subagents the same way it already shows Claude and Antigravity ones.
+- OpenCode now discovers MCP servers from its native JSON config (`opencode.json` and `~/.config/opencode/opencode.json`) plus the `opencode mcp list` TUI fallback, so the provider capabilities page lists MCP connections instead of showing "Native MCP discovery is not available".
+
+### Fixed
+
+- Project skills no longer require an explicit `$name` mention to load; an empty project with skills installed previously emitted nothing.
+
 ## [0.14.1] - 2026-09-13
 
 ### Added
